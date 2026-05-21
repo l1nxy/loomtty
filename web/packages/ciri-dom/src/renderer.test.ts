@@ -1102,4 +1102,59 @@ describe("PaneRenderer", () => {
     expect(document.querySelector(".ciri-preedit")).toBeNull();
     expect(r.currentPreedit).toBeNull();
   });
+
+  function placeImage(r: PaneRenderer, grid: PaneGrid, row: number): void {
+    r.setImage(grid, {
+      imageId: 1n,
+      col: 0,
+      row,
+      widthCells: 1,
+      heightCells: 1,
+      pixelWidth: 1,
+      pixelHeight: 1,
+      format: "rgba",
+      data: new Uint8Array(4),
+    });
+  }
+
+  test("inline image is dropped when scrollback is replaced (epoch bump)", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 1);
+    grid.applyFullPaneSync(blankSync(2, 1));
+    r.render(grid);
+    placeImage(r, grid, 0);
+    expect(root.querySelectorAll("canvas.ciri-image").length).toBe(1);
+    // Replace scrollback wholesale → epoch bump → anchor invalid → drop.
+    const replace = blankSync(2, 1);
+    replace.scrollback = [cell(" "), cell(" ")];
+    replace.scrollbackRows = 1;
+    replace.scrollbackReplace = true;
+    grid.applyFullPaneSync(replace);
+    r.render(grid);
+    expect(root.querySelectorAll("canvas.ciri-image").length).toBe(0);
+    root.remove();
+  });
+
+  test("inline image is dropped once front-trimmed past the top of scrollback", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 1, { maxScrollbackRows: 2 });
+    grid.applyFullPaneSync(blankSync(2, 1));
+    r.render(grid); // seed scrollback baselines
+    placeImage(r, grid, 0); // anchored at srcRow 0 (no scrollback yet)
+    expect(root.querySelectorAll("canvas.ciri-image").length).toBe(1);
+    // Append 3 history rows over a cap of 2 → 1 row trimmed from the
+    // front → the image's srcRow-0 line is evicted → image dropped.
+    const grow = blankSync(2, 1);
+    grow.scrollback = new Array(6).fill(cell(" "));
+    grow.scrollbackRows = 3;
+    grid.applyFullPaneSync(grow);
+    expect(grid.scrollbackTrimmed).toBe(1);
+    r.render(grid);
+    expect(root.querySelectorAll("canvas.ciri-image").length).toBe(0);
+    root.remove();
+  });
 });

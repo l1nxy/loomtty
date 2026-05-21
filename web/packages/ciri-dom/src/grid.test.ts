@@ -981,3 +981,132 @@ describe("PaneGrid.rowCells + viewportGlobalIndex", () => {
     });
   });
 });
+
+describe("PaneGrid.search", () => {
+  function syncRows(rows: string[], scrollback: string[] = []): FullPaneSync {
+    const cols = [...rows, ...scrollback].reduce(
+      (m, r) => Math.max(m, r.length),
+      1,
+    );
+    const toCells = (rs: string[]): PackedCell[] => {
+      const out: PackedCell[] = [];
+      for (const r of rs) {
+        for (let c = 0; c < cols; c += 1) out.push(cell(r[c] ?? " "));
+      }
+      return out;
+    };
+    return makeSync({
+      cols,
+      rows: rows.length,
+      cells: toCells(rows),
+      scrollback: toCells(scrollback),
+      scrollbackRows: scrollback.length,
+    });
+  }
+
+  test("finds a substring and maps it to inclusive columns", () => {
+    const g = new PaneGrid(1n, 11, 1);
+    g.applyFullPaneSync(syncRows(["hello world"]));
+    expect(g.search("world")).toEqual([{ srcRow: 0, startCol: 6, endCol: 10 }]);
+  });
+
+  test("is case-insensitive", () => {
+    const g = new PaneGrid(1n, 5, 1);
+    g.applyFullPaneSync(syncRows(["Hello"]));
+    expect(g.search("HELLO")).toEqual([{ srcRow: 0, startCol: 0, endCol: 4 }]);
+  });
+
+  test("returns every occurrence in reading order, including scrollback", () => {
+    const g = new PaneGrid(1n, 6, 1);
+    // scrollback row 0, then viewport row (srcRow 1).
+    g.applyFullPaneSync(syncRows(["abab x"], ["ab ab "]));
+    expect(g.search("ab")).toEqual([
+      { srcRow: 0, startCol: 0, endCol: 1 }, // scrollback "ab ab "
+      { srcRow: 0, startCol: 3, endCol: 4 },
+      { srcRow: 1, startCol: 0, endCol: 1 }, // viewport "abab x"
+      { srcRow: 1, startCol: 2, endCol: 3 },
+    ]);
+  });
+
+  test("empty query and no-match return []", () => {
+    const g = new PaneGrid(1n, 5, 1);
+    g.applyFullPaneSync(syncRows(["hello"]));
+    expect(g.search("")).toEqual([]);
+    expect(g.search("zzz")).toEqual([]);
+  });
+
+  test("does not match across a row boundary", () => {
+    const g = new PaneGrid(1n, 2, 2);
+    g.applyFullPaneSync(syncRows(["ab", "cd"]));
+    // "bc" spans the row1→row2 break and must not match.
+    expect(g.search("bc")).toEqual([]);
+  });
+
+  test("scrollbackTrimmed counts front-evicted rows; scrollbackEpoch bumps on replace", () => {
+    const g = new PaneGrid(1n, 2, 1, { maxScrollbackRows: 2 });
+    expect(g.scrollbackTrimmed).toBe(0);
+    expect(g.scrollbackEpoch).toBe(0);
+    // Append 3 scrollback rows over a cap of 2 → 1 row trimmed.
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 2,
+        rows: 1,
+        cells: [cell("v"), cell(" ")],
+        scrollback: [cell("a"), cell(" "), cell("b"), cell(" "), cell("c"), cell(" ")],
+        scrollbackRows: 3,
+        scrollbackReplace: false,
+      }),
+    );
+    expect(g.scrollbackRows).toBe(2);
+    expect(g.scrollbackTrimmed).toBe(1);
+    expect(g.scrollbackEpoch).toBe(0); // append, not replace
+    // A replace sync bumps the epoch (and doesn't trim).
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 2,
+        rows: 1,
+        cells: [cell("v"), cell(" ")],
+        scrollback: [cell("x"), cell(" ")],
+        scrollbackRows: 1,
+        scrollbackReplace: true,
+      }),
+    );
+    expect(g.scrollbackEpoch).toBe(1);
+    expect(g.scrollbackTrimmed).toBe(1); // unchanged by replace
+  });
+
+  test("wide-char spacer cells map matches to the glyph column", () => {
+    const g = new PaneGrid(1n, 4, 1);
+    // "你" (wide) at col 0, spacer at col 1, then "ok".
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 4,
+        rows: 1,
+        cells: [
+          cell("你", DEFAULT_FG, DEFAULT_BG, FLAG_WIDE_CHAR),
+          cell(" ", DEFAULT_FG, DEFAULT_BG, FLAG_WIDE_CHAR_SPACER),
+          cell("o"),
+          cell("k"),
+        ],
+      }),
+    );
+    expect(g.search("ok")).toEqual([{ srcRow: 0, startCol: 2, endCol: 3 }]);
+    // The wide glyph match extends over its trailing spacer column so
+    // the highlight covers the full 2-column cell.
+    expect(g.search("你")).toEqual([{ srcRow: 0, startCol: 0, endCol: 1 }]);
+  });
+
+  test("matches a grapheme built from combining-mark extras", () => {
+    const g = new PaneGrid(1n, 3, 1);
+    // Cell 0 renders "e" with a combining acute (U+0301) stored in
+    // graphemeExtras → the full grapheme "é" must be searchable.
+    const sync = makeSync({
+      cols: 3,
+      rows: 1,
+      cells: [cell("e"), cell("k"), cell(" ")],
+      graphemeExtras: new Map([[0, "́"]]),
+    });
+    g.applyFullPaneSync(sync);
+    expect(g.search("é")).toEqual([{ srcRow: 0, startCol: 0, endCol: 0 }]);
+  });
+});

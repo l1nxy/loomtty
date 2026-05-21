@@ -20,6 +20,7 @@ import {
   CURSOR_HIDDEN,
   CURSOR_HOLLOW_BLOCK,
   CURSOR_UNDERLINE,
+  MODE_MOUSE_REPORT,
   NAMED_CURSOR,
   type PackedCell,
 } from "@ciri/codec";
@@ -111,6 +112,30 @@ export class PaneRenderer {
   /// rects per its anchors. `app` derives text via `grid.extractText`.
   private selection: SelectionRange | null = null;
   private readonly selectionRowEls: HTMLElement[] = [];
+  /// Inline images (sixel / kitty / iTerm), keyed by `imageId`. Each
+  /// entry is a `<canvas>` painted once with the server-decoded RGBA
+  /// pixels and CSS-scaled to its cell box. `srcRow` is the absolute
+  /// combined-buffer row (scrollback + viewport) captured at placement
+  /// time, so `updateImages` can scroll/clip it exactly like a cell
+  /// run. The server clears all of a pane's images via `ImageDeleted`
+  /// (→ `clearImages`); re-placing the same `imageId` updates in place.
+  private readonly images = new Map<
+    string,
+    {
+      canvas: HTMLCanvasElement;
+      srcRow: number;
+      col: number;
+      widthCells: number;
+      heightCells: number;
+    }
+  >();
+  /// `grid.scrollbackTrimmed` / `grid.scrollbackEpoch` as of the last
+  /// `render()`. Diffed each render to keep image `srcRow` anchors valid
+  /// when scrollback front-trims (rebase down) or is replaced wholesale
+  /// (drop — the anchor's buffer identity is gone). `null` until the
+  /// first render seeds them. See `rebaseImagesForScrollback`.
+  private lastScrollbackTrimmed: number | null = null;
+  private lastScrollbackEpoch: number | null = null;
   /// IME pre-edit overlay. Shown above cell content at the cursor's
   /// position while the user is composing a glyph through an input
   /// method (Pinyin, Kana, Hangul Jamo, dead-key chains, …). Text is
@@ -135,6 +160,110 @@ export class PaneRenderer {
   private readonly preeditEl: HTMLElement;
   /// Active preedit content (`null` when no composition in flight).
   private preedit: { text: string } | null = null;
+  /// Vertical overlay scrollbar. Mounted absolute-positioned on the
+  /// right edge of the wrapper. Track holds a thumb whose top + height
+  /// reflect the current `scrollOffset` against `grid.scrollbackRows`.
+  /// Hidden via `style.display = none` when:
+  ///   - the grid has no scrollback rows (`scrollbackRows === 0`)
+  ///   - the pane reports mouse (`grid.meta.modeFlags & MODE_MOUSE_REPORT`),
+  ///     because mouse-aware TUIs (tmux / vim / htop / …) own their
+  ///     own scrollback via copy-mode; an external scrollbar here
+  ///     would mislead the user into thinking they can drag it.
+  ///
+  /// Both `pointerdown` on the thumb (drag) and `pointerdown` on the
+  /// surrounding track (page jump) route to `setScrollOffset` so the
+  /// downstream render uses the same code path as the wheel.
+  private readonly scrollbarEl: HTMLElement;
+  private readonly scrollbarThumbEl: HTMLElement;
+  /// In-flight thumb drag state. `null` when not dragging. The drag
+  /// captures the pointer on its element so a finger that leaves the
+  /// thumb mid-drag still keeps updating the offset.
+  private scrollbarDrag: {
+    /// clientY at pointerdown.
+    startClientY: number;
+    /// `scrollOffset` at pointerdown.
+    startScrollOffset: number;
+    /// Pointer id we captured.
+    pointerId: number;
+    /// `scrollbackRows` snapshot at drag-start. We deliberately
+    /// don't react to scrollback growth during drag — keeping the
+    /// scale stable is the only way the thumb can track the finger
+    /// 1:1.
+    startScrollbackRows: number;
+    /// Track-usable length (`track_height - thumb_height`) at
+    /// drag-start. Same rationale.
+    startTrackUsablePx: number;
+  } | null = null;
+  /// `true` if the latest `render()` decided the scrollbar should be
+  /// visible. Cached so the pointer-down handler can short-circuit
+  /// without re-doing the visibility math; cleared by `updateScrollbar`.
+  private scrollbarVisible = false;
+  /// Grid reference snapshot, set on every `render()` so the
+  /// scrollbar event handlers can resolve `grid.scrollbackRows` etc.
+  /// without re-plumbing the grid through every callback.
+  private gridRef: PaneGrid | null = null;
+  /// Auto-hide timer for the scrollbar. The thumb is invisible by
+  /// default (CSS `opacity: 0`); on any scroll-related interaction
+  /// (wheel via `setScrollOffset`, swipe, scrollbar drag, track
+  /// click) we add `ciri-scrollbar-active`, reset this timer, and
+  /// remove the class after the idle window. CSS `:hover` provides
+  /// the desktop discovery affordance independent of this timer.
+  private scrollbarHideTimer: ReturnType<typeof setTimeout> | null = null;
+  /// In-flight one-finger touch swipe state. On non-mouse-mode panes
+  /// a vertical finger drag scrolls the scrollback (drag DOWN reveals
+  /// history, drag UP returns toward live bottom — matches the
+  /// platform `overflow: scroll` convention). Decision to commit
+  /// happens on the first non-trivial move; before that we leave the
+  /// synthesized mouse events alone so a quick tap still works as
+  /// focus / chip-click. Mouse-mode panes (tmux / vim / …) keep
+  /// their touch unforwarded; the TUI gets the synthesized mouse
+  /// events via `app.ts`'s `mouseForward` path.
+  /// When `true`, the app has taken over the current touch for text
+  /// selection (after a long-press), so the swipe-scroll handlers stand
+  /// down — otherwise a select-drag would also scroll the buffer.
+  /// Toggled by `setTouchSelecting`.
+  private touchSelecting = false;
+  private touchScrollState:
+    | {
+        startY: number;
+        lastY: number;
+        startX: number;
+        lastMoveTime: number;
+        pointerId: number;
+        committed: boolean;
+        /// Fractional row accumulator. A 4px finger move at a 16px
+        /// row height is 0.25 rows — `Math.floor`ing each tick
+        /// loses those fractions; we accumulate and apply whole
+        /// rows when they cross 1.
+        accumRows: number;
+      }
+    | null = null;
+  /// Smoothed finger velocity at pointerup time, in rows-per-second.
+  /// Updated on every `pointermove` via an EMA so the value is
+  /// resilient to one-frame stutters. The pointerup handler reads
+  /// this to decide whether to kick a momentum animation.
+  private touchScrollVel = 0;
+  /// requestAnimationFrame handle for the momentum-decay loop.
+  /// `null` outside an active fling.
+  private touchMomentumRaf: number | null = null;
+  /// Last `requestAnimationFrame` timestamp during a fling. Used to
+  /// compute frame-time-independent velocity decay (without this
+  /// the animation would feel different on 60 / 90 / 120 fps
+  /// displays).
+  private touchMomentumLastTime = 0;
+  /// Fractional row accumulator for the momentum loop — same role
+  /// as `touchScrollState.accumRows` but kept separate so the
+  /// fling can continue after the gesture state is cleared.
+  private touchMomentumAccum = 0;
+  /// rAF handle for scroll-driven render coalescing. Mobile (and
+  /// fast trackpads) fire `pointermove` faster than the display
+  /// refresh rate; without batching, each fractional-pixel move
+  /// would call `render()` which rebuilds every visible row — the
+  /// scroll feels visibly choppy because we're spending the main
+  /// thread on DOM thrash instead of letting the browser paint.
+  /// `scheduleRender` sets this and only re-renders once per
+  /// animation frame, no matter how many pointermoves landed.
+  private pendingScrollRenderRaf: number | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -195,6 +324,120 @@ export class PaneRenderer {
     this.preeditEl.style.borderBottom = "2px solid #80b3ff";
     this.preeditEl.style.whiteSpace = "pre";
     this.wrapper.appendChild(this.preeditEl);
+
+    // Vertical overlay scrollbar — track (full pane height) + thumb
+    // (proportional to visible/total ratio, clamped at a minimum).
+    // The track sits on the right edge of the wrapper as an
+    // absolutely-positioned overlay; cell rendering keeps full
+    // width and the thumb floats above it (default opacity is
+    // partial so cells underneath stay readable). Themes can
+    // restyle via `.ciri-scrollbar` / `.ciri-scrollbar-thumb`.
+    this.scrollbarEl = this.doc.createElement("div");
+    this.scrollbarEl.className = "ciri-scrollbar";
+    this.scrollbarEl.style.position = "absolute";
+    this.scrollbarEl.style.right = "0";
+    this.scrollbarEl.style.top = "0";
+    this.scrollbarEl.style.bottom = "0";
+    this.scrollbarEl.style.display = "none";
+    // Allow touch / pointer events on the track for page-jump, but
+    // don't let the browser claim them for scroll/zoom gestures.
+    this.scrollbarEl.style.touchAction = "none";
+    this.wrapper.appendChild(this.scrollbarEl);
+
+    this.scrollbarThumbEl = this.doc.createElement("div");
+    this.scrollbarThumbEl.className = "ciri-scrollbar-thumb";
+    this.scrollbarThumbEl.style.position = "absolute";
+    // NOTE: only set `right` here. Inline `left: 0; right: 0`
+    // together makes the thumb stretch the full 12px track width
+    // and silently drops the CSS-declared `width` — the thumb
+    // would render mid-track instead of hugging the right edge.
+    this.scrollbarThumbEl.style.right = "0";
+    this.scrollbarThumbEl.style.touchAction = "none";
+    this.scrollbarEl.appendChild(this.scrollbarThumbEl);
+
+    this.scrollbarThumbEl.addEventListener("pointerdown", (e) =>
+      this.onScrollbarThumbPointerDown(e),
+    );
+    this.scrollbarThumbEl.addEventListener("pointermove", (e) =>
+      this.onScrollbarThumbPointerMove(e),
+    );
+    this.scrollbarThumbEl.addEventListener("pointerup", (e) =>
+      this.onScrollbarThumbPointerUp(e),
+    );
+    this.scrollbarThumbEl.addEventListener("pointercancel", (e) =>
+      this.onScrollbarThumbPointerUp(e),
+    );
+    // Track click → page jump in the direction of the click relative
+    // to the thumb. Handled on the track (NOT thumb) so a click that
+    // happens to land on the thumb starts a drag instead.
+    this.scrollbarEl.addEventListener("pointerdown", (e) =>
+      this.onScrollbarTrackPointerDown(e),
+    );
+
+    // Touch swipe vertical → scrollback. Listener on the wrapper
+    // itself (NOT the scrollbar) so a finger that lands on the
+    // pane content's body scrolls; a finger on the scrollbar
+    // routes through the thumb/track handlers above.
+    //
+    // `passive: false` on EVERY pointer/touch path because we need
+    // to call `preventDefault` to suppress the browser's
+    // synthesized mouse events. Without that suppression, the
+    // touch sequence ALSO fires `mousedown`/`mousemove` that
+    // bubble out to `app.ts`'s root listener and start a text-
+    // selection drag — fighting our scroll handler for the same
+    // touch. (Native browser scroll panning isn't our concern
+    // because `.ciri-pane` doesn't have `overflow: scroll`; what
+    // we're blocking is purely compat mouse-event spawning.)
+    // pointerdown stays `passive: true` — do NOT preventDefault on
+    // it. Tap-to-focus on touch relies on the compat `mousedown`
+    // bubbling to the tile's listener (`LayoutManager.setLayout`
+    // wires that to `FocusPane`); preempting `mousedown` here
+    // would silently break focus on every tap once the pane has
+    // scrollback. Only after the gesture commits to a scroll
+    // (see `pointermove`) do we preventDefault subsequent compat
+    // events.
+    this.wrapper.addEventListener(
+      "pointerdown",
+      (e) => this.onPanePointerDown(e),
+      { passive: true },
+    );
+    this.wrapper.addEventListener(
+      "pointermove",
+      (e) => this.onPanePointerMove(e),
+      { passive: false },
+    );
+    this.wrapper.addEventListener(
+      "pointerup",
+      (e) => this.onPanePointerUp(e),
+      { passive: true },
+    );
+    this.wrapper.addEventListener(
+      "pointercancel",
+      (e) => this.onPanePointerCancel(e),
+      { passive: true },
+    );
+    // `touch-action: none` declares to the browser that we own ALL
+    // gestures on this element — no native pinch-zoom, no double-
+    // tap-to-zoom, no fastclick delay. Required for the gesture
+    // commit threshold below to feel responsive: with default
+    // touch-action, mobile browsers add ~300ms of "what's this
+    // gesture?" hesitation before firing pointer events to us.
+    this.wrapper.style.touchAction = "none";
+  }
+
+  /// Minimum thumb height in pixels. Without a floor, a long scrollback
+  /// produces a thumb so small the user can't grab it. 24 px is the
+  /// established mobile-touch hit minimum (matches the chip strip's
+  /// `--hit-cozy`).
+  private static readonly SCROLLBAR_MIN_THUMB_PX = 24;
+
+  /// Inline clamp — `Math.min(max, Math.max(min, n))` reads
+  /// awkwardly when `max < min` is a real edge case (track height 0
+  /// for a zero-size pane). Returns `min` for inverted ranges, same
+  /// shape as `clampNumber` in `@ciri/app`.
+  private static clamp(n: number, min: number, max: number): number {
+    if (max < min) return min;
+    return n < min ? min : n > max ? max : n;
   }
 
   /// Apply pending grid state to the DOM. Reads
@@ -275,6 +518,465 @@ export class PaneRenderer {
     // composing glyph must be visible even when its target cell falls
     // inside an active selection (rare in practice but possible).
     this.updatePreedit(grid);
+    // Inline images: first rebase anchors against any scrollback
+    // trim/replace since the last render, then reposition for the
+    // current scroll offset (they scroll with the buffer like cells).
+    this.rebaseImagesForScrollback(grid);
+    this.updateImages(grid);
+    // Scrollbar last: it sits on top of everything and is purely a
+    // navigation affordance. `gridRef` is also stashed here so the
+    // drag handlers can resolve `grid.scrollbackRows` etc. without
+    // a callback closure.
+    this.gridRef = grid;
+    this.updateScrollbar(grid);
+  }
+
+  private updateScrollbar(grid: PaneGrid): void {
+    const mouseMode = (grid.meta.modeFlags & MODE_MOUSE_REPORT) !== 0;
+    const visible = !mouseMode && grid.scrollbackRows > 0;
+    this.scrollbarVisible = visible;
+    if (!visible) {
+      this.scrollbarEl.style.display = "none";
+      return;
+    }
+    this.scrollbarEl.style.display = "block";
+    const trackRect = this.scrollbarEl.getBoundingClientRect();
+    const trackH = trackRect.height;
+    if (trackH <= 0) {
+      // The pane hasn't been laid out yet (initial render, or
+      // mounted into an `display: none` container). Nothing useful
+      // we can compute — bail until the next render with real
+      // dimensions.
+      return;
+    }
+    const total = grid.scrollbackRows + grid.rows;
+    const visibleRows = grid.rows;
+    const thumbRatio = total > 0 ? visibleRows / total : 1;
+    const thumbH = Math.max(
+      PaneRenderer.SCROLLBAR_MIN_THUMB_PX,
+      Math.floor(thumbRatio * trackH),
+    );
+    // `scrollOffset === 0` → live bottom → thumb at the bottom of
+    // the track. `scrollOffset === scrollbackRows` → thumb at top.
+    const trackUsable = Math.max(0, trackH - thumbH);
+    const topFraction =
+      grid.scrollbackRows > 0
+        ? 1 - this.scrollOffset / grid.scrollbackRows
+        : 1;
+    const top = Math.floor(trackUsable * topFraction);
+    this.scrollbarThumbEl.style.top = `${top}px`;
+    this.scrollbarThumbEl.style.height = `${thumbH}px`;
+  }
+
+  private onScrollbarThumbPointerDown(e: PointerEvent): void {
+    if (!this.scrollbarVisible || this.gridRef === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.scrollbarThumbEl.setPointerCapture(e.pointerId);
+    const trackRect = this.scrollbarEl.getBoundingClientRect();
+    const thumbRect = this.scrollbarThumbEl.getBoundingClientRect();
+    this.scrollbarDrag = {
+      startClientY: e.clientY,
+      startScrollOffset: this.scrollOffset,
+      pointerId: e.pointerId,
+      startScrollbackRows: this.gridRef.scrollbackRows,
+      startTrackUsablePx: Math.max(1, trackRect.height - thumbRect.height),
+    };
+    this.scrollbarEl.classList.add("ciri-scrollbar-dragging");
+    this.revealScrollbar();
+  }
+
+  private onScrollbarThumbPointerMove(e: PointerEvent): void {
+    const drag = this.scrollbarDrag;
+    if (drag === null || drag.pointerId !== e.pointerId) return;
+    if (this.gridRef === null) return;
+    const dy = e.clientY - drag.startClientY;
+    // Track-px → scrollback-rows scale, locked to drag-start state so
+    // newly-arriving PTY output during the drag doesn't warp the
+    // thumb-to-finger mapping.
+    const rowsPerPx = drag.startScrollbackRows / drag.startTrackUsablePx;
+    // Dragging the thumb DOWN means moving toward the live bottom →
+    // `scrollOffset` decreases. Hence the sign flip.
+    // `Math.round` before assignment — `scrollOffset` flows into
+    // `renderDisplayRow`'s integer `srcRow` math (and into
+    // `combinedRowCells`'s array slicing). A fractional offset
+    // would slice rows at non-row-aligned indices and corrupt the
+    // visible scrollback for the duration of the drag.
+    const nextOffset = Math.round(
+      PaneRenderer.clamp(
+        drag.startScrollOffset - dy * rowsPerPx,
+        0,
+        this.gridRef.scrollbackRows,
+      ),
+    );
+    if (nextOffset !== this.scrollOffset) {
+      this.scrollOffset = nextOffset;
+      // Force a full repaint — every visible display row's srcRow
+      // changes when scrollOffset moves, so the per-row dirty diff
+      // doesn't cover this case on its own. Coalesce to rAF so a
+      // burst of pointermove events doesn't pile up renders.
+      this.rendererForcedRedraw = true;
+      this.scheduleRender();
+    }
+    this.revealScrollbar();
+  }
+
+  private onScrollbarThumbPointerUp(e: PointerEvent): void {
+    const drag = this.scrollbarDrag;
+    if (drag === null || drag.pointerId !== e.pointerId) return;
+    try {
+      this.scrollbarThumbEl.releasePointerCapture(e.pointerId);
+    } catch {
+      // Releasing a capture that's already gone isn't an error worth
+      // surfacing — happens when pointercancel races with pointerup.
+    }
+    this.scrollbarDrag = null;
+    this.scrollbarEl.classList.remove("ciri-scrollbar-dragging");
+  }
+
+  private onScrollbarTrackPointerDown(e: PointerEvent): void {
+    // Only react to clicks that landed on the track itself — clicks
+    // on the thumb get their own handler (drag start).
+    if (e.target !== this.scrollbarEl) return;
+    if (!this.scrollbarVisible || this.gridRef === null) return;
+    e.preventDefault();
+    const trackRect = this.scrollbarEl.getBoundingClientRect();
+    const thumbRect = this.scrollbarThumbEl.getBoundingClientRect();
+    // Page jump in the direction of the click. Match common
+    // scrollbar UX: clicking above the thumb scrolls UP by a
+    // page (more history visible); clicking below scrolls DOWN.
+    const pageRows = Math.max(1, this.gridRef.rows - 1);
+    const nextOffset =
+      e.clientY < thumbRect.top
+        ? Math.min(
+            this.gridRef.scrollbackRows,
+            this.scrollOffset + pageRows,
+          )
+        : Math.max(0, this.scrollOffset - pageRows);
+    if (nextOffset !== this.scrollOffset) {
+      this.scrollOffset = nextOffset;
+      this.rendererForcedRedraw = true;
+      this.scheduleRender();
+    }
+    this.revealScrollbar();
+  }
+
+  /// How long the scrollbar stays visible after the last
+  /// scroll-related interaction before auto-hiding. ~1.5s matches
+  /// the iOS / macOS overlay-scrollbar idle window — long enough to
+  /// see the new position settle, short enough to get out of the
+  /// way of the content underneath.
+  private static readonly SCROLLBAR_HIDE_AFTER_MS = 1500;
+
+  /// Bring the scrollbar in (or keep it in), then schedule the
+  /// idle fade-out. Idempotent — safe to call on every move.
+  private revealScrollbar(): void {
+    // No point fading anything in when there's no scrollback to
+    // show or the pane is mouse-mode (`updateScrollbar` toggles
+    // `display: none` for both cases). Bail to keep the idle
+    // timer from ticking against a hidden element.
+    if (!this.scrollbarVisible) return;
+    this.scrollbarEl.classList.add("ciri-scrollbar-active");
+    if (this.scrollbarHideTimer !== null) {
+      clearTimeout(this.scrollbarHideTimer);
+    }
+    this.scrollbarHideTimer = setTimeout(() => {
+      this.scrollbarHideTimer = null;
+      // A drag in flight means the user is actively interacting —
+      // keep the thumb visible until pointerup releases. Re-arm
+      // the timer with a fresh window in case the drag finishes
+      // before the next `revealScrollbar` call.
+      if (this.scrollbarDrag !== null) {
+        this.revealScrollbar();
+        return;
+      }
+      this.scrollbarEl.classList.remove("ciri-scrollbar-active");
+    }, PaneRenderer.SCROLLBAR_HIDE_AFTER_MS);
+  }
+
+  /// Pixel-distance the finger must travel before we commit to
+  /// "this is a vertical scroll gesture". Small enough to feel
+  /// responsive, large enough to filter taps.
+  private static readonly TOUCH_SCROLL_COMMIT_PX = 8;
+  /// Horizontal-vs-vertical ratio gate. Mirror of the chip strip's
+  /// swipe-axis ratio: bias toward vertical so a slightly diagonal
+  /// drag still scrolls instead of getting cancelled.
+  private static readonly TOUCH_SCROLL_AXIS_RATIO = 1.5;
+  /// Time constant for the momentum decay (seconds). Tuned for
+  /// iOS-feel: τ = 0.2s gives ~37% of initial velocity at 200ms,
+  /// ~5% at 600ms, ~0.7% at 1s. The "flick to scroll a screenful"
+  /// arc users expect from native mobile lists.
+  private static readonly TOUCH_MOMENTUM_TAU_SEC = 0.2;
+  /// Below this velocity (rows/sec), stop the fling — anything
+  /// slower is below visual perception and just burns CPU.
+  private static readonly TOUCH_MOMENTUM_STOP_VEL = 1;
+  /// Minimum pointerup velocity (rows/sec) to bother spawning a
+  /// fling. A slow / deliberate drag-and-stop should snap to its
+  /// final position, not glide past.
+  private static readonly TOUCH_MOMENTUM_MIN_LAUNCH_VEL = 8;
+  /// Exponential moving average factor for velocity smoothing. The
+  /// most recent sample carries this weight, the prior smoothed
+  /// value carries `1 - α`. 0.3 favors recency but still rejects
+  /// one-frame jitter.
+  private static readonly TOUCH_VEL_EMA_ALPHA = 0.3;
+
+  /// Suspend (or resume) the swipe-scroll handlers for the active
+  /// touch. The app sets this `true` on long-press so a subsequent
+  /// finger drag extends a text selection instead of scrolling, and
+  /// clears it when the gesture ends. Also cancels any in-flight scroll
+  /// state / momentum so the takeover is clean.
+  setTouchSelecting(active: boolean): void {
+    this.touchSelecting = active;
+    if (active) {
+      this.touchScrollState = null;
+      this.cancelTouchMomentum();
+    }
+  }
+
+  private onPanePointerDown(e: PointerEvent): void {
+    if (e.pointerType !== "touch") return;
+    if (this.touchSelecting) return;
+    if (this.gridRef === null) return;
+    // Mouse-aware TUI owns the touch — it'll be forwarded as a
+    // MouseInput via `app.ts`'s `mouseForward` path. Skip swipe.
+    if ((this.gridRef.meta.modeFlags & MODE_MOUSE_REPORT) !== 0) return;
+    // Touch on the scrollbar belongs to the thumb/track handlers
+    // installed in the constructor — let those run instead.
+    if (
+      e.target instanceof Element &&
+      e.target.closest(".ciri-scrollbar") !== null
+    ) {
+      return;
+    }
+    // No scrollback means nothing to scroll into. Saves work and
+    // avoids preventDefault'ing a tap that would otherwise focus
+    // the pane.
+    if (this.gridRef.scrollbackRows === 0 && this.scrollOffset === 0) return;
+    // Do NOT preventDefault here — the compat `mousedown` MUST
+    // bubble so the tile's `FocusPane` listener fires on tap.
+    // Once the gesture clearly commits to vertical scrolling
+    // (in `pointermove` below), we preventDefault subsequent
+    // events. The compat `mousedown` that already fired will
+    // cause `app.ts` to set its `dragState`, but with
+    // `mousemove` suppressed by our pointermove preventDefault
+    // the drag never accumulates motion — the eventual compat
+    // `mouseup` then resolves to a no-motion focus click and
+    // clears state cleanly.
+    //
+    // Stop any in-flight momentum from a previous fling — the new
+    // touch is the user reasserting control. iOS / Android both
+    // do this: tap-to-stop, then drag.
+    this.cancelTouchMomentum();
+    this.touchScrollState = {
+      startY: e.clientY,
+      lastY: e.clientY,
+      startX: e.clientX,
+      lastMoveTime: e.timeStamp,
+      pointerId: e.pointerId,
+      committed: false,
+      accumRows: 0,
+    };
+    this.touchScrollVel = 0;
+  }
+
+  private onPanePointerMove(e: PointerEvent): void {
+    if (this.touchSelecting) return;
+    const state = this.touchScrollState;
+    if (state === null || state.pointerId !== e.pointerId) return;
+    if (this.gridRef === null) return;
+    const dy = e.clientY - state.startY;
+    const dx = e.clientX - state.startX;
+    if (!state.committed) {
+      // Wait until the gesture clears the noise floor — below the
+      // commit threshold it's still ambiguous (tap that wandered?
+      // press that's about to be a long-press?).
+      if (Math.abs(dy) < PaneRenderer.TOUCH_SCROLL_COMMIT_PX) return;
+      if (
+        Math.abs(dx) > Math.abs(dy) * PaneRenderer.TOUCH_SCROLL_AXIS_RATIO
+      ) {
+        // Horizontal-dominant — not a scroll. Cancel state so the
+        // user can still pan / select sideways without us blocking.
+        this.touchScrollState = null;
+        return;
+      }
+      state.committed = true;
+      // Capture the pointer so the wrapper keeps getting events
+      // even if the finger drags off the pane (onto the chrome).
+      try {
+        this.wrapper.setPointerCapture(e.pointerId);
+      } catch {
+        // setPointerCapture can throw if the pointer is no longer
+        // active — harmless, just skip the capture.
+      }
+    }
+    e.preventDefault();
+    const deltaY = e.clientY - state.lastY;
+    const deltaT = e.timeStamp - state.lastMoveTime;
+    state.lastY = e.clientY;
+    state.lastMoveTime = e.timeStamp;
+    const rowHeightPx = this.estimateRowHeightPx();
+    if (rowHeightPx <= 0) return;
+    // Drag DOWN (positive deltaY) reveals HISTORY above. Match the
+    // platform `overflow: scroll` convention: finger movement and
+    // content movement are coupled — drag finger down, content
+    // moves down, top of content (history) becomes visible.
+    state.accumRows += deltaY / rowHeightPx;
+    const wholeRows = Math.trunc(state.accumRows);
+    if (wholeRows !== 0) {
+      state.accumRows -= wholeRows;
+      const next = PaneRenderer.clamp(
+        this.scrollOffset + wholeRows,
+        0,
+        this.gridRef.scrollbackRows,
+      );
+      if (next !== this.scrollOffset) {
+        this.scrollOffset = next;
+        this.rendererForcedRedraw = true;
+        // rAF-coalesce — pointermove on touch screens can fire at
+        // 90/120Hz, well above display refresh. Batching here is
+        // what keeps swipe smooth instead of jankily redrawing
+        // every input event.
+        this.scheduleRender();
+      }
+    }
+    // EMA-smooth velocity in rows/sec. Skip samples with implausible
+    // dt (>200ms — finger paused or browser hiccup) so the velocity
+    // doesn't tank to zero on a single laggy frame.
+    if (deltaT > 0 && deltaT < 200) {
+      const sampleVel = (deltaY / rowHeightPx / deltaT) * 1000;
+      this.touchScrollVel =
+        this.touchScrollVel * (1 - PaneRenderer.TOUCH_VEL_EMA_ALPHA) +
+        sampleVel * PaneRenderer.TOUCH_VEL_EMA_ALPHA;
+    }
+    this.revealScrollbar();
+  }
+
+  /// Pointer was cancelled by the browser/OS (gesture stolen, palm
+  /// rejection, …). Unlike `onPanePointerUp` this must NOT launch
+  /// momentum — the user didn't flick, the system aborted. Just release
+  /// capture and drop the in-flight scroll state.
+  private onPanePointerCancel(e: PointerEvent): void {
+    const state = this.touchScrollState;
+    if (state === null || state.pointerId !== e.pointerId) return;
+    if (state.committed) {
+      try {
+        this.wrapper.releasePointerCapture(e.pointerId);
+      } catch {
+        // Capture already released — fine.
+      }
+    }
+    this.touchScrollState = null;
+    this.touchScrollVel = 0;
+  }
+
+  private onPanePointerUp(e: PointerEvent): void {
+    const state = this.touchScrollState;
+    if (state === null || state.pointerId !== e.pointerId) return;
+    if (state.committed) {
+      try {
+        this.wrapper.releasePointerCapture(e.pointerId);
+      } catch {
+        // Capture already released — fine.
+      }
+      // Launch momentum if the finger was still moving fast enough.
+      // Below the threshold we treat the gesture as "intentional
+      // stop" — the user lifted off without flicking.
+      if (
+        Math.abs(this.touchScrollVel) >=
+        PaneRenderer.TOUCH_MOMENTUM_MIN_LAUNCH_VEL
+      ) {
+        this.startTouchMomentum();
+      }
+    }
+    this.touchScrollState = null;
+  }
+
+  private startTouchMomentum(): void {
+    this.cancelTouchMomentum();
+    this.touchMomentumAccum = 0;
+    this.touchMomentumLastTime = performance.now();
+    const step = (frameTime: number): void => {
+      if (this.destroyed || this.gridRef === null) {
+        this.touchMomentumRaf = null;
+        return;
+      }
+      const dtSec = (frameTime - this.touchMomentumLastTime) / 1000;
+      this.touchMomentumLastTime = frameTime;
+      // Apply current velocity to the row accumulator, commit
+      // whole rows.
+      this.touchMomentumAccum += this.touchScrollVel * dtSec;
+      const whole = Math.trunc(this.touchMomentumAccum);
+      if (whole !== 0) {
+        this.touchMomentumAccum -= whole;
+        const next = PaneRenderer.clamp(
+          this.scrollOffset + whole,
+          0,
+          this.gridRef.scrollbackRows,
+        );
+        if (next !== this.scrollOffset) {
+          this.scrollOffset = next;
+          this.rendererForcedRedraw = true;
+          this.render(this.gridRef);
+          this.revealScrollbar();
+        } else {
+          // Hit a boundary — stop drifting against the edge.
+          this.touchScrollVel = 0;
+        }
+      }
+      // Frame-rate-independent exponential decay:
+      //   v(t+dt) = v(t) × exp(-dt / τ)
+      // Gives the same visible motion on 60 / 90 / 120 fps.
+      this.touchScrollVel *= Math.exp(
+        -dtSec / PaneRenderer.TOUCH_MOMENTUM_TAU_SEC,
+      );
+      if (
+        Math.abs(this.touchScrollVel) < PaneRenderer.TOUCH_MOMENTUM_STOP_VEL
+      ) {
+        this.touchScrollVel = 0;
+        this.touchMomentumRaf = null;
+        return;
+      }
+      this.touchMomentumRaf = requestAnimationFrame(step);
+    };
+    this.touchMomentumRaf = requestAnimationFrame(step);
+  }
+
+  private cancelTouchMomentum(): void {
+    if (this.touchMomentumRaf !== null) {
+      cancelAnimationFrame(this.touchMomentumRaf);
+      this.touchMomentumRaf = null;
+    }
+    this.touchScrollVel = 0;
+    this.touchMomentumAccum = 0;
+  }
+
+  /// Schedule a render at the next animation frame, or no-op if one
+  /// is already pending. Use this from scroll paths (pointermove,
+  /// scrollbar drag) instead of calling `render()` synchronously
+  /// — pointer events fire faster than the display refresh, and a
+  /// per-event full-row repaint pegs the main thread. Coalescing
+  /// to once-per-frame keeps interactive scroll feeling smooth.
+  private scheduleRender(): void {
+    if (this.pendingScrollRenderRaf !== null) return;
+    this.pendingScrollRenderRaf = requestAnimationFrame(() => {
+      this.pendingScrollRenderRaf = null;
+      if (this.destroyed || this.gridRef === null) return;
+      this.render(this.gridRef);
+    });
+  }
+
+  /// Pixel height of a rendered row. Reads the first live row
+  /// container when present; otherwise approximates from the
+  /// wrapper's font-size × line-height (1.2 by convention; see the
+  /// inline-style setup in the constructor). Used by the touch
+  /// scroll handler to translate pixel deltas to row deltas.
+  private estimateRowHeightPx(): number {
+    if (this.rowEls.length > 0) {
+      const h = this.rowEls[0]!.getBoundingClientRect().height;
+      if (h > 0) return h;
+    }
+    const fs = parseFloat(this.wrapper.style.fontSize) || 14;
+    return fs * 1.2;
   }
 
   /// Set (or clear, with `null`) the selection overlay. The renderer
@@ -324,6 +1026,10 @@ export class PaneRenderer {
     if (clamped === this.scrollOffset) return;
     this.scrollOffset = clamped;
     this.rendererForcedRedraw = true;
+    // Surface the scrollbar so the user sees the position update.
+    // External callers (the app's wheel handler) reach scrolling
+    // through here, so this one site covers the wheel path.
+    this.revealScrollbar();
   }
 
   /// Current scroll offset (rows above the live bottom).
@@ -356,6 +1062,18 @@ export class PaneRenderer {
     this.selectionRowEls.length = 0;
     this.selection = null;
     this.preedit = null;
+    this.scrollbarDrag = null;
+    this.touchScrollState = null;
+    this.cancelTouchMomentum();
+    if (this.pendingScrollRenderRaf !== null) {
+      cancelAnimationFrame(this.pendingScrollRenderRaf);
+      this.pendingScrollRenderRaf = null;
+    }
+    if (this.scrollbarHideTimer !== null) {
+      clearTimeout(this.scrollbarHideTimer);
+      this.scrollbarHideTimer = null;
+    }
+    this.gridRef = null;
   }
 
   /// Public read-only handle to the wrapper element — useful for
@@ -499,6 +1217,144 @@ export class PaneRenderer {
       el.style.backgroundColor = bg;
       this.wrapper.appendChild(el);
       this.selectionRowEls.push(el);
+    }
+  }
+
+  /// Place (or replace) an inline image. `data` is raw RGBA bytes
+  /// (`pixelWidth × pixelHeight × 4`) — the server decodes sixel/kitty/
+  /// iTerm into RGBA before sending (`format: "rgba"`). The image is
+  /// painted once onto a `<canvas>` at native pixel size, then
+  /// CSS-scaled to its `widthCells × heightCells` box. `viewportRow` is
+  /// converted to an absolute buffer row so the image scrolls with the
+  /// content. Non-`rgba` formats are ignored (forward-compat guard).
+  setImage(
+    grid: PaneGrid,
+    image: {
+      imageId: bigint;
+      col: number;
+      row: number;
+      widthCells: number;
+      heightCells: number;
+      pixelWidth: number;
+      pixelHeight: number;
+      format: string;
+      data: Uint8Array;
+    },
+  ): void {
+    if (image.format !== "rgba") return;
+    const expected = image.pixelWidth * image.pixelHeight * 4;
+    if (image.pixelWidth <= 0 || image.pixelHeight <= 0) return;
+    if (image.data.length < expected) return; // truncated / malformed
+    const key = image.imageId.toString();
+    let entry = this.images.get(key);
+    if (entry === undefined) {
+      const canvas = this.doc.createElement("canvas");
+      canvas.className = "ciri-image";
+      canvas.style.position = "absolute";
+      canvas.style.pointerEvents = "none";
+      canvas.style.imageRendering = "pixelated";
+      this.wrapper.appendChild(canvas);
+      entry = {
+        canvas,
+        srcRow: 0,
+        col: image.col,
+        widthCells: image.widthCells,
+        heightCells: image.heightCells,
+      };
+      this.images.set(key, entry);
+    }
+    entry.canvas.width = image.pixelWidth;
+    entry.canvas.height = image.pixelHeight;
+    // `getContext` is absent in non-DOM test environments (jsdom) and
+    // can throw under strict canvas policies — tolerate both; the
+    // canvas element is still placed (sized/positioned) for layout.
+    let ctx: CanvasRenderingContext2D | null = null;
+    try {
+      ctx = entry.canvas.getContext("2d");
+    } catch {
+      ctx = null;
+    }
+    if (ctx !== null && typeof ImageData !== "undefined") {
+      // ImageData needs an exactly-sized, ArrayBuffer-backed clamped
+      // array (a view over `data.buffer`, which is `ArrayBufferLike`,
+      // doesn't satisfy the DOM type and may include trailing bytes).
+      const pixels = new Uint8ClampedArray(expected);
+      pixels.set(image.data.subarray(0, expected));
+      ctx.putImageData(
+        new ImageData(pixels, image.pixelWidth, image.pixelHeight),
+        0,
+        0,
+      );
+    }
+    // Anchor to the absolute combined-buffer row at placement time.
+    entry.srcRow = grid.scrollbackRows + image.row;
+    entry.col = image.col;
+    entry.widthCells = image.widthCells;
+    entry.heightCells = image.heightCells;
+    this.updateImages(grid);
+  }
+
+  /// Remove every placed image. Driven by the server's `ImageDeleted`
+  /// (cleared on screen-clear / alt-screen exit / pane reset).
+  clearImages(): void {
+    for (const { canvas } of this.images.values()) canvas.remove();
+    this.images.clear();
+  }
+
+  /// Keep image `srcRow` anchors valid as scrollback mutates. A
+  /// wholesale replace (epoch bump) invalidates every anchor's buffer
+  /// identity → drop all images (the server replays the live ones). A
+  /// front-trim shifts every surviving row's absolute index down by the
+  /// trim count → subtract it from each anchor, dropping any image whose
+  /// content was fully evicted. Plain append leaves srcRows stable, so
+  /// it needs no adjustment here.
+  private rebaseImagesForScrollback(grid: PaneGrid): void {
+    if (this.lastScrollbackEpoch === null) {
+      // First render — seed the baselines; nothing to rebase yet.
+      this.lastScrollbackEpoch = grid.scrollbackEpoch;
+      this.lastScrollbackTrimmed = grid.scrollbackTrimmed;
+      return;
+    }
+    if (grid.scrollbackEpoch !== this.lastScrollbackEpoch) {
+      this.lastScrollbackEpoch = grid.scrollbackEpoch;
+      this.lastScrollbackTrimmed = grid.scrollbackTrimmed;
+      if (this.images.size > 0) this.clearImages();
+      return;
+    }
+    const trimDelta = grid.scrollbackTrimmed - (this.lastScrollbackTrimmed ?? 0);
+    this.lastScrollbackTrimmed = grid.scrollbackTrimmed;
+    if (trimDelta <= 0 || this.images.size === 0) return;
+    for (const [key, entry] of this.images) {
+      entry.srcRow -= trimDelta;
+      // Entire image scrolled off the top of the (trimmed) buffer.
+      if (entry.srcRow + entry.heightCells <= 0) {
+        entry.canvas.remove();
+        this.images.delete(key);
+      }
+    }
+  }
+
+  /// Reposition / clip image canvases for the current scroll offset,
+  /// using the same `srcRow → displayRow` mapping as cells + selection.
+  private updateImages(grid: PaneGrid): void {
+    if (this.images.size === 0) return;
+    for (const entry of this.images.values()) {
+      const displayRow = entry.srcRow - grid.scrollbackRows + this.scrollOffset;
+      // Hide when the image's top row scrolls out of the viewport.
+      // (Partial clipping at the viewport edge is good enough for v1;
+      // `overflow: hidden` on the wrapper trims the overshoot.)
+      if (
+        displayRow + entry.heightCells <= 0 ||
+        displayRow >= grid.rows
+      ) {
+        entry.canvas.style.display = "none";
+        continue;
+      }
+      entry.canvas.style.display = "block";
+      entry.canvas.style.left = `${entry.col}ch`;
+      entry.canvas.style.top = `${displayRow * 1.2}em`;
+      entry.canvas.style.width = `${entry.widthCells}ch`;
+      entry.canvas.style.height = `${entry.heightCells * 1.2}em`;
     }
   }
 

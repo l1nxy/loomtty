@@ -5,9 +5,16 @@
 // `LayoutState`; we mirror it into a flex tree:
 //
 //   <div class="ciri-app">
-//     <div class="ciri-workspaces">                  ← tab strip
+//     <div class="ciri-workspaces">                  ← workspace tab strip
 //       <button class="ciri-ws[-active]" data-idx>...</button>
 //     </div>
+//     <nav class="ciri-panes" role="toolbar" aria-label="Switch active pane">
+//       <button class="ciri-pane-chip"             ← pane switcher chips
+//               type="button"
+//               data-chip-pane-id
+//               aria-current="true|false">title</button>
+//       ...
+//     </nav>
 //     <div class="ciri-workspace">                   ← active workspace content
 //       <div class="ciri-column[-active]" data-idx style="flex: <prop>">
 //         <div class="ciri-tile[-active]" data-pane-id style="flex: <weight>">
@@ -18,6 +25,16 @@
 //       ...
 //     </div>
 //   </div>
+//
+// The pane switcher (`.ciri-panes`) is a primary mobile / narrow-
+// viewport navigation hook: when columns shrink to unusable widths,
+// chips remain tappable. ARIA roles follow the toolbar pattern — a
+// flat row of related command buttons that each set the active
+// pane via the same `onPaneClick` callback the tile uses, with the
+// active chip carrying `aria-current="true"`. (Strict `role="tab"` +
+// `aria-selected` was considered but doesn't fit — that pattern
+// implies showing one tabpanel at a time, while our column/tile
+// layout keeps every pane visible.)
 //
 // LayoutManager owns the chrome; it knows nothing about cell rendering
 // or input. The caller (CiriApp) reads `getSlot(paneId)` to discover
@@ -33,10 +50,27 @@
 
 import type { LayoutState } from "@ciri/client";
 
+/// One button in the pane-bar's action group. `id` is opaque to
+/// LayoutManager — it just routes back through `onAction`. `label`
+/// is the `aria-label` (announced by screen readers) and `icon` is
+/// the visible glyph (a single Unicode character is fine; consumers
+/// who want SVG can wrap the call site).
+export interface PaneAction {
+  id: string;
+  label: string;
+  icon: string;
+}
+
 export interface LayoutManagerOptions {
   /// Fired when the user clicks anywhere inside a pane's tile slot —
   /// typically wired to `client.send({ tag: "FocusPane", paneId })`.
   onPaneClick?: (paneId: bigint) => void;
+  /// Fired when the user clicks a chip's per-pane close (×) button —
+  /// typically wired to `client.send({ tag: "ClosePane", paneId })`.
+  /// Separate callback (not piggybacked on `onPaneClick`) so the
+  /// caller can distinguish "switch to this pane" from "kill this
+  /// pane" without parsing event targets.
+  onPaneClose?: (paneId: bigint) => void;
   /// Fired when the user clicks a workspace tab — typically wired to
   /// `client.send({ tag: "SwitchWorkspace", workspaceIdx })`.
   onWorkspaceClick?: (idx: bigint) => void;
@@ -46,12 +80,30 @@ export interface LayoutManagerOptions {
   /// `[data-title]::before` to render a title bar without the
   /// renderer or layout owning the chrome.
   paneTitleFor?: (paneId: bigint) => string;
+  /// Optional list of quick-action buttons rendered after the pane
+  /// chips. Primarily a touch / mobile affordance for operations the
+  /// keyboard usually handles (new pane, focus directional, …). An
+  /// empty / omitted list renders no action group, no divider.
+  actions?: readonly PaneAction[];
+  /// Fired when the user clicks one of `actions`. The id is the same
+  /// value the caller supplied. LayoutManager doesn't know what each
+  /// action means — the wiring lives in the consumer.
+  onAction?: (id: string) => void;
+  /// Fired when the user picks a different session from the session
+  /// dropdown — typically wired to
+  /// `client.send({ tag: "SwitchSession", sessionName })`. The session
+  /// list itself is pushed in via `setSessions`; this only fires on a
+  /// user-driven change to a name other than the current one.
+  onSessionSelect?: (sessionName: string) => void;
 }
 
 export class LayoutManager {
   private readonly doc: Document;
   private readonly chrome: HTMLElement;
+  private readonly sessionBar: HTMLElement;
+  private readonly sessionSelect: HTMLSelectElement;
   private readonly wsTabs: HTMLElement;
+  private readonly paneBar: HTMLElement;
   private readonly wsContent: HTMLElement;
   /// `paneId.toString()` → tile slot DOM node, populated by
   /// `setLayout`. We key by string because `bigint` is not a valid
@@ -74,13 +126,68 @@ export class LayoutManager {
     this.doc = doc;
     this.chrome = doc.createElement("div");
     this.chrome.className = "ciri-app";
+    // Session switcher. Lives outside the per-layout chrome (wsTabs /
+    // paneBar are wiped on every `setLayout`); its options are managed
+    // separately via `setSessions`, so a layout reshape doesn't drop
+    // the dropdown or its open state. Hidden until ≥1 session is known.
+    this.sessionBar = doc.createElement("div");
+    this.sessionBar.className = "ciri-sessions";
+    this.sessionBar.hidden = true;
+    this.sessionSelect = doc.createElement("select");
+    this.sessionSelect.className = "ciri-session-select";
+    this.sessionSelect.setAttribute("aria-label", "Switch session");
+    this.sessionSelect.addEventListener("change", () => {
+      const name = this.sessionSelect.value;
+      if (name.length > 0) this.opts.onSessionSelect?.(name);
+    });
+    this.sessionBar.appendChild(this.sessionSelect);
     this.wsTabs = doc.createElement("div");
     this.wsTabs.className = "ciri-workspaces";
+    this.paneBar = doc.createElement("nav");
+    this.paneBar.className = "ciri-panes";
+    this.paneBar.setAttribute("role", "toolbar");
+    this.paneBar.setAttribute("aria-label", "Switch active pane");
+    this.paneBar.setAttribute("aria-orientation", "horizontal");
     this.wsContent = doc.createElement("div");
     this.wsContent.className = "ciri-workspace";
+    this.chrome.appendChild(this.sessionBar);
     this.chrome.appendChild(this.wsTabs);
+    this.chrome.appendChild(this.paneBar);
     this.chrome.appendChild(this.wsContent);
     this.root.appendChild(this.chrome);
+  }
+
+  /// Populate the session dropdown. `names` is the full session list
+  /// (server sorts it current-first); `activeName` is the session this
+  /// client is attached to and becomes the selected option. Rebuilds
+  /// only the `<option>`s — the `<select>` element itself persists, so
+  /// repeated calls don't disturb focus or an open native picker. The
+  /// bar hides when there are no sessions (e.g. a `__control__`-only
+  /// list) and shows otherwise, including the single-session case so
+  /// the user can always see which session they're in.
+  setSessions(names: readonly string[], activeName: string): void {
+    if (this.destroyed) {
+      throw new Error("LayoutManager: setSessions called after destroy");
+    }
+    const visible = names.filter((n) => !n.startsWith("__"));
+    if (visible.length === 0) {
+      this.sessionBar.hidden = true;
+      this.sessionSelect.replaceChildren();
+      return;
+    }
+    const options: Node[] = visible.map((name) => {
+      const opt = this.doc.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      if (name === activeName) opt.selected = true;
+      return opt;
+    });
+    this.sessionSelect.replaceChildren(...options);
+    // If the active session isn't in the list (e.g. an unresolved
+    // `__auto__` before SessionSwitched lands), leave the browser's
+    // default (first option) selected rather than forcing a value.
+    if (visible.includes(activeName)) this.sessionSelect.value = activeName;
+    this.sessionBar.hidden = false;
   }
 
   /// Reconcile DOM chrome to match `layout`. Existing tile slots are
@@ -111,14 +218,20 @@ export class LayoutManager {
     this.wsTabs.replaceChildren(...tabs);
 
     // Active workspace content. Empty layout (no workspaces) leaves
-    // wsContent blank.
+    // wsContent + paneBar blank.
     this.slots = new Map();
     const ws = layout.workspaces[activeWsIdx];
     if (ws === undefined) {
       this.wsContent.replaceChildren();
+      this.paneBar.replaceChildren();
       return;
     }
     const activeColIdx = Number(ws.activeColumnIdx);
+    // Pane chips traverse column-major so visual ordering matches the
+    // column/tile layout below. Each chip shares the tile's
+    // `onPaneClick` callback, so wire-level focus behavior is identical
+    // regardless of which control the user picks.
+    const chips: Node[] = [];
     const columns: Node[] = new Array(ws.columns.length);
     for (let ci = 0; ci < ws.columns.length; ci += 1) {
       const col = ws.columns[ci]!;
@@ -130,9 +243,15 @@ export class LayoutManager {
       // distributes free space in the same shape the server's layout
       // crate did. We do NOT honor widthFixedPx in v1 because resize
       // observers will renegotiate anyway.
+      //
+      // `display: flex` / `flex-direction: column` USED to be set
+      // inline here too, but inline styles override external CSS, so
+      // a "one-pane-per-screen" theme that wants `.ciri-column { display: none }`
+      // for inactive columns couldn't override them — every inactive
+      // column kept its `widthProportion` slice of the workspace and
+      // showed up as blank space. Themes should declare the column
+      // display rule in their own stylesheet now.
       colEl.style.flex = String(col.widthProportion);
-      colEl.style.display = "flex";
-      colEl.style.flexDirection = "column";
       colEl.dataset["columnIdx"] = String(ci);
 
       const activeTileIdx = Number(col.activeTileIdx);
@@ -161,11 +280,88 @@ export class LayoutManager {
         });
         tileEls[ti] = tileEl;
         this.slots.set(paneIdStr, tileEl);
+
+        // Matching chip in the pane bar. `data-chip-pane-id` (not
+        // `data-pane-id`) keeps `document.querySelector(
+        // "[data-pane-id=N]")` resolving to the tile slot — the
+        // tile is the render target, the chip is just a navigation
+        // affordance, and test / external callers reaching for
+        // "the pane's DOM" mean the tile.
+        const chip = this.doc.createElement("button");
+        chip.type = "button";
+        chip.className = "ciri-pane-chip";
+        chip.dataset["chipPaneId"] = paneIdStr;
+        chip.textContent = title.length > 0 ? title : `Pane ${paneIdStr}`;
+        // `aria-current="true"` flags the active item in a set —
+        // a closer fit than `aria-pressed` (which implies a toggle,
+        // but our chips don't deactivate when re-clicked) or
+        // `aria-selected` (which is tab-pattern-only). Inactive
+        // chips omit the attribute rather than carrying
+        // `aria-current="false"` to keep the DOM lean.
+        if (isActive) chip.setAttribute("aria-current", "true");
+        chip.addEventListener("click", () => {
+          this.opts.onPaneClick?.(paneIdBig);
+        });
+        chips.push(chip);
+
+        // Per-chip close (×) button — same pattern as a browser tab.
+        // Sibling button (not nested inside the chip) because HTML
+        // forbids `<button>` inside `<button>`; pairing them in a
+        // wrapping `<span class="ciri-pane-chip-group">` keeps the
+        // visual coupling without breaking the toolbar's flat focus
+        // order requirement either.
+        const closeBtn = this.doc.createElement("button");
+        closeBtn.type = "button";
+        closeBtn.className = "ciri-pane-close";
+        closeBtn.dataset["closePaneId"] = paneIdStr;
+        closeBtn.textContent = "✕";
+        closeBtn.setAttribute(
+          "aria-label",
+          `Close pane: ${title.length > 0 ? title : `Pane ${paneIdStr}`}`,
+        );
+        closeBtn.title = "Close pane";
+        closeBtn.addEventListener("click", () => {
+          this.opts.onPaneClose?.(paneIdBig);
+        });
+        chips.push(closeBtn);
       }
       colEl.replaceChildren(...tileEls);
       columns[ci] = colEl;
     }
     this.wsContent.replaceChildren(...columns);
+
+    // Action buttons follow the chips, separated by a divider so the
+    // two groups read as distinct ("which pane to focus" vs "what to
+    // do"). Both live inside the same `role="toolbar"` because they
+    // share keyboard navigation semantics (Tab cycles, screen reader
+    // announces "toolbar Switch active pane").
+    const actions = this.opts.actions ?? [];
+    const paneBarChildren: Node[] = [...chips];
+    if (chips.length > 0 && actions.length > 0) {
+      const divider = this.doc.createElement("span");
+      divider.className = "ciri-actions-divider";
+      // Pure visual separator — screen readers should skip it.
+      divider.setAttribute("role", "presentation");
+      divider.setAttribute("aria-hidden", "true");
+      paneBarChildren.push(divider);
+    }
+    for (const action of actions) {
+      const btn = this.doc.createElement("button");
+      btn.type = "button";
+      btn.className = "ciri-action";
+      btn.dataset["actionId"] = action.id;
+      btn.textContent = action.icon;
+      // `aria-label` carries the accessible name because the icon
+      // glyph alone is opaque to screen readers (and ambiguous to
+      // sighted users until they hover for a tooltip).
+      btn.setAttribute("aria-label", action.label);
+      btn.title = action.label;
+      btn.addEventListener("click", () => {
+        this.opts.onAction?.(action.id);
+      });
+      paneBarChildren.push(btn);
+    }
+    this.paneBar.replaceChildren(...paneBarChildren);
   }
 
   /// Lookup the tile slot DOM node for `paneId`, or `null` if the
@@ -181,9 +377,32 @@ export class LayoutManager {
   /// without a layout reshape. No-op when the pane isn't in the
   /// active workspace.
   setTileTitle(paneId: bigint, title: string): void {
-    const slot = this.slots.get(paneId.toString());
+    const paneIdStr = paneId.toString();
+    const slot = this.slots.get(paneIdStr);
     if (slot === undefined) return;
     slot.dataset["title"] = title;
+    // Keep the chip text in sync with the live title so the pane
+    // switcher reflects what the shell / program is doing right now,
+    // not the stale label captured at `setLayout` time. The pane id
+    // is always a stringified `bigint` (decimal digits only) so the
+    // selector value never needs escaping — and `CSS.escape` isn't
+    // implemented in some test runtimes (jsdom).
+    const display = title.length > 0 ? title : `Pane ${paneIdStr}`;
+    const chip = this.paneBar.querySelector<HTMLElement>(
+      `.ciri-pane-chip[data-chip-pane-id="${paneIdStr}"]`,
+    );
+    if (chip !== null) {
+      chip.textContent = display;
+    }
+    // Keep the close button's accessible name in sync with the
+    // pane's title — screen readers should announce "Close pane:
+    // nvim main.rs" rather than the stale "Pane 4".
+    const closeBtn = this.paneBar.querySelector<HTMLElement>(
+      `.ciri-pane-close[data-close-pane-id="${paneIdStr}"]`,
+    );
+    if (closeBtn !== null) {
+      closeBtn.setAttribute("aria-label", `Close pane: ${display}`);
+    }
   }
 
   /// Pane IDs currently rendered in the chrome (i.e. live in the

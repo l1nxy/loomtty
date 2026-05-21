@@ -261,4 +261,226 @@ describe("LayoutManager", () => {
     expect(fn).toHaveBeenCalledTimes(1);
     root.remove();
   });
+
+  describe("pane chip switcher", () => {
+    test("renders the chrome with a toolbar role on the chip bar", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      new LayoutManager(root);
+      const bar = root.querySelector(".ciri-panes");
+      expect(bar).not.toBeNull();
+      expect(bar!.getAttribute("role")).toBe("toolbar");
+      expect(bar!.getAttribute("aria-label")).toBe("Switch active pane");
+      root.remove();
+    });
+
+    test("renders one chip per pane in column-major order with the active one marked", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const lm = new LayoutManager(root);
+      // Two columns, first one stacks 2 tiles, second is single tile.
+      // Active column is 1 (right), so paneId=3 is the active.
+      lm.setLayout(
+        mkLayout([[[1n, 2n], [3n]]], {
+          activeColumns: [1n],
+        }),
+      );
+      const chips = root.querySelectorAll<HTMLButtonElement>(".ciri-pane-chip");
+      expect(chips.length).toBe(3);
+      expect(chips[0]!.dataset["chipPaneId"]).toBe("1");
+      expect(chips[1]!.dataset["chipPaneId"]).toBe("2");
+      expect(chips[2]!.dataset["chipPaneId"]).toBe("3");
+      // Only the active pane carries `aria-current="true"`; others
+      // omit the attribute (cleaner DOM than `aria-current="false"`).
+      expect(chips[0]!.getAttribute("aria-current")).toBeNull();
+      expect(chips[1]!.getAttribute("aria-current")).toBeNull();
+      expect(chips[2]!.getAttribute("aria-current")).toBe("true");
+      // Chip is a real button (Enter/Space activate it for free).
+      expect(chips[0]!.tagName).toBe("BUTTON");
+      expect(chips[0]!.type).toBe("button");
+      root.remove();
+    });
+
+    test("chip text falls back to `Pane N` when no title resolver is wired", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const lm = new LayoutManager(root);
+      lm.setLayout(mkLayout([[[42n]]]));
+      const chip = root.querySelector(".ciri-pane-chip")!;
+      expect(chip.textContent).toBe("Pane 42");
+      root.remove();
+    });
+
+    test("chip text uses paneTitleFor when provided, and refreshes on setTileTitle", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const titles = new Map<bigint, string>([[1n, "zsh"]]);
+      const lm = new LayoutManager(root, {
+        paneTitleFor: (id) => titles.get(id) ?? "",
+      });
+      lm.setLayout(mkLayout([[[1n]]]));
+      const chip = root.querySelector(".ciri-pane-chip")!;
+      expect(chip.textContent).toBe("zsh");
+      // setTileTitle updates the chip label in place.
+      lm.setTileTitle(1n, "nvim main.rs");
+      expect(chip.textContent).toBe("nvim main.rs");
+      // Clearing the title falls back to the `Pane N` placeholder so
+      // the chip stays visible (not blank) when the program exits or
+      // OSC 0/1/2 hasn't fired yet.
+      lm.setTileTitle(1n, "");
+      expect(chip.textContent).toBe("Pane 1");
+      root.remove();
+    });
+
+    test("clicking a chip fires the same onPaneClick the tile uses", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const fn = vi.fn();
+      const lm = new LayoutManager(root, { onPaneClick: fn });
+      lm.setLayout(mkLayout([[[1n], [2n]]]));
+      const chip2 = root.querySelector<HTMLButtonElement>(
+        '.ciri-pane-chip[data-chip-pane-id="2"]',
+      )!;
+      chip2.click();
+      expect(fn).toHaveBeenCalledTimes(1);
+      expect(fn).toHaveBeenCalledWith(2n);
+      root.remove();
+    });
+
+    test("chips do NOT shadow tile lookups via data-pane-id", () => {
+      // Existing tests and external callers reach for `the pane's
+      // DOM` via `[data-pane-id='N']`. The chip uses
+      // `data-chip-pane-id` so this selector still resolves to the
+      // tile slot, not the chip.
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const lm = new LayoutManager(root);
+      lm.setLayout(mkLayout([[[1n]]]));
+      const hit = root.querySelector("[data-pane-id='1']")!;
+      expect(hit.classList.contains("ciri-tile")).toBe(true);
+      expect(lm.getSlot(1n)).toBe(hit);
+      root.remove();
+    });
+
+    test("empty workspace renders an empty chip bar (no chips, no error)", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const lm = new LayoutManager(root);
+      lm.setLayout(mkLayout([[]]));
+      expect(root.querySelector(".ciri-panes")).not.toBeNull();
+      expect(root.querySelectorAll(".ciri-pane-chip").length).toBe(0);
+      root.remove();
+    });
+
+    test("each chip is followed by a per-pane close button with the matching id", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const lm = new LayoutManager(root);
+      lm.setLayout(mkLayout([[[1n], [2n]]]));
+      const closes = root.querySelectorAll<HTMLButtonElement>(".ciri-pane-close");
+      expect(closes.length).toBe(2);
+      expect(closes[0]!.dataset["closePaneId"]).toBe("1");
+      expect(closes[1]!.dataset["closePaneId"]).toBe("2");
+      // Accessible name carries the pane title (or the `Pane N`
+      // fallback) so screen readers don't just announce "close".
+      expect(closes[0]!.getAttribute("aria-label")).toBe("Close pane: Pane 1");
+      root.remove();
+    });
+
+    test("close button click fires onPaneClose with the chip's pane id (not onPaneClick)", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const onClick = vi.fn();
+      const onClose = vi.fn();
+      const lm = new LayoutManager(root, {
+        onPaneClick: onClick,
+        onPaneClose: onClose,
+      });
+      lm.setLayout(mkLayout([[[1n], [2n]]]));
+      const closeBtn = root.querySelector<HTMLButtonElement>(
+        '.ciri-pane-close[data-close-pane-id="2"]',
+      )!;
+      closeBtn.click();
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(onClose).toHaveBeenCalledWith(2n);
+      // The close click does NOT bubble through to onPaneClick — they
+      // are separate callbacks for separate intents.
+      expect(onClick).not.toHaveBeenCalled();
+      root.remove();
+    });
+
+    test("setTileTitle refreshes the close button's aria-label", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const lm = new LayoutManager(root, {
+        paneTitleFor: () => "zsh",
+      });
+      lm.setLayout(mkLayout([[[1n]]]));
+      const closeBtn = root.querySelector(".ciri-pane-close")!;
+      expect(closeBtn.getAttribute("aria-label")).toBe("Close pane: zsh");
+      lm.setTileTitle(1n, "nvim main.rs");
+      expect(closeBtn.getAttribute("aria-label")).toBe(
+        "Close pane: nvim main.rs",
+      );
+      root.remove();
+    });
+
+    test("actions: opts.actions renders one button per entry, with a divider after the chips", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const lm = new LayoutManager(root, {
+        actions: [
+          { id: "new-pane", icon: "+", label: "New pane" },
+          { id: "settings", icon: "⚙", label: "Settings" },
+        ],
+      });
+      lm.setLayout(mkLayout([[[1n]]]));
+      const actionEls = root.querySelectorAll<HTMLButtonElement>(".ciri-action");
+      expect(actionEls.length).toBe(2);
+      expect(actionEls[0]!.dataset["actionId"]).toBe("new-pane");
+      expect(actionEls[0]!.textContent).toBe("+");
+      expect(actionEls[0]!.getAttribute("aria-label")).toBe("New pane");
+      expect(actionEls[0]!.title).toBe("New pane");
+      // Divider appears between the chip group and the action group.
+      const divider = root.querySelector(".ciri-actions-divider")!;
+      expect(divider).not.toBeNull();
+      expect(divider.getAttribute("aria-hidden")).toBe("true");
+      // No divider when there are no actions.
+      const lm2 = new LayoutManager(document.body.appendChild(document.createElement("div")));
+      lm2.setLayout(mkLayout([[[1n]]]));
+      expect(document.querySelectorAll(".ciri-actions-divider").length).toBe(1);
+      root.remove();
+    });
+
+    test("clicking an action button fires onAction with the id", () => {
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const onAction = vi.fn();
+      const lm = new LayoutManager(root, {
+        actions: [{ id: "new-pane", icon: "+", label: "New pane" }],
+        onAction,
+      });
+      lm.setLayout(mkLayout([[[1n]]]));
+      const btn = root.querySelector<HTMLButtonElement>(".ciri-action")!;
+      btn.click();
+      expect(onAction).toHaveBeenCalledWith("new-pane");
+      root.remove();
+    });
+
+    test("no divider when the chip group is empty (but actions still render — empty workspace needs `+`)", () => {
+      // An empty workspace is exactly the state in which a "+ new
+      // pane" button is most useful — it's the way out of empty
+      // state. Keep the actions visible; the divider is what's
+      // skipped because there's no left-hand group to separate from.
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const lm = new LayoutManager(root, {
+        actions: [{ id: "new-pane", icon: "+", label: "New pane" }],
+      });
+      lm.setLayout(mkLayout([[]]));
+      expect(root.querySelectorAll(".ciri-actions-divider").length).toBe(0);
+      expect(root.querySelectorAll(".ciri-action").length).toBe(1);
+      root.remove();
+    });
+  });
 });

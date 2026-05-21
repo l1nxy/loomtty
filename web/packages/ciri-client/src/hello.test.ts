@@ -10,9 +10,11 @@ import {
 } from "./__generated__/fixtures.js";
 import {
   HandshakeError,
+  decodeClientHello,
   decodeServerHello,
   encodeClientHello,
 } from "./hello.js";
+import { WIRE_PROTOCOL_VERSION } from "./__generated__/fixtures.js";
 
 function bytesToHex(b: Uint8Array): string {
   let s = "";
@@ -106,6 +108,20 @@ describe("ClientHello encoder", () => {
     expect(bytes[0]).toBe(0x43); // magic "C"
   });
 
+  test("accepts the auto-attach escape (`__auto__`)", () => {
+    // The server resolves `__auto__` to a concrete session at handshake
+    // time (most-recent-or-new). Like `__control__` it's `__`-prefixed,
+    // so the lowercase-ASCII validator must let it through unencoded.
+    const bytes = encodeClientHello({
+      sessionName: "__auto__",
+      width: 800,
+      height: 600,
+      cellWidth: 9,
+      cellHeight: 18,
+    });
+    expect(bytes[0]).toBe(0x43); // magic "C"
+  });
+
   test("rejects non-finite cell dims", () => {
     expect(() =>
       encodeClientHello({
@@ -171,6 +187,114 @@ describe("ServerHello decoder", () => {
 
   test("rejects oversize input (peer might send LZ4-compressed frame)", () => {
     expect(() => decodeServerHello(new Uint8Array(9))).toThrow(/8 bytes/);
+  });
+});
+
+describe("ClientHello decoder", () => {
+  for (const f of HELLO_FIXTURES) {
+    test(`round-trip ${JSON.stringify(f.name)}`, () => {
+      const bytes = hexToBytes(f.hex);
+      const out = decodeClientHello(bytes);
+      expect(out.hello).toEqual(f.hello);
+      expect(out.wireVersion).toBe(WIRE_PROTOCOL_VERSION);
+    });
+  }
+
+  test("encode → decode round-trip preserves all fields", () => {
+    const original = {
+      sessionName: "fresh-fox-12",
+      width: 1920,
+      height: 1080,
+      cellWidth: 8.0,
+      cellHeight: 16.0,
+    };
+    const bytes = encodeClientHello(original);
+    const { hello } = decodeClientHello(bytes);
+    expect(hello).toEqual(original);
+  });
+
+  test("accepts `__control__` (encoder doesn't gate on charset for it)", () => {
+    // The decoder must be at least as lenient as `decode_client_hello_parts`
+    // on the Rust side — that path leaves session-name validation to
+    // `validate_name` in connection.rs. A diagnostic that rejects
+    // `__control__` would mis-flag legitimate IPC clients.
+    const bytes = encodeClientHello({
+      sessionName: "__control__",
+      width: 800,
+      height: 600,
+      cellWidth: 9,
+      cellHeight: 18,
+    });
+    const { hello } = decodeClientHello(bytes);
+    expect(hello.sessionName).toBe("__control__");
+  });
+
+  test("rejects bad magic", () => {
+    const bytes = encodeClientHello({
+      sessionName: "main",
+      width: 800,
+      height: 600,
+      cellWidth: 9,
+      cellHeight: 18,
+    });
+    bytes[0] = 0x44; // "DIRI"
+    expect(() => decodeClientHello(bytes)).toThrow(/bad magic/);
+  });
+
+  test("rejects wrong wire version", () => {
+    const bytes = encodeClientHello({
+      sessionName: "main",
+      width: 800,
+      height: 600,
+      cellWidth: 9,
+      cellHeight: 18,
+    });
+    bytes[8] = 0xff;
+    expect(() => decodeClientHello(bytes)).toThrow(/wire protocol/);
+  });
+
+  test("rejects truncated header", () => {
+    expect(() => decodeClientHello(new Uint8Array(5))).toThrow(/truncated/);
+  });
+
+  test("rejects truncated body (header says more bytes than buffer holds)", () => {
+    const bytes = encodeClientHello({
+      sessionName: "main",
+      width: 800,
+      height: 600,
+      cellWidth: 9,
+      cellHeight: 18,
+    });
+    const cut = bytes.subarray(0, bytes.length - 4);
+    expect(() => decodeClientHello(cut)).toThrow(/truncated/);
+  });
+
+  test("rejects invalid utf-8 in session name", () => {
+    const bytes = encodeClientHello({
+      sessionName: "main",
+      width: 800,
+      height: 600,
+      cellWidth: 9,
+      cellHeight: 18,
+    });
+    // Overwrite the first session-name byte with a lone continuation
+    // byte (0x80) — invalid UTF-8.
+    bytes[11] = 0x80;
+    expect(() => decodeClientHello(bytes)).toThrow(/utf8/);
+  });
+
+  test("rejects out-of-range viewport on decode (mirrors encoder)", () => {
+    const bytes = encodeClientHello({
+      sessionName: "main",
+      width: 800,
+      height: 600,
+      cellWidth: 9,
+      cellHeight: 18,
+    });
+    // Stomp the width field (offset = 11 + nameLen) with 0.
+    const widthOff = 11 + 4;
+    new DataView(bytes.buffer).setUint32(widthOff, 0, true);
+    expect(() => decodeClientHello(bytes)).toThrow(/width/);
   });
 });
 

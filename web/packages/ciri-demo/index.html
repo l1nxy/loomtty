@@ -2,68 +2,616 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>ciritty — web demo</title>
     <style>
+      /* ── Design tokens ────────────────────────────────────────────
+         Two layers: primitives (raw values) and semantic aliases
+         (intent). Components only reference semantic tokens so a
+         theme override (or a future light-mode flip) is a single
+         block of variable rebinding, not a search-and-replace
+         through every component rule. */
       :root {
         color-scheme: dark;
+
+        /* Primitives — neutral surface scale (darkest → lightest). */
+        --c-neutral-0: #000;
+        --c-neutral-50: #141414;
+        --c-neutral-100: #1a1a1a;
+        --c-neutral-200: #1f1f1f;
+        --c-neutral-300: #2a2a2a;
+        --c-neutral-400: #333;
+        --c-neutral-500: #444;
+        --c-neutral-700: #9aa;
+        --c-neutral-800: #c9d1d3;
+        --c-neutral-900: #d3d7cf;
+        --c-neutral-950: #e7eef5;
+
+        --c-accent-bg: #2a3f5a;
+        --c-accent-border: #4d7fb3;
+        --c-scrollbar-thumb: #4a5057;
+        --c-scrollbar-thumb-hover: #6b7178;
+
+        --c-status-ok: #4e9a06;
+        --c-status-warn: #c4a000;
+        --c-status-err: #ef2929;
+
+        /* Semantic — components reach for these. */
+        --bg-app: var(--c-neutral-0);
+        --bg-chrome: var(--c-neutral-50);
+        --bg-chrome-strong: var(--c-neutral-100);
+        --bg-chip: var(--c-neutral-200);
+        --bg-chip-hover: var(--c-neutral-300);
+        --bg-chip-current: var(--c-accent-bg);
+
+        --fg: var(--c-neutral-900);
+        --fg-muted: var(--c-neutral-700);
+        --fg-strong: var(--c-neutral-950);
+        --fg-err: var(--c-status-err);
+
+        --border: var(--c-neutral-400);
+        --border-strong: var(--c-neutral-500);
+        --border-accent: var(--c-accent-border);
+
+        /* Spacing — 4px base. */
+        --space-1: 4px;
+        --space-2: 8px;
+        --space-3: 12px;
+
+        /* Sizing — touch / pointer thresholds. WCAG 2.2 recommends
+           ≥ 24×24 CSS px hit targets, vendor guidelines push higher
+           on touch (Apple 44, Google 48). We use 32 cozy / 44 touch. */
+        --hit-cozy: 32px;
+        --hit-touch: 44px;
+
+        /* Radius. */
+        --radius-pill: 14px;
+
+        /* Type. */
+        --font-mono: "JetBrains Mono", "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+        --font-sm: 12px;
+        --font-md: 13px;
       }
+
+      /* ── Page chrome ─────────────────────────────────────────── */
       html,
       body {
         height: 100%;
         margin: 0;
         padding: 0;
-        background: #000;
-        color: #d3d7cf;
-        font-family: "JetBrains Mono", "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+        background: var(--bg-app);
+        color: var(--fg);
+        font-family: var(--font-mono);
       }
       body {
         display: flex;
         flex-direction: column;
       }
+
+      /* ── Connection status strip ─────────────────────────────── */
       #status {
         flex: 0 0 auto;
-        padding: 4px 12px;
-        font-size: 12px;
+        padding: var(--space-1) var(--space-3);
+        font-size: var(--font-sm);
         line-height: 18px;
-        background: #1a1a1a;
-        border-bottom: 1px solid #333;
-        color: #9aa;
+        background: var(--bg-chrome-strong);
+        border-bottom: 1px solid var(--border);
+        color: var(--fg-muted);
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: var(--space-3);
       }
       #status .dot {
         width: 8px;
         height: 8px;
         border-radius: 50%;
-        background: #888;
+        background: var(--fg-muted);
         flex: 0 0 auto;
       }
       #status.connected .dot {
-        background: #4e9a06;
+        background: var(--c-status-ok);
       }
       #status.error .dot {
-        background: #ef2929;
+        background: var(--c-status-err);
       }
       #status.connecting .dot {
-        background: #c4a000;
+        background: var(--c-status-warn);
       }
       #status .url {
         opacity: 0.6;
       }
       #status .err {
-        color: #ef2929;
+        color: var(--fg-err);
         margin-left: auto;
         max-width: 50ch;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
+
+      /* ── Mount root ──────────────────────────────────────────── */
       #app {
         flex: 1 1 auto;
         min-height: 0;
         position: relative;
+      }
+
+      /* ── LayoutManager chrome ────────────────────────────────────
+         The three nested divs `.ciri-app / .ciri-workspace /
+         .ciri-pane` ship from LayoutManager unstyled — without these
+         rules `.ciri-workspace`'s default `height: auto` collapses
+         to zero, `viewportEl.getBoundingClientRect()` reports
+         height=0, the app clamps to `max(1, 0)=1`, and the server
+         allocates a 1-row pane that gets buried by the first command. */
+      .ciri-app {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        width: 100%;
+        /* Belt-and-suspenders: as a flex child of `#app`, the
+           default `min-width: auto` lets the box expand to its
+           content's intrinsic width. Force the container to honor
+           its allocated viewport width so descendants with
+           `overflow-x: auto` clip & scroll instead of spilling. */
+        min-width: 0;
+      }
+      .ciri-workspaces {
+        flex: 0 0 auto;
+        min-width: 0;
+      }
+      /* Session switcher — a native <select> styled to match the chip
+         chrome. Sits above the workspace tabs. Hidden (via the [hidden]
+         attribute set by LayoutManager) until ≥1 session is known. */
+      .ciri-sessions {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        padding: var(--space-1) var(--space-2);
+      }
+      .ciri-sessions[hidden] {
+        display: none;
+      }
+      .ciri-session-select {
+        flex: 0 0 auto;
+        max-width: 100%;
+        min-height: var(--hit-cozy);
+        padding: var(--space-1) var(--space-2);
+        background: var(--bg-chip);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-pill);
+        font-family: inherit;
+        font-size: var(--font-md);
+        line-height: 1;
+        cursor: pointer;
+      }
+      .ciri-session-select:hover {
+        background: var(--bg-chip-hover);
+        border-color: var(--border-strong);
+      }
+      .ciri-session-select:focus-visible {
+        outline: 2px solid var(--border-accent);
+        outline-offset: 1px;
+      }
+      /* ── Scrollback find bar ──────────────────────────────────────
+         Floating top-right overlay; toggled via the `hidden` attribute
+         by CiriApp. Sits above the terminal (high z-index) so it never
+         gets clipped by the workspace area. */
+      .ciri-search {
+        position: absolute;
+        top: var(--space-2);
+        right: var(--space-2);
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        gap: var(--space-1);
+        padding: var(--space-1) var(--space-2);
+        background: var(--bg-chip);
+        border: 1px solid var(--border-strong);
+        border-radius: var(--radius-pill);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+      }
+      .ciri-search[hidden] {
+        display: none;
+      }
+      .ciri-search-input {
+        min-width: 14ch;
+        min-height: var(--hit-cozy);
+        padding: var(--space-1) var(--space-2);
+        background: var(--bg);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-pill);
+        font-family: inherit;
+        font-size: var(--font-md);
+      }
+      .ciri-search-input:focus-visible {
+        outline: 2px solid var(--border-accent);
+        outline-offset: 1px;
+      }
+      .ciri-search-status {
+        min-width: 5ch;
+        text-align: center;
+        color: var(--fg-dim, var(--fg));
+        font-size: var(--font-sm, var(--font-md));
+        font-variant-numeric: tabular-nums;
+      }
+      .ciri-search-btn {
+        min-height: var(--hit-cozy);
+        min-width: var(--hit-cozy);
+        padding: var(--space-1);
+        background: transparent;
+        color: var(--fg);
+        border: 1px solid transparent;
+        border-radius: var(--radius-pill);
+        font-family: inherit;
+        font-size: var(--font-md);
+        line-height: 1;
+        cursor: pointer;
+      }
+      .ciri-search-btn:hover {
+        background: var(--bg-chip-hover);
+        border-color: var(--border);
+      }
+      /* Inline image canvas (sixel/kitty/iTerm). Positioned + sized by
+         the renderer; this is just a hook for theme overrides. */
+      .ciri-image {
+        z-index: 1;
+      }
+      /* ── Right-click context menu (Copy / Paste / Find) ───────────
+         `position: fixed` at the click point, set inline by CiriApp. */
+      .ciri-contextmenu {
+        position: fixed;
+        z-index: 30;
+        display: flex;
+        flex-direction: column;
+        min-width: 12ch;
+        padding: var(--space-1);
+        background: var(--bg-chip);
+        border: 1px solid var(--border-strong);
+        border-radius: var(--radius-md, 8px);
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+      }
+      .ciri-contextmenu[hidden] {
+        display: none;
+      }
+      .ciri-contextmenu-item {
+        min-height: var(--hit-cozy);
+        padding: var(--space-1) var(--space-2);
+        text-align: left;
+        background: transparent;
+        color: var(--fg);
+        border: 0;
+        border-radius: var(--radius-pill);
+        font-family: inherit;
+        font-size: var(--font-md);
+        cursor: pointer;
+      }
+      .ciri-contextmenu-item:hover:not(:disabled) {
+        background: var(--bg-chip-hover);
+      }
+      .ciri-contextmenu-item:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      /* Floating "show keyboard" button — touch devices only. */
+      .ciri-keyboard-toggle {
+        position: fixed;
+        right: var(--space-3, 16px);
+        bottom: var(--space-3, 16px);
+        z-index: 25;
+        width: 48px;
+        height: 48px;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        font-size: 24px;
+        line-height: 1;
+        color: var(--fg);
+        background: var(--bg-chip);
+        border: 1px solid var(--border-strong);
+        border-radius: 50%;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        cursor: pointer;
+      }
+      @media (pointer: coarse) {
+        .ciri-keyboard-toggle {
+          display: flex;
+        }
+      }
+      /* "One screen, one pane" rendering — web never shows multiple
+         panes side-by-side. The server's column/tile layout still
+         exists for protocol fidelity (CreatePane / FocusPane round-
+         trips, scrollback per pane, mouse coords, …), and the DOM
+         under `.ciri-workspace` still carries every column/tile that
+         the server reports. We just CSS-hide the inactive ones so
+         the active pane fills the whole workspace area. Chips on
+         `.ciri-panes` are how the user switches between them. */
+      .ciri-workspace {
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: row;
+        overflow: hidden;
+        position: relative;
+      }
+      /* LayoutManager no longer sets `display`/`flex-direction`
+         inline on columns — the theme owns that decision. We hide
+         inactive columns entirely and give the active one a flex
+         column layout so its stacked tiles still flow vertically. */
+      .ciri-column {
+        display: none;
+      }
+      .ciri-column-active {
+        display: flex;
+        flex-direction: column;
+        /* The active column MUST fill the workspace regardless of
+           the server-reported `widthProportion` that LayoutManager
+           writes inline as `style.flex = "0.5"` (etc.). A normal
+           class selector can't beat that inline value, so the
+           visible column would otherwise honor its 0.5 share and
+           leave the right half of the workspace empty (with the
+           scrollbar appearing inset from the screen edge as a
+           side effect). `!important` overrides the inline. The
+           inline value is still read by the column-resize wire
+           path to compute proportion deltas — semantics intact,
+           just visually pinned to full width. */
+        flex: 1 1 100% !important;
+      }
+      .ciri-tile {
+        display: none;
+      }
+      .ciri-tile-active {
+        display: flex;
+        /* Same `!important` trick as `.ciri-column-active` — the
+           tile's inline `style.flex = <weight>` would otherwise
+           leave stacked tiles at fractional heights. With non-
+           active tiles `display: none`, the active one needs the
+           full column height. */
+        flex: 1 1 100% !important;
+      }
+      .ciri-pane {
+        height: 100%;
+        width: 100%;
+      }
+
+      /* Overlay scrollbar. Truly non-occluding by default:
+         `pointer-events: none` on both track and thumb means
+         clicks at the right edge fall through to the cells
+         underneath. Only when the renderer adds
+         `.ciri-scrollbar-active` (after wheel / swipe / drag, for
+         ~1.5s) do the events get caught — that's also when the
+         thumb fades in. Idle = invisible + non-blocking, exactly
+         like macOS/iOS overlay scrollbars.
+         PaneRenderer toggles `display: none` on the whole track
+         when the pane has no scrollback or is in mouse-mode. */
+      .ciri-scrollbar {
+        width: 12px;
+        background: transparent;
+        pointer-events: none;
+      }
+      .ciri-scrollbar.ciri-scrollbar-active,
+      .ciri-scrollbar.ciri-scrollbar-dragging {
+        pointer-events: auto;
+      }
+      .ciri-scrollbar-thumb {
+        background: var(--c-scrollbar-thumb);
+        border-radius: 2px;
+        width: 4px;
+        opacity: 0;
+        pointer-events: none;
+        cursor: grab;
+        transition:
+          opacity 200ms ease-out,
+          width 120ms ease-out,
+          background-color 120ms ease-out,
+          border-radius 120ms ease-out;
+      }
+      .ciri-scrollbar.ciri-scrollbar-active .ciri-scrollbar-thumb,
+      .ciri-scrollbar.ciri-scrollbar-dragging .ciri-scrollbar-thumb {
+        opacity: 0.85;
+        pointer-events: auto;
+        background: var(--c-scrollbar-thumb-hover);
+        width: 8px;
+        border-radius: 4px;
+      }
+      .ciri-scrollbar.ciri-scrollbar-dragging .ciri-scrollbar-thumb {
+        cursor: grabbing;
+      }
+
+      /* Touch / mobile: same auto-hide model. Slightly thicker
+         visible thumb because there's no fine-grained pointer. */
+      @media (pointer: coarse) {
+        .ciri-scrollbar.ciri-scrollbar-active .ciri-scrollbar-thumb,
+        .ciri-scrollbar.ciri-scrollbar-dragging .ciri-scrollbar-thumb {
+          width: 10px;
+        }
+      }
+
+      /* ── Pane switcher (ARIA toolbar) ────────────────────────────
+         A row of pill chips, one per pane, that activates the same
+         FocusPane wire path the tile click does. Primary use case is
+         mobile, where columns shrink to unusable widths — chips give
+         a touch-friendly escape hatch. Always rendered; the active
+         chip is highlighted via `[aria-current="true"]`. Themes
+         (or callers) can hide the bar wholesale with
+         `.ciri-panes { display: none }` if undesired. */
+      .ciri-panes {
+        flex: 0 0 auto;
+        display: flex;
+        flex-wrap: nowrap;
+        gap: var(--space-2);
+        padding: var(--space-1) var(--space-2);
+        background: var(--bg-chrome);
+        border-bottom: 1px solid var(--border);
+        overflow-x: auto;
+        overflow-y: hidden;
+        scroll-snap-type: x proximity;
+        scrollbar-width: thin;
+        -webkit-overflow-scrolling: touch;
+        /* Hide the scrollbar in WebKit when not needed; modern
+           browsers fade it on inactivity anyway. */
+        scrollbar-color: var(--border-strong) transparent;
+        /* Without `min-width: 0`, this flex item refuses to shrink
+           below its content's intrinsic width: many chips would
+           inflate `.ciri-panes` past the viewport, the page itself
+           would scroll horizontally, and `overflow-x: auto` would
+           never engage. With `min-width: 0` the strip honors its
+           allocated width and chips overflow within it — exactly
+           the "swipe chips horizontally" UX the mobile breakpoint
+           expects. iOS Safari is especially prone to this trap.
+           See: https://css-tricks.com/flexbox-truncated-text/ */
+        min-width: 0;
+      }
+      .ciri-pane-chip {
+        flex: 0 0 auto;
+        min-height: var(--hit-cozy);
+        padding: var(--space-1) var(--space-3);
+        background: var(--bg-chip);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-pill);
+        font-family: inherit;
+        font-size: var(--font-sm);
+        line-height: 1.5;
+        max-width: 24ch;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        cursor: pointer;
+        scroll-snap-align: start;
+        transition:
+          background-color 120ms ease-out,
+          border-color 120ms ease-out,
+          color 120ms ease-out;
+      }
+      .ciri-pane-chip:hover {
+        background: var(--bg-chip-hover);
+        border-color: var(--border-strong);
+      }
+      .ciri-pane-chip:focus-visible {
+        outline: 2px solid var(--border-accent);
+        outline-offset: 1px;
+      }
+      .ciri-pane-chip[aria-current="true"] {
+        background: var(--bg-chip-current);
+        color: var(--fg-strong);
+        border-color: var(--border-accent);
+      }
+
+      /* Per-chip close (×) — sits next to the chip it closes, styled
+         as a smaller square button so the chip-then-× pair reads as
+         a single tab. Lighter weight than the chip itself; only the
+         × glyph is rendered, the accessible name lives in
+         `aria-label`. */
+      .ciri-pane-close {
+        flex: 0 0 auto;
+        min-height: var(--hit-cozy);
+        width: var(--hit-cozy);
+        margin-left: calc(var(--space-2) * -1);
+        background: var(--bg-chip);
+        color: var(--fg-muted);
+        border: 1px solid var(--border);
+        border-left: none;
+        border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+        font-family: inherit;
+        font-size: var(--font-md);
+        line-height: 1;
+        cursor: pointer;
+        transition:
+          background-color 120ms ease-out,
+          border-color 120ms ease-out,
+          color 120ms ease-out;
+      }
+      .ciri-pane-close:hover {
+        background: var(--bg-chip-hover);
+        border-color: var(--border-strong);
+        color: var(--fg);
+      }
+      .ciri-pane-close:focus-visible {
+        outline: 2px solid var(--border-accent);
+        outline-offset: 1px;
+      }
+      /* When the chip it closes is the active pane, paint the close
+         the same accent so the pair stays visually unified. */
+      .ciri-pane-chip[aria-current="true"] + .ciri-pane-close {
+        background: var(--bg-chip-current);
+        color: var(--fg-strong);
+        border-color: var(--border-accent);
+      }
+      /* The chip itself loses its right rounding when followed by a
+         close button so the pair shares a single pill silhouette. */
+      .ciri-pane-chip:has(+ .ciri-pane-close) {
+        border-top-right-radius: 0;
+        border-bottom-right-radius: 0;
+        border-right: none;
+      }
+
+      /* Divider between the chip group and the action group. Purely
+         decorative — `aria-hidden="true"` on the DOM node hides it
+         from screen readers. */
+      .ciri-actions-divider {
+        flex: 0 0 auto;
+        align-self: stretch;
+        width: 1px;
+        margin: var(--space-1) var(--space-1);
+        background: var(--border);
+      }
+
+      /* Quick-action buttons (＋ new pane, …). Square hit-target so
+         touch users get a comfortable target without the rounding
+         hinting at "click to switch" (which is what chips do). */
+      .ciri-action {
+        flex: 0 0 auto;
+        min-height: var(--hit-cozy);
+        min-width: var(--hit-cozy);
+        padding: var(--space-1) var(--space-2);
+        background: var(--bg-chip);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-pill);
+        font-family: inherit;
+        font-size: var(--font-md);
+        line-height: 1;
+        cursor: pointer;
+        transition:
+          background-color 120ms ease-out,
+          border-color 120ms ease-out;
+      }
+      .ciri-action:hover {
+        background: var(--bg-chip-hover);
+        border-color: var(--border-strong);
+      }
+      .ciri-action:focus-visible {
+        outline: 2px solid var(--border-accent);
+        outline-offset: 1px;
+      }
+
+      /* ── Touch / narrow-viewport adjustments ──────────────────────
+         Raise chips to the 44 px hit target Apple HIG / Google MD
+         recommend; let the workspace area scroll horizontally if
+         columns overflow (typically only happens on phones with a
+         multi-column workspace from a desktop session). */
+      @media (pointer: coarse), (max-width: 700px) {
+        .ciri-pane-chip {
+          min-height: var(--hit-touch);
+          font-size: var(--font-md);
+          padding: var(--space-2) var(--space-3);
+        }
+        .ciri-pane-close {
+          min-height: var(--hit-touch);
+          width: var(--hit-touch);
+          font-size: 16px;
+        }
+        .ciri-action {
+          min-height: var(--hit-touch);
+          min-width: var(--hit-touch);
+          font-size: 18px;
+        }
+        .ciri-workspace {
+          overflow-x: auto;
+        }
       }
     </style>
   </head>

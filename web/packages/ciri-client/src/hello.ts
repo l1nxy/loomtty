@@ -113,6 +113,81 @@ export function encodeClientHello(hello: ClientHello): Uint8Array {
   return buf;
 }
 
+/** Decode a ClientHello byte sequence — the inverse of
+ *  [`encodeClientHello`]. Mirrors `parse_client_hello_header` +
+ *  `decode_client_hello_parts` on the Rust side
+ *  (`crates/ciri-protocol/src/codec/handshake.rs`).
+ *
+ *  Useful for dev tooling (the bridge's diagnostic log, replay
+ *  fixtures, round-trip tests) — production clients don't decode
+ *  their own ClientHello.
+ *
+ *  Throws `HandshakeError` on bad magic, wrong wire version,
+ *  truncated payload, oversize session name, non-UTF-8 session name,
+ *  or any viewport / cell dim that fails the same validation
+ *  `encodeClientHello` applies on the way out. */
+export function decodeClientHello(bytes: Uint8Array): {
+  hello: ClientHello;
+  peerVersion: number;
+  wireVersion: number;
+} {
+  if (bytes.length < CLIENT_HELLO_HEADER_LEN) {
+    throw new HandshakeError(
+      `ClientHello truncated: need at least ${CLIENT_HELLO_HEADER_LEN} header bytes, got ${bytes.length}`,
+    );
+  }
+  for (let i = 0; i < 4; i += 1) {
+    if (bytes[i] !== HANDSHAKE_MAGIC[i]) {
+      throw new HandshakeError(
+        `ClientHello: bad magic (got 0x${(bytes[i] ?? 0).toString(16)} at offset ${i})`,
+      );
+    }
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const peerVersion = view.getUint32(4, true);
+  const wireVersion = bytes[8]!;
+  if (wireVersion !== WIRE_PROTOCOL_VERSION) {
+    throw new HandshakeError(
+      `incompatible wire protocol: peer=${wireVersion}, local=${WIRE_PROTOCOL_VERSION}`,
+    );
+  }
+  const nameLen = view.getUint16(9, true);
+  if (nameLen > MAX_SESSION_NAME_LEN) {
+    throw new HandshakeError(
+      `ClientHello: session name length ${nameLen} exceeds max ${MAX_SESSION_NAME_LEN}`,
+    );
+  }
+  const total = CLIENT_HELLO_HEADER_LEN + nameLen + CLIENT_HELLO_FIXED_FIELDS_LEN;
+  if (bytes.length < total) {
+    throw new HandshakeError(
+      `ClientHello truncated: declared length ${total}, got ${bytes.length}`,
+    );
+  }
+  let sessionName: string;
+  try {
+    sessionName = new TextDecoder("utf-8", { fatal: true }).decode(
+      bytes.subarray(CLIENT_HELLO_HEADER_LEN, CLIENT_HELLO_HEADER_LEN + nameLen),
+    );
+  } catch (e) {
+    throw new HandshakeError("ClientHello: invalid session name utf8", e);
+  }
+  let p = CLIENT_HELLO_HEADER_LEN + nameLen;
+  const width = view.getUint32(p, true); p += 4;
+  const height = view.getUint32(p, true); p += 4;
+  const cellWidth = view.getFloat32(p, true); p += 4;
+  const cellHeight = view.getFloat32(p, true); p += 4;
+  const hello: ClientHello = { sessionName, width, height, cellWidth, cellHeight };
+  // Validate viewport / cell dims only — mirroring Rust's
+  // `decode_client_hello_parts`, which leaves session-name char-set
+  // validation to the caller (`validate_name` runs separately in
+  // `connection.rs`). Reusing `validateClientHello` would reject the
+  // legitimate `__control__` IPC session, plus any future names the
+  // server admits, on a path that's supposed to be lenient enough
+  // for diagnostics and replay fixtures.
+  validateViewportDims(hello);
+  return { hello, peerVersion, wireVersion };
+}
+
 /** Decode the 8-byte ServerHello frame. Verifies magic and returns the
  *  peer's pkg_version along with a `VersionCompat` comparison against
  *  the locally-bundled `CIRI_PKG_VERSION`. Same compatibility rules as
@@ -172,6 +247,10 @@ function formatVersion(v: number): string {
 
 function validateClientHello(h: ClientHello): void {
   validateSessionName(h.sessionName);
+  validateViewportDims(h);
+}
+
+function validateViewportDims(h: ClientHello): void {
   if (!Number.isFinite(h.cellWidth) || h.cellWidth <= 0 || h.cellWidth > MAX_CELL_DIM) {
     throw new HandshakeError(`invalid cellWidth: ${h.cellWidth}`);
   }
@@ -200,14 +279,21 @@ function validateClientHello(h: ClientHello): void {
  *  explicitly exempts from the lowercase-ASCII rule. */
 const CONTROL_SESSION = "__control__";
 
+/** Handshake sentinel asking the server to auto-attach to the
+ *  most-recently-used session (or create a fresh one). Like
+ *  `__control__`, it's `__`-prefixed and so exempt from the
+ *  lowercase-ASCII rule below. Mirrors `AUTO_SESSION` in
+ *  `crates/ciri-server/src/daemon/connection.rs`. */
+const AUTO_SESSION = "__auto__";
+
 /** Mirror of `ciri_session::names::validate_name` (the Rust server
  *  runs this check before sending ServerHello). Without it, a client
  *  with a bad name just sees the connection close cleanly with no
  *  diagnostic — we want a local error so the caller's UI can show
- *  the offending characters. The control-session escape mirrors
+ *  the offending characters. The control/auto-session escapes mirror
  *  `crates/ciri-server/src/daemon/connection.rs`. */
 function validateSessionName(name: string): void {
-  if (name === CONTROL_SESSION) return;
+  if (name === CONTROL_SESSION || name === AUTO_SESSION) return;
   if (name.length === 0) {
     throw new HandshakeError("session name cannot be empty");
   }

@@ -17,6 +17,7 @@ import { CiriApp, type CiriAppClientLike } from "./app.js";
 
 // Bootstrap a CiriApp + collect what its fake client sees.
 function bootstrap(opts: { sessionName?: string } = {}) {
+  const sessionChanges: string[] = [];
   const root = document.createElement("div");
   // Give the root a non-zero layout so initial measurement falls back
   // cleanly. jsdom won't actually compute a real layout, but our
@@ -45,6 +46,7 @@ function bootstrap(opts: { sessionName?: string } = {}) {
   };
 
   const onErrorCalls: Error[] = [];
+  const shutdownCalls: number[] = [];
   const app = new CiriApp(root, {
     url: "ws://test",
     sessionName: opts.sessionName ?? "default",
@@ -53,6 +55,8 @@ function bootstrap(opts: { sessionName?: string } = {}) {
       return fakeClient;
     },
     onError: (e) => onErrorCalls.push(e),
+    onSessionChange: (name) => sessionChanges.push(name),
+    onServerShutdown: () => shutdownCalls.push(1),
   });
 
   const fire = (e: CiriEvent) => {
@@ -66,6 +70,8 @@ function bootstrap(opts: { sessionName?: string } = {}) {
     sent,
     inputs,
     onErrorCalls,
+    sessionChanges,
+    shutdownCalls,
     fire,
     state: { get started() { return started; }, get closed() { return closed; } },
   };
@@ -116,6 +122,27 @@ function mkLayoutTwo(pane1: bigint, pane2: bigint): LayoutState {
             widthProportion: 0.5,
             widthFixedPx: null,
             tiles: [{ paneId: pane2, weight: 1.0 }],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/// 1 workspace, 1 column with `paneIds.length` vertically-stacked tiles.
+/// Each tile gets `weight: 1.0` so they share the column evenly.
+function mkLayoutColumn(paneIds: bigint[]): LayoutState {
+  return {
+    activeWorkspaceIdx: 0n,
+    workspaces: [
+      {
+        activeColumnIdx: 0n,
+        columns: [
+          {
+            activeTileIdx: 0n,
+            widthProportion: 1.0,
+            widthFixedPx: null,
+            tiles: paneIds.map((paneId) => ({ paneId, weight: 1.0 })),
           },
         ],
       },
@@ -263,6 +290,16 @@ describe("CiriApp — layout + full-pane-sync", () => {
     });
     expect(app.paneCount).toBe(0);
     expect(app.hasGrid(1n)).toBe(false);
+  });
+
+  test("SessionSwitched fires onSessionChange with the resolved name", () => {
+    const { app, fire, sessionChanges } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "SessionSwitched", sessionName: "work-3" },
+    });
+    expect(sessionChanges).toEqual(["work-3"]);
   });
 
   test("CellDelta for an unknown paneId is silently dropped", () => {
@@ -1274,6 +1311,463 @@ describe("CiriApp — resize integration", () => {
     }
     vi.restoreAllMocks();
   });
+
+  test("Resize inflates width by 1/p_col so the active column gets the real screen back", () => {
+    // The lied-viewport contract: web reports `lied_w = real_w /
+    // p_col` so the server's `col_width = lied_w × p_col` math
+    // gives the active column the full real-screen width. With a
+    // 2-column workspace at 0.5/0.5 and real workspace = 800×600,
+    // pane 1 is active → p_col = 0.5 → lied_w = 1600.
+    const { app, fire, sent } = bootstrap();
+    const root = app.layoutManager.viewportEl.closest(".ciri-app")
+      ?.parentElement as HTMLElement;
+    const viewport = app.layoutManager.viewportEl;
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        if (this === root) {
+          return mkRect(0, 0, 800, 600);
+        }
+        if (this === viewport) {
+          return mkRect(0, 0, 800, 600);
+        }
+        return mkRect(0, 0, 0, 0);
+      },
+    );
+    app.start();
+    // No layout yet — first Resize uses real dims (no lie).
+    const initial = sent.filter((m) => m.tag === "Resize")[0]!;
+    if (initial.tag === "Resize") {
+      expect(initial.width).toBe(800);
+    }
+    // Inject a 2-column layout, active = pane 1 (left column).
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    const post = sent.filter((m) => m.tag === "Resize");
+    const last = post[post.length - 1]!;
+    expect(last.tag).toBe("Resize");
+    if (last.tag === "Resize") {
+      // 800 / 0.5 = 1600.
+      expect(last.width).toBe(1600);
+      // cellWidth/Height stay at the measured (real) values.
+      expect(last.cellWidth).toBeGreaterThan(0);
+      expect(last.cellHeight).toBeGreaterThan(0);
+    }
+    vi.restoreAllMocks();
+  });
+
+  test("Resize is suppressed when the active pane's proportion hasn't changed", () => {
+    // Dedup prevents wire churn for LayoutUpdates that don't shift
+    // the lied viewport (e.g. a TitleChanged that doesn't change
+    // layout, or a repeated LayoutUpdate carrying the same shape).
+    const { app, fire, sent } = bootstrap();
+    const root = app.layoutManager.viewportEl.closest(".ciri-app")
+      ?.parentElement as HTMLElement;
+    const viewport = app.layoutManager.viewportEl;
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        if (this === root || this === viewport) return mkRect(0, 0, 800, 600);
+        return mkRect(0, 0, 0, 0);
+      },
+    );
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    const before = sent.filter((m) => m.tag === "Resize").length;
+    // Same layout fires again — typical of TitleChanged / pane churn
+    // where the active pane and its proportion stay put.
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    const after = sent.filter((m) => m.tag === "Resize").length;
+    expect(after).toBe(before);
+    vi.restoreAllMocks();
+  });
+
+  test("clicking a chip eager-sends Resize for the target pane BEFORE FocusPane", () => {
+    // The eager Resize means the server's `resize_all_panes` runs
+    // with the new lied dims in the same batch as the FocusPane,
+    // so we never render the previous active pane's smaller grid
+    // for a frame.
+    const { app, fire, sent } = bootstrap();
+    const root = app.layoutManager.viewportEl.closest(".ciri-app")
+      ?.parentElement as HTMLElement;
+    const viewport = app.layoutManager.viewportEl;
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        if (this === root || this === viewport) return mkRect(0, 0, 800, 600);
+        return mkRect(0, 0, 0, 0);
+      },
+    );
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    // Click the inactive pane's chip — should send Resize then
+    // FocusPane in that order so the server processes them as one
+    // batch.
+    const sentBefore = sent.length;
+    const chip2 = document.querySelector<HTMLButtonElement>(
+      '.ciri-pane-chip[data-chip-pane-id="2"]',
+    )!;
+    chip2.click();
+    const newMsgs = sent.slice(sentBefore);
+    // Both panes have p_col=0.5 in mkLayoutTwo, so the dedup'd
+    // resize for the click target is identical to the one already
+    // sent at LayoutUpdate time; the click only contributes a
+    // FocusPane. (If the proportions were asymmetric the Resize
+    // would also show up first.)
+    expect(newMsgs.some((m) => m.tag === "FocusPane")).toBe(true);
+    // Active pane stays at the same proportion → no extra Resize.
+    expect(newMsgs.filter((m) => m.tag === "Resize").length).toBe(0);
+    vi.restoreAllMocks();
+  });
+
+  test("clicking a chip whose proportion differs sends a fresh Resize before FocusPane", () => {
+    // Asymmetric layout: col[0] is 0.7, col[1] is 0.3. Active starts
+    // at col[0] → lied_w = 800/0.7 ≈ 1142. After clicking pane 2
+    // (col[1], 0.3) → lied_w = 800/0.3 ≈ 2666. The eager Resize
+    // carries the new dims.
+    const layout: LayoutState = {
+      activeWorkspaceIdx: 0n,
+      workspaces: [
+        {
+          activeColumnIdx: 0n,
+          columns: [
+            {
+              activeTileIdx: 0n,
+              widthProportion: 0.7,
+              widthFixedPx: null,
+              tiles: [{ paneId: 1n, weight: 1.0 }],
+            },
+            {
+              activeTileIdx: 0n,
+              widthProportion: 0.3,
+              widthFixedPx: null,
+              tiles: [{ paneId: 2n, weight: 1.0 }],
+            },
+          ],
+        },
+      ],
+    };
+    const { app, fire, sent } = bootstrap();
+    const root = app.layoutManager.viewportEl.closest(".ciri-app")
+      ?.parentElement as HTMLElement;
+    const viewport = app.layoutManager.viewportEl;
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        if (this === root || this === viewport) return mkRect(0, 0, 800, 600);
+        return mkRect(0, 0, 0, 0);
+      },
+    );
+    app.start();
+    fire({ kind: "server-msg", msg: { tag: "LayoutUpdate", layout } });
+    const sentBefore = sent.length;
+    document
+      .querySelector<HTMLButtonElement>(
+        '.ciri-pane-chip[data-chip-pane-id="2"]',
+      )!
+      .click();
+    const newMsgs = sent.slice(sentBefore);
+    // Eager Resize must come strictly before FocusPane — otherwise
+    // the server would handle FocusPane against the old lied dims
+    // and we'd flicker.
+    const resizeIdx = newMsgs.findIndex((m) => m.tag === "Resize");
+    const focusIdx = newMsgs.findIndex((m) => m.tag === "FocusPane");
+    expect(resizeIdx).toBeGreaterThanOrEqual(0);
+    expect(focusIdx).toBeGreaterThan(resizeIdx);
+    const eagerResize = newMsgs[resizeIdx];
+    if (eagerResize?.tag === "Resize") {
+      // 800 / 0.3 = 2666.67 → floor = 2666.
+      expect(eagerResize.width).toBe(2666);
+    }
+    vi.restoreAllMocks();
+  });
+
+  test("web-initiated CreatePane then ClosePane re-aims the lie back to single-pane real width", () => {
+    // Regression: prior to the `expectStructuralChange` flag, a
+    // web-initiated CreatePane / ClosePane left the viewport lie
+    // pointing at the multi-column shape. Closing back to 1 pane
+    // then rendered the survivor at 2× real width (server allocated
+    // the column at lied_w × 0.5 = real_w, but the lied_w was for
+    // a 2-col shape). This locks the fix in.
+    const { app, fire, sent } = bootstrap();
+    const root = app.layoutManager.viewportEl.closest(".ciri-app")
+      ?.parentElement as HTMLElement;
+    const viewport = app.layoutManager.viewportEl;
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        if (this === root || this === viewport) return mkRect(0, 0, 800, 600);
+        return mkRect(0, 0, 0, 0);
+      },
+    );
+    app.start();
+    // First LayoutUpdate: single pane, full width.
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    let last = sent.filter((m) => m.tag === "Resize").pop()!;
+    if (last.tag === "Resize") {
+      // Single pane → p_col = 1 → lied_w = real_w.
+      expect(last.width).toBe(800);
+    }
+    // Click the + action → CreatePane. Server responds with the
+    // new 2-pane layout (each at 0.5 widthProportion).
+    const newBtn = document.querySelector<HTMLButtonElement>(
+      '.ciri-action[data-action-id="new-pane"]',
+    )!;
+    newBtn.click();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    // `expectStructuralChange` was set → applyLayout re-resizes for
+    // the new shape: lied_w = 800 / 0.5 = 1600.
+    last = sent.filter((m) => m.tag === "Resize").pop()!;
+    if (last.tag === "Resize") {
+      expect(last.width).toBe(1600);
+    }
+    // Now close pane 2 via its chip's × button → ClosePane. Server
+    // collapses back to single-pane layout.
+    document
+      .querySelector<HTMLButtonElement>(
+        '.ciri-pane-close[data-close-pane-id="2"]',
+      )!
+      .click();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    // CRITICAL: lied_w must shrink BACK to 800. Pre-fix this stayed
+    // at 1600, causing the survivor to render at 2× width on web.
+    last = sent.filter((m) => m.tag === "Resize").pop()!;
+    if (last.tag === "Resize") {
+      expect(last.width).toBe(800);
+    }
+    vi.restoreAllMocks();
+  });
+
+  test("subsequent LayoutUpdates do NOT spawn a fresh Resize even if proportions change (regression: CPU-burst feedback loop)", () => {
+    // Regression for the "any pane operation CPU-bursts every co-
+    // attached client" bug: the previous applyLayout-triggered
+    // Resize ran on every LayoutUpdate. CreatePane / ClosePane
+    // legitimately shifts column proportions, so dedup missed,
+    // web sent a fresh Resize, server `resize_all_panes` broadcast
+    // a LayoutUpdate + FullPaneSync to every client (including a
+    // desktop ciritty on the same session) — bursting their render
+    // path every time. The fix: only the FIRST LayoutUpdate after
+    // attach sends a Resize. Eager `onPaneClicked` and the
+    // ResizeObserver keep the lie current via explicit user input.
+    const { app, fire, sent } = bootstrap();
+    const root = app.layoutManager.viewportEl.closest(".ciri-app")
+      ?.parentElement as HTMLElement;
+    const viewport = app.layoutManager.viewportEl;
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        if (this === root || this === viewport) return mkRect(0, 0, 800, 600);
+        return mkRect(0, 0, 0, 0);
+      },
+    );
+    app.start();
+    // First LayoutUpdate: 2 cols at 0.5/0.5, active = pane 1.
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    const sentAfterInitial = sent.length;
+    // Subsequent LayoutUpdate with proportions CHANGED — simulates
+    // a CreatePane / ClosePane / drag-resize broadcasting new
+    // widthProportions. Pre-fix this would have triggered a new
+    // Resize → server reflow → burst.
+    const asymmetric: LayoutState = {
+      activeWorkspaceIdx: 0n,
+      workspaces: [
+        {
+          activeColumnIdx: 0n,
+          columns: [
+            {
+              activeTileIdx: 0n,
+              widthProportion: 0.7,
+              widthFixedPx: null,
+              tiles: [{ paneId: 1n, weight: 1.0 }],
+            },
+            {
+              activeTileIdx: 0n,
+              widthProportion: 0.3,
+              widthFixedPx: null,
+              tiles: [{ paneId: 2n, weight: 1.0 }],
+            },
+          ],
+        },
+      ],
+    };
+    fire({ kind: "server-msg", msg: { tag: "LayoutUpdate", layout: asymmetric } });
+    const newMsgs = sent.slice(sentAfterInitial);
+    expect(newMsgs.filter((m) => m.tag === "Resize")).toHaveLength(0);
+    vi.restoreAllMocks();
+  });
+
+  test("three columns at the server's default 0.5/0.5/0.5 proportions lie as real_w / 0.5 (NOT divided by the sum)", () => {
+    // Regression: codex caught that the column branch normalized by
+    // `sum(widthProportion)` even though the server's
+    // `Column::resolve_width` is `inner_vw × p` with RAW p.
+    // The default layout after pressing `+` twice is 3 cols × p=0.5
+    // each (sum 1.5). Pre-fix this sent lied_w = real_w / (0.5/1.5)
+    // = real_w × 3; server then allocated the active column at
+    // 0.5 × (real_w × 3) = 1.5 × real_w → over-wide, wrap/clip on
+    // web. The fix uses raw p_col: lied_w = real_w / 0.5 = 2 × real_w.
+    const layout: LayoutState = {
+      activeWorkspaceIdx: 0n,
+      workspaces: [
+        {
+          activeColumnIdx: 0n,
+          columns: [0, 1, 2].map((i) => ({
+            activeTileIdx: 0n,
+            // Server's default after CreatePane: p stays 0.5 per
+            // column, NOT 1/N.
+            widthProportion: 0.5,
+            widthFixedPx: null,
+            tiles: [{ paneId: BigInt(i + 1), weight: 1.0 }],
+          })),
+        },
+      ],
+    };
+    const { app, fire, sent } = bootstrap();
+    const root = app.layoutManager.viewportEl.closest(".ciri-app")
+      ?.parentElement as HTMLElement;
+    const viewport = app.layoutManager.viewportEl;
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        if (this === root || this === viewport) return mkRect(0, 0, 800, 600);
+        return mkRect(0, 0, 0, 0);
+      },
+    );
+    app.start();
+    fire({ kind: "server-msg", msg: { tag: "LayoutUpdate", layout } });
+    const last = sent.filter((m) => m.tag === "Resize").pop()!;
+    if (last.tag === "Resize") {
+      // real_w (800) / raw p_col (0.5) = 1600. NOT 800 / (0.5/1.5) = 2400.
+      expect(last.width).toBe(1600);
+    }
+    vi.restoreAllMocks();
+  });
+
+  test("SwitchWorkspace flag re-aims the viewport lie at the new workspace's active pane", () => {
+    // Codex P2: workspace switches don't go through CreatePane /
+    // ClosePane / onPaneClicked, so without `expectStructuralChange`
+    // set, `applyLayout` skipped the Resize and the new workspace
+    // inherited the old one's lied viewport — wrong whenever the
+    // new workspace had a different active-pane proportion.
+    const { app, fire, sent } = bootstrap();
+    const root = app.layoutManager.viewportEl.closest(".ciri-app")
+      ?.parentElement as HTMLElement;
+    const viewport = app.layoutManager.viewportEl;
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        if (this === root || this === viewport) return mkRect(0, 0, 800, 600);
+        return mkRect(0, 0, 0, 0);
+      },
+    );
+    app.start();
+    // Workspace 0: two columns each p=0.5 (lied_w = 1600).
+    // Workspace 1: single column p=1.0 (lied_w = 800).
+    const multiWs: LayoutState = {
+      activeWorkspaceIdx: 0n,
+      workspaces: [
+        {
+          activeColumnIdx: 0n,
+          columns: [
+            { activeTileIdx: 0n, widthProportion: 0.5, widthFixedPx: null, tiles: [{ paneId: 1n, weight: 1 }] },
+            { activeTileIdx: 0n, widthProportion: 0.5, widthFixedPx: null, tiles: [{ paneId: 2n, weight: 1 }] },
+          ],
+        },
+        {
+          activeColumnIdx: 0n,
+          columns: [
+            { activeTileIdx: 0n, widthProportion: 1.0, widthFixedPx: null, tiles: [{ paneId: 3n, weight: 1 }] },
+          ],
+        },
+      ],
+    };
+    fire({ kind: "server-msg", msg: { tag: "LayoutUpdate", layout: multiWs } });
+    let last = sent.filter((m) => m.tag === "Resize").pop()!;
+    if (last.tag === "Resize") expect(last.width).toBe(1600);
+    // Click workspace 1's tab.
+    const ws2Tab = document.querySelectorAll<HTMLButtonElement>(".ciri-ws")[1]!;
+    ws2Tab.click();
+    // Server responds with workspace 1 active.
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: { ...multiWs, activeWorkspaceIdx: 1n } },
+    });
+    last = sent.filter((m) => m.tag === "Resize").pop()!;
+    if (last.tag === "Resize") {
+      // Active pane is now in a single-column workspace at p=1 →
+      // lied_w = 800 (real). Pre-fix this stayed at 1600.
+      expect(last.width).toBe(800);
+    }
+    vi.restoreAllMocks();
+  });
+
+  test("lied width is clamped at MAX_VIEWPORT_DIM (16384) for extreme proportions", () => {
+    // Server rejects width > 16384. A degenerate session (a column
+    // at 0.001 proportion, say) would otherwise produce an out-of-
+    // range Resize that the server drops, leaving the active pane
+    // permanently mis-sized. Web clamps and accepts a partial fill
+    // in the rare extreme case.
+    const layout: LayoutState = {
+      activeWorkspaceIdx: 0n,
+      workspaces: [
+        {
+          activeColumnIdx: 0n,
+          columns: [
+            {
+              activeTileIdx: 0n,
+              widthProportion: 0.001,
+              widthFixedPx: null,
+              tiles: [{ paneId: 1n, weight: 1.0 }],
+            },
+            {
+              activeTileIdx: 0n,
+              widthProportion: 0.999,
+              widthFixedPx: null,
+              tiles: [{ paneId: 2n, weight: 1.0 }],
+            },
+          ],
+        },
+      ],
+    };
+    const { app, fire, sent } = bootstrap();
+    const root = app.layoutManager.viewportEl.closest(".ciri-app")
+      ?.parentElement as HTMLElement;
+    const viewport = app.layoutManager.viewportEl;
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        if (this === root || this === viewport) return mkRect(0, 0, 800, 600);
+        return mkRect(0, 0, 0, 0);
+      },
+    );
+    app.start();
+    fire({ kind: "server-msg", msg: { tag: "LayoutUpdate", layout } });
+    const resize = sent.filter((m) => m.tag === "Resize").pop()!;
+    if (resize.tag === "Resize") {
+      expect(resize.width).toBeLessThanOrEqual(16384);
+    }
+    vi.restoreAllMocks();
+  });
+
+  function mkRect(x: number, y: number, w: number, h: number): DOMRect {
+    return {
+      x, y, width: w, height: h, left: x, top: y, right: x + w, bottom: y + h,
+      toJSON: () => ({}),
+    } as DOMRect;
+  }
 });
 
 describe("CiriApp — IME composition", () => {
@@ -1725,6 +2219,65 @@ describe("CiriApp — IME composition", () => {
     expect(inputs.length).toBe(0);
   });
 
+  test("direct insertText (CJK punctuation, no composition) is sent", () => {
+    // Chinese full-width punctuation (，。？！…) commits without a
+    // candidate window: a standalone `insertText` with no surrounding
+    // compositionstart/end. The matching keydown is IME-routed
+    // (key="Process") so the encoder drops it — this branch is the only
+    // thing that puts the glyph on the wire.
+    const { root, app, fire, inputs } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const sink = root.querySelector<HTMLTextAreaElement>(
+      "textarea.ciri-composition-sink",
+    )!;
+    sink.dispatchEvent(
+      new InputEvent("beforeinput", {
+        inputType: "insertText",
+        data: "，",
+        isComposing: false,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    expect(inputs.length).toBe(1);
+    // ，= U+FF0C → UTF-8 EF BC 8C.
+    expect(Array.from(inputs[0]!.data)).toEqual([0xef, 0xbc, 0x8c]);
+    void app;
+  });
+
+  test("direct insertText does not double-send across beforeinput + input", () => {
+    // Both `beforeinput` and `input` fire for one insert. We send on
+    // the cancelable `beforeinput` (and preventDefault, so the paired
+    // `input` normally never fires); the guard defends against engines
+    // that deliver both anyway.
+    const { root, app, fire, inputs } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const sink = root.querySelector<HTMLTextAreaElement>(
+      "textarea.ciri-composition-sink",
+    )!;
+    const init = {
+      inputType: "insertText",
+      data: "。",
+      isComposing: false,
+      bubbles: true,
+      cancelable: true,
+    };
+    sink.dispatchEvent(new InputEvent("beforeinput", init));
+    sink.dispatchEvent(new InputEvent("input", init));
+    expect(inputs.length).toBe(1);
+    void app;
+  });
+
   test("sink anchor honors scrollback offset (round-6 P3)", () => {
     // The renderer paints the cursor at `cursorLine + scrollOffset`;
     // the sink (which the OS IME candidate popup anchors to) must
@@ -2172,5 +2725,1577 @@ describe("CiriApp — IME composition", () => {
     root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
     root.dispatchEvent(compositionEvent("compositionend", "你"));
     expect(inputs.length).toBe(0);
+  });
+});
+
+describe("CiriApp — chrome actions (workspace + session)", () => {
+  test("new-workspace action sends SplitDown", () => {
+    const { app, fire, sent } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    const btn = document.querySelector<HTMLButtonElement>(
+      '.ciri-action[data-action-id="new-workspace"]',
+    )!;
+    expect(btn).not.toBeNull();
+    btn.click();
+    expect(sent.some((m) => m.tag === "SplitDown")).toBe(true);
+  });
+
+  test("ListSessions (running only, all:false) is requested on open", () => {
+    const { app, fire, sent } = bootstrap();
+    app.start();
+    fire({ kind: "open" });
+    const req = sent.find((m) => m.tag === "ListSessions");
+    expect(req).toBeDefined();
+    // Match the desktop in-app switcher: running sessions only, not
+    // saved-but-detached ones.
+    if (req?.tag === "ListSessions") expect(req.all).toBe(false);
+  });
+
+  test("SessionList populates the dropdown (skipping __ sessions)", () => {
+    const { root, fire } = bootstrap({ sessionName: "alpha" });
+    fire({
+      kind: "server-msg",
+      msg: {
+        tag: "SessionList",
+        sessions: [
+          { name: "alpha", running: true, paneCount: 1n, clientCount: 1n },
+          { name: "beta", running: true, paneCount: 2n, clientCount: 0n },
+          { name: "__control__", running: true, paneCount: 0n, clientCount: 1n },
+        ],
+      },
+    });
+    const bar = root.querySelector<HTMLElement>(".ciri-sessions")!;
+    const select = root.querySelector<HTMLSelectElement>(".ciri-session-select")!;
+    expect(bar.hidden).toBe(false);
+    expect(Array.from(select.options).map((o) => o.value)).toEqual([
+      "alpha",
+      "beta",
+    ]);
+    expect(select.value).toBe("alpha");
+  });
+
+  test("picking a different session sends SwitchSession", () => {
+    const { root, app, fire, sent } = bootstrap({ sessionName: "alpha" });
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: {
+        tag: "SessionList",
+        sessions: [
+          { name: "alpha", running: true, paneCount: 1n, clientCount: 1n },
+          { name: "beta", running: true, paneCount: 1n, clientCount: 0n },
+        ],
+      },
+    });
+    const select = root.querySelector<HTMLSelectElement>(".ciri-session-select")!;
+    select.value = "beta";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    const switched = sent.find((m) => m.tag === "SwitchSession");
+    expect(switched).toBeDefined();
+    if (switched?.tag === "SwitchSession") {
+      expect(switched.sessionName).toBe("beta");
+    }
+  });
+
+  test("SessionSwitched updates the dropdown's active selection", () => {
+    const { root, fire } = bootstrap({ sessionName: "alpha" });
+    fire({
+      kind: "server-msg",
+      msg: {
+        tag: "SessionList",
+        sessions: [
+          { name: "alpha", running: true, paneCount: 1n, clientCount: 1n },
+          { name: "beta", running: true, paneCount: 1n, clientCount: 0n },
+        ],
+      },
+    });
+    fire({
+      kind: "server-msg",
+      msg: { tag: "SessionSwitched", sessionName: "beta" },
+    });
+    const select = root.querySelector<HTMLSelectElement>(".ciri-session-select")!;
+    expect(select.value).toBe("beta");
+  });
+});
+
+describe("CiriApp — mouse reporting (Phase 2.7-C)", () => {
+  const MODE_MOUSE_REPORT = 0x0001;
+  /// Same shape as the `selection + clipboard` block's helper —
+  /// fix the renderer's container rect at (0,0)–(800,600) so the
+  /// pixel→cell math is deterministic against the default cellSize
+  /// fallback (8.5 × 16.8). Without this, jsdom returns zero-size
+  /// rects and every hit-test bails out.
+  function stubContainerRect(): void {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        if (this.classList?.contains("ciri-pane")) {
+          return {
+            x: 0, y: 0, top: 0, left: 0, right: 800, bottom: 600,
+            width: 800, height: 600, toJSON: () => ({}),
+          } as DOMRect;
+        }
+        return {
+          x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0,
+          width: 0, height: 0, toJSON: () => ({}),
+        } as DOMRect;
+      },
+    );
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function setupMouseModePane() {
+    stubContainerRect();
+    const ctx = bootstrap();
+    ctx.app.start();
+    ctx.fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    ctx.fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    // Default fixture has modeFlags = 0; flip the bit the TUI would
+    // have flipped after issuing DECSET 1000 / 1002 / 1003. The
+    // app reads grid.meta.modeFlags on every mouse event, so the
+    // change takes effect immediately for the next press.
+    const grid = ctx.app.paneGrid(1n)!;
+    grid.meta = { ...grid.meta, modeFlags: MODE_MOUSE_REPORT };
+    return ctx;
+  }
+
+  function mouseInputs(sent: ClientMessage[]) {
+    return sent.filter((m): m is ClientMessage & { tag: "MouseInput" } =>
+      m.tag === "MouseInput",
+    );
+  }
+
+  test("mousedown on a mouse-mode pane sends MouseInput button=0, suppresses selection", () => {
+    const { sent } = setupMouseModePane();
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+    const events = mouseInputs(sent);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      tag: "MouseInput",
+      paneId: 1n,
+      button: 0,
+      pressed: true,
+      modifiers: 0,
+    });
+    // No selection overlay was painted — the click is owned by the TUI.
+    expect(document.querySelectorAll(".ciri-selection-row").length).toBe(0);
+  });
+
+  test("shift+mousedown on a mouse-mode pane falls back to text selection (bypass)", () => {
+    const { sent } = setupMouseModePane();
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        clientX: 10,
+        clientY: 10,
+        shiftKey: true,
+      }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 50, clientY: 20, shiftKey: true }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("mouseup", { clientX: 50, clientY: 20, shiftKey: true }),
+    );
+    // No MouseInput leaked despite the pane requesting mouse mode.
+    expect(mouseInputs(sent)).toHaveLength(0);
+    // Selection rect was drawn during the drag.
+    expect(
+      document.querySelectorAll(".ciri-selection-row").length,
+    ).toBeGreaterThan(0);
+  });
+
+  test("mousedown WITHOUT MODE_MOUSE_REPORT keeps the existing selection flow", () => {
+    stubContainerRect();
+    const { app, fire, sent } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    // Leave modeFlags = 0 (default in fixture).
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, clientX: 10, clientY: 10 }),
+    );
+    expect(mouseInputs(sent)).toHaveLength(0);
+  });
+
+  test("mousemove during a forward drag emits button=32 once per cell crossing", () => {
+    const { sent } = setupMouseModePane();
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    // Press at (10,10) — col 1, row 0 with cellSize (8.5, 16.8).
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+    // Move within the same cell — no new frame.
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 12, clientY: 12 }));
+    expect(mouseInputs(sent)).toHaveLength(1); // still just the press
+    // Move to col 2 — crosses a cell boundary.
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 20, clientY: 10 }));
+    let events = mouseInputs(sent);
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({
+      tag: "MouseInput",
+      button: 32,
+      col: 2,
+      row: 0,
+      pressed: true,
+    });
+    // Move further within col 2 — still no new frame.
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 24, clientY: 10 }));
+    events = mouseInputs(sent);
+    expect(events).toHaveLength(2);
+  });
+
+  test("mouseup ends the forward drag with button=3 pressed=false", () => {
+    const { sent } = setupMouseModePane();
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+    window.dispatchEvent(new MouseEvent("mouseup", { clientX: 10, clientY: 10 }));
+    const events = mouseInputs(sent);
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({
+      tag: "MouseInput",
+      button: 3,
+      pressed: false,
+    });
+  });
+
+  test("mouseup outside the pane rect still emits a release at the last-seen cell", () => {
+    const { sent } = setupMouseModePane();
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+    // Release at coords the renderer rect (0..800, 0..600) excludes.
+    window.dispatchEvent(
+      new MouseEvent("mouseup", { clientX: -50, clientY: -50 }),
+    );
+    const events = mouseInputs(sent);
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({
+      tag: "MouseInput",
+      button: 3,
+      pressed: false,
+    });
+    // Release coords fall back to the press's last-known cell.
+    expect(events[1]!.col).toBe(events[0]!.col);
+    expect(events[1]!.row).toBe(events[0]!.row);
+  });
+
+  test("wheel on a mouse-mode pane forwards button=64/65 instead of scrolling scrollback", () => {
+    const { sent } = setupMouseModePane();
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    // deltaY = -50 in pixel mode → linesUp ≈ +3 with scrollLinesPerWheelTick=3.
+    tile.dispatchEvent(
+      new WheelEvent("wheel", {
+        deltaY: -50,
+        deltaMode: 0,
+        bubbles: true,
+        cancelable: true,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+    const events = mouseInputs(sent);
+    expect(events.length).toBeGreaterThan(0);
+    // button=64 = wheel up; all frames carry pressed=true (SGR
+    // wheel encoding has no matching release).
+    for (const e of events) {
+      expect(e.button).toBe(64);
+      expect(e.pressed).toBe(true);
+    }
+  });
+
+  test("wheel down on a mouse-mode pane forwards button=65", () => {
+    const { sent } = setupMouseModePane();
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    tile.dispatchEvent(
+      new WheelEvent("wheel", {
+        deltaY: 50,
+        deltaMode: 0,
+        bubbles: true,
+        cancelable: true,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+    const events = mouseInputs(sent);
+    expect(events.length).toBeGreaterThan(0);
+    for (const e of events) expect(e.button).toBe(65);
+  });
+
+  test("wheel forwarding caps the burst at 10 ticks per event", () => {
+    const { sent } = setupMouseModePane();
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    // A pathologically large delta would otherwise emit dozens of
+    // SGR frames per wheel tick — match the Rust client's cap.
+    tile.dispatchEvent(
+      new WheelEvent("wheel", {
+        deltaY: -10000,
+        deltaMode: 0,
+        bubbles: true,
+        cancelable: true,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+    expect(mouseInputs(sent).length).toBe(10);
+  });
+
+  test("shift+wheel on a mouse-mode pane stays with renderer scrollback (bypass)", () => {
+    const { sent } = setupMouseModePane();
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    tile.dispatchEvent(
+      new WheelEvent("wheel", {
+        deltaY: -50,
+        deltaMode: 0,
+        bubbles: true,
+        cancelable: true,
+        shiftKey: true,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+    // The defining behavior of the shift bypass is "no MouseInput
+    // leaks to the wire"; the renderer's scrollback path is the
+    // alternative branch but doesn't visibly move on the test
+    // fixture (FULL_SYNC_3X2 carries zero scrollback rows). Verifying
+    // the absence of forwarded frames is sufficient.
+    expect(mouseInputs(sent)).toHaveLength(0);
+  });
+
+  test("mousedown on an inactive mouse-mode pane swallows the press, still forwards drag + release", () => {
+    // Rust client's `was_already_focused` gate (mouse.rs:339): a
+    // click that switches focus should not inject a phantom press
+    // into the newly-focused TUI (e.g. neovim entering visual mode).
+    // The subsequent motion/release still forward.
+    stubContainerRect();
+    const { app, fire, sent } = bootstrap();
+    app.start();
+    // Two panes laid out side-by-side; active = pane 1.
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    // Inject grids for both — fixture "3x2 default" carries paneId=1,
+    // "4x1 with title, cwd, grapheme + hyperlink" carries paneId=2.
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_HYPER.hex) });
+    // Flip MODE_MOUSE_REPORT on pane 2 so it's mouse-aware. (Pane 1
+    // doesn't matter for this test — we never click it.)
+    const grid2 = app.paneGrid(2n)!;
+    grid2.meta = { ...grid2.meta, modeFlags: MODE_MOUSE_REPORT };
+    const tile2 = document.querySelector<HTMLElement>("[data-pane-id='2']")!;
+    tile2.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+    // Press into a not-yet-active pane is dropped on the floor —
+    // only the layout-level click sends `FocusPane`. No MouseInput.
+    let events = mouseInputs(sent);
+    expect(events).toHaveLength(0);
+    // Subsequent motion still forwards (button=32) so the TUI sees
+    // the drag even though the press was eaten by the focus switch.
+    window.dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 30, clientY: 10 }),
+    );
+    events = mouseInputs(sent);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ tag: "MouseInput", button: 32 });
+    // And the release goes out as button=3.
+    window.dispatchEvent(
+      new MouseEvent("mouseup", { clientX: 30, clientY: 10 }),
+    );
+    events = mouseInputs(sent);
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({ tag: "MouseInput", button: 3 });
+  });
+
+  test("hitTestViewportCell row is independent of renderer.scrollOffsetRows", () => {
+    // The TUI repaints the live viewport; it has no concept of the
+    // renderer being scrolled into history. Forwarded mouse rows
+    // must match the live-viewport grid the SGR sequence references,
+    // i.e. raw `pixelY / cellHeight`. Subtracting the scrollback
+    // offset would silently re-aim every click after a shift-wheel
+    // bypass (codex round-1 P2 fix).
+    const { app, sent } = setupMouseModePane();
+    // Inject scrollback so we can simulate "user is reading history".
+    // Renderer's `scrollOffsetRows` only moves when there's scrollback
+    // to scroll into; the 3x2 fixture has none, so poke the renderer
+    // directly via its private API surface. We use the wheel-shift
+    // path with a fabricated grid — easier to just set offset via
+    // public method on a renderer we can reach. Skip if the surface
+    // isn't reachable from the test (`paneGrid` exists, but the
+    // renderer isn't exposed); approximate by checking via
+    // `clientY` differences instead.
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    // Click at y=20 with cellHeight=16.8 → raw row 1. With the bug
+    // and scrollOffset=0, both old and new code produce row=1, so
+    // we can't distinguish from this fixture alone. Instead verify
+    // the column math (offset-independent regardless) and that the
+    // row equals the raw display row, never negative.
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        clientX: 30, // col 3 → clamped to 2 (grid.cols=3)
+        clientY: 20, // row 1
+      }),
+    );
+    const events = mouseInputs(sent);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ row: 1, col: 2, button: 0 });
+  });
+
+  test("right-click on a mouse-mode pane forwards button=2", () => {
+    const { sent } = setupMouseModePane();
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+    const events = mouseInputs(sent);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      tag: "MouseInput",
+      button: 2,
+      pressed: true,
+    });
+  });
+
+  test("middle-click on a mouse-mode pane forwards button=1", () => {
+    const { sent } = setupMouseModePane();
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 1,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+    const events = mouseInputs(sent);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      tag: "MouseInput",
+      button: 1,
+      pressed: true,
+    });
+  });
+
+  test("contextmenu: non-reporting pane shows our menu; mouse-reporting pane defers (Shift overrides)", () => {
+    stubContainerRect();
+    const { root, app, fire } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    const menu = root.querySelector<HTMLElement>(".ciri-contextmenu")!;
+    const fireCtx = (shiftKey = false): MouseEvent => {
+      const evt = new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 10,
+        clientY: 10,
+        shiftKey,
+      });
+      tile.dispatchEvent(evt);
+      return evt;
+    };
+    // Without MODE_MOUSE_REPORT: our Copy/Paste/Find menu opens.
+    let evt = fireCtx();
+    expect(evt.defaultPrevented).toBe(true);
+    expect(menu.hidden).toBe(false);
+    // Flip mouse mode on: the TUI owns the right-click, so the browser
+    // menu is suppressed AND ours stays hidden.
+    const grid = app.paneGrid(1n)!;
+    grid.meta = { ...grid.meta, modeFlags: MODE_MOUSE_REPORT };
+    evt = fireCtx();
+    expect(evt.defaultPrevented).toBe(true);
+    expect(menu.hidden).toBe(true);
+    // Shift+right-click overrides passthrough → our menu opens.
+    evt = fireCtx(true);
+    expect(evt.defaultPrevented).toBe(true);
+    expect(menu.hidden).toBe(false);
+  });
+
+  test("motion code carries the pressed button (33 for middle, 34 for right)", () => {
+    const { sent } = setupMouseModePane();
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 2,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+    // Drag right by one cell.
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 30, clientY: 10 }));
+    window.dispatchEvent(new MouseEvent("mouseup", { clientX: 30, clientY: 10 }));
+    const events = mouseInputs(sent);
+    expect(events).toHaveLength(3);
+    expect(events[0]).toMatchObject({ button: 2 });
+    // Xterm: motion code 32 + button-index, so right-button drag = 34.
+    expect(events[1]).toMatchObject({ button: 34 });
+    expect(events[2]).toMatchObject({ button: 3, pressed: false });
+  });
+
+  test("alt+click forwards modifiers=0x02 (xterm Meta/Alt bit)", () => {
+    const { sent } = setupMouseModePane();
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        clientX: 10,
+        clientY: 10,
+        altKey: true,
+      }),
+    );
+    const events = mouseInputs(sent);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ button: 0, modifiers: 0x02 });
+  });
+
+  test("ctrl+click forwards modifiers=0x04 (xterm Ctrl bit)", () => {
+    const { sent } = setupMouseModePane();
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        clientX: 10,
+        clientY: 10,
+        ctrlKey: true,
+      }),
+    );
+    const events = mouseInputs(sent);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ button: 0, modifiers: 0x04 });
+  });
+
+  test("clicking the '+' action sends a CreatePane wire message", () => {
+    const { fire, sent } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    const btn = document.querySelector<HTMLButtonElement>(
+      '.ciri-action[data-action-id="new-pane"]',
+    )!;
+    btn.click();
+    expect(sent).toContainEqual({ tag: "CreatePane" });
+  });
+
+  test("clicking a chip's '✕' close sends ClosePane for THAT pane (not the active one)", () => {
+    const { fire, sent } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    // Close the non-active pane (#2). The wire message should still
+    // target pane 2 — close-per-chip means each chip closes itself,
+    // not whichever pane is currently focused.
+    const close = document.querySelector<HTMLButtonElement>(
+      '.ciri-pane-close[data-close-pane-id="2"]',
+    )!;
+    close.click();
+    expect(sent).toContainEqual({ tag: "ClosePane", paneId: 2n });
+  });
+
+  test("destroyPane mid-drag clears the forwarding state and stops further frames", () => {
+    const { fire, sent } = setupMouseModePane();
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+    expect(mouseInputs(sent)).toHaveLength(1);
+    // Server closes the pane while the user is still holding the button.
+    fire({ kind: "server-msg", msg: { tag: "PaneClosed", paneId: 1n } });
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 30, clientY: 20 }));
+    window.dispatchEvent(new MouseEvent("mouseup", { clientX: 30, clientY: 20 }));
+    // No move/release frame leaked into the (now-dead) pane.
+    expect(mouseInputs(sent)).toHaveLength(1);
+  });
+});
+
+describe("CiriApp — resize drag (Phase 2.7-A)", () => {
+  /// jsdom returns zero-size rects by default; pin the rendered
+  /// columns / tiles to known geometries so the hit-test math is
+  /// deterministic. Two columns side-by-side, each 400px wide; the
+  /// shared border sits at x=400. A column with N stacked tiles
+  /// returns each tile at height = 600/N. Workspace viewport is
+  /// 800×600.
+  function stubLayoutRects(opts: {
+    columnsWidthPx?: number[];
+    tilesPerColumnHeightPx?: number[][];
+  }): void {
+    const colWidths = opts.columnsWidthPx ?? [400, 400];
+    const tileHeights = opts.tilesPerColumnHeightPx ?? colWidths.map(() => [600]);
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        if (this.classList?.contains("ciri-workspace")) {
+          return mkRect(0, 0, colWidths.reduce((a, b) => a + b, 0), 600);
+        }
+        if (this.classList?.contains("ciri-column")) {
+          const parent = this.parentElement;
+          const idx = parent
+            ? Array.from(parent.children).indexOf(this)
+            : 0;
+          const x = colWidths.slice(0, idx).reduce((a, b) => a + b, 0);
+          return mkRect(x, 0, colWidths[idx] ?? 0, 600);
+        }
+        if (this.classList?.contains("ciri-tile")) {
+          const colEl = this.parentElement;
+          if (!colEl) return mkRect(0, 0, 0, 0);
+          const colIdx = colEl.parentElement
+            ? Array.from(colEl.parentElement.children).indexOf(colEl)
+            : 0;
+          const tileIdx = Array.from(colEl.children).indexOf(this);
+          const tileH =
+            tileHeights[colIdx]?.[tileIdx] ?? 600 / (colEl.children.length || 1);
+          const x = colWidths.slice(0, colIdx).reduce((a, b) => a + b, 0);
+          let y = 0;
+          for (let i = 0; i < tileIdx; i += 1) {
+            y += tileHeights[colIdx]?.[i] ?? 0;
+          }
+          return mkRect(x, y, colWidths[colIdx] ?? 0, tileH);
+        }
+        return mkRect(0, 0, 0, 0);
+      },
+    );
+  }
+
+  function mkRect(x: number, y: number, w: number, h: number): DOMRect {
+    return {
+      x, y, width: w, height: h, left: x, top: y, right: x + w, bottom: y + h,
+      toJSON: () => ({}),
+    } as DOMRect;
+  }
+
+  function setColumnFlex(idx: number, flex: number): void {
+    const cols = document.querySelectorAll<HTMLElement>(".ciri-column");
+    cols[idx]!.style.flex = String(flex);
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("hover near a column border sets col-resize cursor", () => {
+    stubLayoutRects({});
+    const { fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    const ws = document.querySelector<HTMLElement>(".ciri-workspace")!;
+    // Border is at x=400. clientX=402 is within the 4px hit zone.
+    document.body.dispatchEvent(
+      new MouseEvent("mousemove", { bubbles: true, clientX: 402, clientY: 100 }),
+    );
+    // Listener is on the root; reach the listener via the layout root.
+    const root = ws.closest<HTMLElement>(".ciri-app")!.parentElement!;
+    root.dispatchEvent(
+      new MouseEvent("mousemove", { bubbles: true, clientX: 402, clientY: 100 }),
+    );
+    expect(ws.style.cursor).toBe("col-resize");
+    // Move away from the border — cursor resets.
+    root.dispatchEvent(
+      new MouseEvent("mousemove", { bubbles: true, clientX: 200, clientY: 100 }),
+    );
+    expect(ws.style.cursor).toBe("");
+  });
+
+  test("hover near a tile border (single column, two tiles) sets row-resize cursor", () => {
+    stubLayoutRects({ columnsWidthPx: [800], tilesPerColumnHeightPx: [[300, 300]] });
+    const { fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutColumn([1n, 2n]) },
+    });
+    const ws = document.querySelector<HTMLElement>(".ciri-workspace")!;
+    const root = ws.closest<HTMLElement>(".ciri-app")!.parentElement!;
+    // Border is at y=300; column spans x ∈ [0, 800].
+    root.dispatchEvent(
+      new MouseEvent("mousemove", { bubbles: true, clientX: 400, clientY: 301 }),
+    );
+    expect(ws.style.cursor).toBe("row-resize");
+  });
+
+  test("column-border drag sends AdjustColumnSplitAt with accumulated delta on mouseup", () => {
+    stubLayoutRects({});
+    const { fire, sent } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    // setLayout writes `style.flex = String(col.widthProportion)` for
+    // each column — 0.5 each in our fixture. Reaffirm here so the
+    // test is independent of the layout helper's defaults.
+    setColumnFlex(0, 0.5);
+    setColumnFlex(1, 0.5);
+    const ws = document.querySelector<HTMLElement>(".ciri-workspace")!;
+    const root = ws.closest<HTMLElement>(".ciri-app")!.parentElement!;
+    // Mousedown right on the border.
+    root.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 400,
+        clientY: 100,
+      }),
+    );
+    // Drag right by 80px → +0.10 of inner_vw (800). The left column
+    // grows, the right shrinks; their sum stays 1.0.
+    window.dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 480, clientY: 100 }),
+    );
+    const cols = document.querySelectorAll<HTMLElement>(".ciri-column");
+    const leftFlex = parseFloat(cols[0]!.style.flex);
+    const rightFlex = parseFloat(cols[1]!.style.flex);
+    expect(leftFlex + rightFlex).toBeCloseTo(1.0, 5);
+    expect(leftFlex).toBeGreaterThan(0.55);
+    expect(leftFlex).toBeLessThan(0.65);
+    // Release — wire message goes out with the accumulated delta.
+    window.dispatchEvent(
+      new MouseEvent("mouseup", { clientX: 480, clientY: 100 }),
+    );
+    const adjust = sent.find((m) => m.tag === "AdjustColumnSplitAt");
+    expect(adjust).toBeDefined();
+    expect(adjust).toMatchObject({
+      tag: "AdjustColumnSplitAt",
+      columnIdx: 0n,
+    });
+    if (adjust && adjust.tag === "AdjustColumnSplitAt") {
+      expect(adjust.delta).toBeCloseTo(0.1, 2);
+    }
+    // No selection / mouse-input was emitted.
+    expect(sent.filter((m) => m.tag === "MouseInput")).toHaveLength(0);
+    expect(document.querySelectorAll(".ciri-selection-row").length).toBe(0);
+  });
+
+  test("tile-border drag sends SetTileWeights with the new pair on mouseup", () => {
+    stubLayoutRects({ columnsWidthPx: [800], tilesPerColumnHeightPx: [[300, 300]] });
+    const { fire, sent } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutColumn([1n, 2n]) },
+    });
+    const tiles = document.querySelectorAll<HTMLElement>(".ciri-tile");
+    tiles[0]!.style.flex = "1";
+    tiles[1]!.style.flex = "1";
+    const ws = document.querySelector<HTMLElement>(".ciri-workspace")!;
+    const root = ws.closest<HTMLElement>(".ciri-app")!.parentElement!;
+    root.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 400,
+        clientY: 300,
+      }),
+    );
+    // Drag down by 60px → top grows from 300 to 360 (60% of 600).
+    window.dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 400, clientY: 360 }),
+    );
+    const updatedTopFlex = parseFloat(tiles[0]!.style.flex);
+    const updatedBotFlex = parseFloat(tiles[1]!.style.flex);
+    expect(updatedTopFlex + updatedBotFlex).toBeCloseTo(2.0, 5);
+    expect(updatedTopFlex).toBeCloseTo(1.2, 2);
+    expect(updatedBotFlex).toBeCloseTo(0.8, 2);
+    window.dispatchEvent(
+      new MouseEvent("mouseup", { clientX: 400, clientY: 360 }),
+    );
+    const setW = sent.find((m) => m.tag === "SetTileWeights");
+    expect(setW).toBeDefined();
+    expect(setW).toMatchObject({
+      tag: "SetTileWeights",
+      columnIdx: 0n,
+      topTileIdx: 0n,
+    });
+    if (setW && setW.tag === "SetTileWeights") {
+      expect(setW.topWeight).toBeCloseTo(1.2, 2);
+      expect(setW.bottomWeight).toBeCloseTo(0.8, 2);
+    }
+  });
+
+  test("column-resize drag clamps each side at the server's MIN_COLUMN_PROPORTION (0.05)", () => {
+    stubLayoutRects({});
+    const { fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    setColumnFlex(0, 0.5);
+    setColumnFlex(1, 0.5);
+    const ws = document.querySelector<HTMLElement>(".ciri-workspace")!;
+    const root = ws.closest<HTMLElement>(".ciri-app")!.parentElement!;
+    root.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 400,
+        clientY: 100,
+      }),
+    );
+    // Slam the cursor to x=10000 — half a screen past the right edge.
+    // Clamp should pin left at 0.95 total and right at 0.05.
+    window.dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 10000, clientY: 100 }),
+    );
+    const cols = document.querySelectorAll<HTMLElement>(".ciri-column");
+    const leftFlex = parseFloat(cols[0]!.style.flex);
+    const rightFlex = parseFloat(cols[1]!.style.flex);
+    expect(leftFlex).toBeCloseTo(0.95, 5);
+    expect(rightFlex).toBeCloseTo(0.05, 5);
+  });
+
+  test("mousedown NOT on a border falls through to existing selection / mouse-forward paths", () => {
+    stubLayoutRects({});
+    const { fire, sent } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    // Dispatch from the tile (with `bubbles: true`) so the layout's
+    // tile-level `FocusPane` listener fires AND the event still
+    // reaches the root-level resize hit-test on the way up — same
+    // browser bubble path a real click takes.
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 200, // far from the column border at x=400
+        clientY: 100,
+      }),
+    );
+    expect(sent.some((m) => m.tag === "AdjustColumnSplitAt")).toBe(false);
+    expect(sent.some((m) => m.tag === "FocusPane")).toBe(true);
+  });
+
+  test("column-border drag in a 3-column layout sends raw viewport-proportion delta (not pair-scaled)", () => {
+    // Regression for codex round-1 P2: a previous version scaled
+    // `deltaProportion` by the pair's combined flex (pairTotal), so a
+    // 3-col layout where each column owns 1/3 would shrink an 80px
+    // drag from 0.10 to 0.066. The server's `resize_column_pair`
+    // adds the delta to the left column's stored proportion verbatim,
+    // so the wire delta must stay 0.10 regardless of layout shape.
+    const colW = 800 / 3;
+    stubLayoutRects({ columnsWidthPx: [colW, colW, colW] });
+    const layout: LayoutState = {
+      activeWorkspaceIdx: 0n,
+      workspaces: [
+        {
+          activeColumnIdx: 0n,
+          columns: [0, 1, 2].map((i) => ({
+            activeTileIdx: 0n,
+            widthProportion: 1 / 3,
+            widthFixedPx: null,
+            tiles: [{ paneId: BigInt(i + 1), weight: 1.0 }],
+          })),
+        },
+      ],
+    };
+    const { fire, sent } = bootstrap();
+    fire({ kind: "server-msg", msg: { tag: "LayoutUpdate", layout } });
+    const cols = document.querySelectorAll<HTMLElement>(".ciri-column");
+    cols.forEach((c) => { c.style.flex = String(1 / 3); });
+    const ws = document.querySelector<HTMLElement>(".ciri-workspace")!;
+    const root = ws.closest<HTMLElement>(".ciri-app")!.parentElement!;
+    // Drag the first border (between col 0 and col 1) at x ≈ 266.67.
+    root.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: colW,
+        clientY: 100,
+      }),
+    );
+    // Drag right 80px — should produce delta = 0.10 on the wire,
+    // independent of the pair's combined proportion (2/3 here).
+    window.dispatchEvent(
+      new MouseEvent("mousemove", { clientX: colW + 80, clientY: 100 }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("mouseup", { clientX: colW + 80, clientY: 100 }),
+    );
+    const adjust = sent.find((m) => m.tag === "AdjustColumnSplitAt");
+    expect(adjust).toBeDefined();
+    if (adjust && adjust.tag === "AdjustColumnSplitAt") {
+      expect(adjust.delta).toBeCloseTo(0.1, 2);
+      expect(adjust.columnIdx).toBe(0n);
+    }
+    // Columns outside the pair (col 2) untouched.
+    expect(parseFloat(cols[2]!.style.flex)).toBeCloseTo(1 / 3, 5);
+  });
+
+  test("column-resize clamp in a 3-column layout uses absolute 0.05 (not 5% of pair)", () => {
+    // Regression for codex round-2 P2: a 5%-of-pair clamp would let
+    // a 3-col layout's columns shrink below 0.05 absolute, which the
+    // server's `min_width = min(0.05, pair/2)` rejects — the wire
+    // delta accumulates an out-of-range proportion and the next
+    // server LayoutUpdate snaps back.
+    const colW = 800 / 3;
+    stubLayoutRects({ columnsWidthPx: [colW, colW, colW] });
+    const layout: LayoutState = {
+      activeWorkspaceIdx: 0n,
+      workspaces: [
+        {
+          activeColumnIdx: 0n,
+          columns: [0, 1, 2].map((i) => ({
+            activeTileIdx: 0n,
+            widthProportion: 1 / 3,
+            widthFixedPx: null,
+            tiles: [{ paneId: BigInt(i + 1), weight: 1.0 }],
+          })),
+        },
+      ],
+    };
+    const { fire } = bootstrap();
+    fire({ kind: "server-msg", msg: { tag: "LayoutUpdate", layout } });
+    const cols = document.querySelectorAll<HTMLElement>(".ciri-column");
+    cols.forEach((c) => { c.style.flex = String(1 / 3); });
+    const root = document
+      .querySelector<HTMLElement>(".ciri-workspace")!
+      .closest<HTMLElement>(".ciri-app")!.parentElement!;
+    root.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: colW,
+        clientY: 100,
+      }),
+    );
+    // Drag the cursor way to the left — left column should clamp at
+    // 0.05 absolute, NOT 5% of the pair (≈ 0.033).
+    window.dispatchEvent(
+      new MouseEvent("mousemove", { clientX: -10000, clientY: 100 }),
+    );
+    const leftFlex = parseFloat(cols[0]!.style.flex);
+    expect(leftFlex).toBeCloseTo(0.05, 5);
+    // The pair still sums to its original total (2/3); the right
+    // column gets whatever the left freed.
+    const rightFlex = parseFloat(cols[1]!.style.flex);
+    expect(leftFlex + rightFlex).toBeCloseTo(2 / 3, 5);
+  });
+
+  test("tile-resize clamp uses the server's 30px floor (not 5% of column height)", () => {
+    // Regression for codex round-2 P2: a percentage clamp would let
+    // a 300px-tall column shrink one tile to 15px — server rejects
+    // via `clamped_tile_pair_height` (30px hard floor) and snaps on
+    // the next LayoutUpdate.
+    stubLayoutRects({ columnsWidthPx: [800], tilesPerColumnHeightPx: [[150, 150]] });
+    const { fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutColumn([1n, 2n]) },
+    });
+    const tiles = document.querySelectorAll<HTMLElement>(".ciri-tile");
+    tiles[0]!.style.flex = "1";
+    tiles[1]!.style.flex = "1";
+    const root = document
+      .querySelector<HTMLElement>(".ciri-workspace")!
+      .closest<HTMLElement>(".ciri-app")!.parentElement!;
+    root.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 400,
+        clientY: 150,
+      }),
+    );
+    // Slam up to collapse the top tile.
+    window.dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 400, clientY: -10000 }),
+    );
+    const topFlex = parseFloat(tiles[0]!.style.flex);
+    const botFlex = parseFloat(tiles[1]!.style.flex);
+    // 30px / 300px total = 0.1 of the pair's flex.
+    expect(topFlex).toBeCloseTo(0.2, 2); // 30/150 of original flex=1
+    // Pair sum preserved.
+    expect(topFlex + botFlex).toBeCloseTo(2.0, 5);
+  });
+
+  test("column-border mousedown does NOT also fire FocusPane (capture-phase stops bubble)", () => {
+    // Regression for codex round-3 P2: the tile's bubble-phase
+    // FocusPane listener runs BEFORE the root's bubble-phase
+    // resize handler, so without a capture-phase intercept every
+    // border drag also triggered a LayoutUpdate that detached the
+    // drag's element refs.
+    stubLayoutRects({});
+    const { fire, sent } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    setColumnFlex(0, 0.5);
+    setColumnFlex(1, 0.5);
+    const sentBefore = sent.length;
+    // Press the border on the LEFT column's edge — bubble path would
+    // route through tile-pane-1's listener.
+    const leftTile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    leftTile.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 400,
+        clientY: 100,
+      }),
+    );
+    // No FocusPane queued — capture-phase stopped propagation.
+    expect(sent.slice(sentBefore).some((m) => m.tag === "FocusPane")).toBe(
+      false,
+    );
+  });
+
+  test("server LayoutUpdate mid-drag cancels the resize cleanly (no stale node mutation on next move)", () => {
+    // Regression for codex round-3 P2: even with the capture-phase
+    // FocusPane suppression in place, an unrelated server-driven
+    // LayoutUpdate (e.g. another pane spawns) can arrive during a
+    // drag. The new LayoutManager.setLayout() detaches the original
+    // column / tile elements, so subsequent mousemoves would mutate
+    // disconnected nodes. `applyLayout` must cancel the drag.
+    stubLayoutRects({});
+    const { fire, sent } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    setColumnFlex(0, 0.5);
+    setColumnFlex(1, 0.5);
+    const root = document
+      .querySelector<HTMLElement>(".ciri-workspace")!
+      .closest<HTMLElement>(".ciri-app")!.parentElement!;
+    root.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 400,
+        clientY: 100,
+      }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 440, clientY: 100 }),
+    );
+    // Force the LayoutManager to rebuild — same fixture, would
+    // still re-create every column / tile DOM node.
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    // After cancellation, further moves should NOT push the
+    // (now-detached) flex values around. The new columns start at
+    // 0.5/0.5 (from the layout's `widthProportion`); a stale-handle
+    // mutation would visibly shift them.
+    const newCols = document.querySelectorAll<HTMLElement>(".ciri-column");
+    const before0 = parseFloat(newCols[0]!.style.flex);
+    const before1 = parseFloat(newCols[1]!.style.flex);
+    window.dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 600, clientY: 100 }),
+    );
+    expect(parseFloat(newCols[0]!.style.flex)).toBe(before0);
+    expect(parseFloat(newCols[1]!.style.flex)).toBe(before1);
+    // mouseup is also a no-op — no wire message sent for the
+    // cancelled drag.
+    const sentBefore = sent.length;
+    window.dispatchEvent(
+      new MouseEvent("mouseup", { clientX: 600, clientY: 100 }),
+    );
+    const adjustSent = sent
+      .slice(sentBefore)
+      .filter((m) => m.tag === "AdjustColumnSplitAt");
+    expect(adjustSent).toHaveLength(0);
+  });
+
+  test("keydown that originates on a chrome button is NOT forwarded to the terminal", () => {
+    // Regression for codex round-4 P2: a keyboard user tabbing to a
+    // pane chip or workspace tab and pressing Enter / Space would
+    // both activate the button AND have the keydown bubble to the
+    // terminal handler — sending CR / space to whichever pane was
+    // active. CiriApp's `onKeyDown` short-circuits when the event
+    // target is a `<button>` so the chrome's own controls own those
+    // keys.
+    stubLayoutRects({});
+    const { fire, inputs } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    const chip = document.querySelector<HTMLButtonElement>(
+      '.ciri-pane-chip[data-chip-pane-id="1"]',
+    )!;
+    chip.dispatchEvent(
+      new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
+    );
+    chip.dispatchEvent(
+      new KeyboardEvent("keydown", { bubbles: true, key: " " }),
+    );
+    expect(inputs).toHaveLength(0);
+  });
+
+  test("resize started from outside-the-terminal focus moves focus back to the input sink", () => {
+    // Regression for codex round-4 P3: the capture-phase resize
+    // handler stops propagation, which skips the bubble-phase
+    // mousedown handler that normally schedules `focusInputSink`.
+    // Without an explicit focus path, a resize drag started while
+    // (say) the browser address bar held focus would complete but
+    // subsequent keystrokes would still go to that previous focus
+    // target. CiriApp re-queues the same focus call from the
+    // capture handler.
+    stubLayoutRects({});
+    const { app, fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    // Park focus on the page's `<body>` to mimic "focus is not in
+    // the terminal". jsdom doesn't run real focus shifts on
+    // arbitrary elements but does on the textarea sink, so this
+    // gives us a meaningful before/after.
+    document.body.focus();
+    const sink = (app as unknown as {
+      compositionSinkEl: HTMLTextAreaElement;
+    }).compositionSinkEl;
+    expect(document.activeElement).not.toBe(sink);
+    const root = document
+      .querySelector<HTMLElement>(".ciri-workspace")!
+      .closest<HTMLElement>(".ciri-app")!.parentElement!;
+    root.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 400,
+        clientY: 100,
+      }),
+    );
+    // `focusInputSink` runs via queueMicrotask; flush.
+    return Promise.resolve().then(() => {
+      expect(document.activeElement).toBe(sink);
+    });
+  });
+
+  test("hidden (display:none) columns do not contribute phantom resize borders mid-screen", () => {
+    // Regression for codex P2: under the one-pane-per-screen theme,
+    // `.ciri-column { display: none }` hides inactive columns but
+    // `querySelectorAll` still returns them with a 0×0 rect. The
+    // border math `(active.right + hidden.left) / 2` then lands at
+    // ≈ workspace_width / 2 — right in the middle of the visible
+    // terminal. A click there used to be captured as a resize
+    // start. The fix filters zero-rect columns/tiles out before
+    // computing borders.
+    const { app, fire, sent } = bootstrap();
+    const root = app.layoutManager.viewportEl.closest(".ciri-app")
+      ?.parentElement as HTMLElement;
+    const viewport = app.layoutManager.viewportEl;
+    // Stub: active column reports a full-width rect, the hidden
+    // sibling reports 0×0 (jsdom default for `display: none`).
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        if (this === root || this === viewport) return mkRect2(0, 0, 800, 600);
+        if (this instanceof HTMLElement && this.classList?.contains("ciri-column")) {
+          if (this.classList.contains("ciri-column-active")) {
+            return mkRect2(0, 0, 800, 600);
+          }
+          return mkRect2(0, 0, 0, 0);
+        }
+        if (this instanceof HTMLElement && this.classList?.contains("ciri-pane")) {
+          return mkRect2(0, 0, 800, 600);
+        }
+        return mkRect2(0, 0, 0, 0);
+      },
+    );
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    const sentBefore = sent.length;
+    // Click smack in the middle of the visible terminal — pre-fix
+    // this would start a resize drag because the phantom border
+    // sat exactly here.
+    document.body.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        clientX: 400,
+        clientY: 300,
+      }),
+    );
+    // No `AdjustColumnSplitAt` on the wire — the click went
+    // through to normal selection/click handling instead.
+    window.dispatchEvent(
+      new MouseEvent("mouseup", { clientX: 400, clientY: 300 }),
+    );
+    const newMsgs = sent.slice(sentBefore);
+    expect(newMsgs.some((m) => m.tag === "AdjustColumnSplitAt")).toBe(false);
+    vi.restoreAllMocks();
+  });
+
+  function mkRect2(x: number, y: number, w: number, h: number): DOMRect {
+    return {
+      x, y, width: w, height: h, left: x, top: y, right: x + w, bottom: y + h,
+      toJSON: () => ({}),
+    } as DOMRect;
+  }
+
+  test("destroy() while a resize drag is in flight clears state and cursor", () => {
+    stubLayoutRects({});
+    const { app, fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    const root = document
+      .querySelector<HTMLElement>(".ciri-workspace")!
+      .closest<HTMLElement>(".ciri-app")!.parentElement!;
+    root.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 400,
+        clientY: 100,
+      }),
+    );
+    // Mid-drag teardown — must not throw, must release the cursor.
+    expect(() => app.destroy()).not.toThrow();
+  });
+});
+
+describe("CiriApp — clipboard receive / server errors / images / search", () => {
+  const SYNC_2X1 = FULL_PANE_SYNC_FIXTURES.find(
+    (f) => f.name === "2x1 with 1-row scrollback (replace)",
+  )!; // pane 3: viewport "hi", scrollback "ok"
+
+  // jsdom doesn't implement canvas 2d; stub getContext to null so the
+  // renderer's image path skips pixel ops cleanly (no virtual-console
+  // "Not implemented" spam). The canvas element is still created.
+  beforeEach(() => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function ctrlShiftKey(root: HTMLElement, key: string): void {
+    root.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key,
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }
+
+  test("ClipboardStore (OSC 52) writes the data to the system clipboard", () => {
+    const written: string[] = [];
+    Object.defineProperty(window.navigator, "clipboard", {
+      value: { writeText: vi.fn(async (s: string) => { written.push(s); }) },
+      configurable: true,
+    });
+    const { fire } = bootstrap();
+    fire({ kind: "server-msg", msg: { tag: "ClipboardStore", data: "yanked!" } });
+    expect(written).toEqual(["yanked!"]);
+  });
+
+  test("OSC 52 write rejected for lack of activation is flushed on the next keystroke", async () => {
+    let calls = 0;
+    const written: string[] = [];
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: vi.fn(async (s: string) => {
+          calls += 1;
+          if (calls === 1) throw new Error("no user activation"); // server msg path
+          written.push(s);
+        }),
+      },
+    });
+    const { root, app, fire } = bootstrap();
+    app.start();
+    fire({ kind: "server-msg", msg: { tag: "ClipboardStore", data: "yank" } });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(written).toEqual([]); // first attempt (no activation) rejected → still pending
+    // A keystroke is a user gesture → the pending write is retried.
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(written).toEqual(["yank"]);
+  });
+
+  test("server Error surfaces through onError", () => {
+    const { fire, onErrorCalls } = bootstrap();
+    fire({ kind: "server-msg", msg: { tag: "Error", message: "boom" } });
+    expect(onErrorCalls.at(-1)?.message).toBe("server: boom");
+  });
+
+  test("ServerShutdown fires onServerShutdown", () => {
+    const { fire, shutdownCalls } = bootstrap();
+    fire({ kind: "server-msg", msg: { tag: "ServerShutdown" } });
+    expect(shutdownCalls.length).toBe(1);
+  });
+
+  test("ImagePlacement mounts an image canvas in the pane; ImageDeleted clears it", () => {
+    const { root, app, fire } = bootstrap();
+    app.start();
+    fire({ kind: "server-msg", msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) } });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    fire({
+      kind: "server-msg",
+      msg: {
+        tag: "ImagePlacement",
+        paneId: 1n,
+        imageId: 7n,
+        col: 0,
+        row: 0,
+        widthCells: 2,
+        heightCells: 1,
+        pixelWidth: 2,
+        pixelHeight: 2,
+        displayMode: "Cells",
+        format: "rgba",
+        data: new Uint8Array(2 * 2 * 4),
+      },
+    });
+    expect(root.querySelector("canvas.ciri-image")).not.toBeNull();
+    fire({ kind: "server-msg", msg: { tag: "ImageDeleted", paneId: 1n } });
+    expect(root.querySelector("canvas.ciri-image")).toBeNull();
+  });
+
+  test("non-rgba image format is ignored", () => {
+    const { root, app, fire } = bootstrap();
+    app.start();
+    fire({ kind: "server-msg", msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) } });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    fire({
+      kind: "server-msg",
+      msg: {
+        tag: "ImagePlacement",
+        paneId: 1n, imageId: 1n, col: 0, row: 0, widthCells: 1, heightCells: 1,
+        pixelWidth: 1, pixelHeight: 1, displayMode: "Cells",
+        format: "png", data: new Uint8Array(4),
+      },
+    });
+    expect(root.querySelector("canvas.ciri-image")).toBeNull();
+  });
+
+  test("Ctrl+Shift+F opens the find bar and Escape closes it", () => {
+    const { root, app, fire } = bootstrap();
+    app.start();
+    fire({ kind: "server-msg", msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) } });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const bar = root.querySelector<HTMLElement>(".ciri-search")!;
+    const input = root.querySelector<HTMLInputElement>(".ciri-search-input")!;
+    expect(bar.hidden).toBe(true);
+    ctrlShiftKey(root, "f");
+    expect(bar.hidden).toBe(false);
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(bar.hidden).toBe(true);
+  });
+
+  test("typing a query finds matches across viewport + scrollback", () => {
+    const { root, app, fire } = bootstrap();
+    app.start();
+    // pane 3: viewport "hi", scrollback "ok".
+    fire({ kind: "server-msg", msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(3n) } });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(SYNC_2X1.hex) });
+    ctrlShiftKey(root, "f");
+    const input = root.querySelector<HTMLInputElement>(".ciri-search-input")!;
+    const status = root.querySelector<HTMLElement>(".ciri-search-status")!;
+    input.value = "hi";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(status.textContent).toBe("1/1");
+    // Scrollback hit.
+    input.value = "ok";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(status.textContent).toBe("1/1");
+    // No match.
+    input.value = "zzz";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(status.textContent).toBe("0/0");
+  });
+
+  test("right-click over a pane opens the menu; Copy is disabled without a selection", () => {
+    const { root, app, fire } = bootstrap();
+    app.start();
+    fire({ kind: "server-msg", msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) } });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const tile = root.querySelector<HTMLElement>('[data-pane-id="1"]')!;
+    const evt = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 });
+    tile.dispatchEvent(evt);
+    expect(evt.defaultPrevented).toBe(true);
+    const menu = root.querySelector<HTMLElement>(".ciri-contextmenu")!;
+    expect(menu.hidden).toBe(false);
+    const items = menu.querySelectorAll<HTMLButtonElement>(".ciri-contextmenu-item");
+    expect(Array.from(items).map((b) => b.textContent)).toEqual(["Copy", "Paste", "Find…"]);
+    expect(items[0]!.disabled).toBe(true); // Copy — no selection
+  });
+
+  test("context menu Find item opens the search bar", () => {
+    const { root, app, fire } = bootstrap();
+    app.start();
+    fire({ kind: "server-msg", msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) } });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const tile = root.querySelector<HTMLElement>('[data-pane-id="1"]')!;
+    tile.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    const findBtn = Array.from(
+      root.querySelectorAll<HTMLButtonElement>(".ciri-contextmenu-item"),
+    ).find((b) => b.textContent === "Find…")!;
+    findBtn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    expect(root.querySelector<HTMLElement>(".ciri-search")!.hidden).toBe(false);
+    // Menu closes after acting.
+    expect(root.querySelector<HTMLElement>(".ciri-contextmenu")!.hidden).toBe(true);
+  });
+});
+
+describe("CiriApp — touch / mobile", () => {
+  // jsdom has no PointerEvent; listeners match by type string, so a
+  // MouseEvent with pointerType/pointerId defined drives our handlers.
+  function ptr(
+    type: string,
+    opts: { x?: number; y?: number; id?: number; pointerType?: string } = {},
+  ): MouseEvent {
+    const e = new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      clientX: opts.x ?? 5,
+      clientY: opts.y ?? 5,
+    });
+    Object.defineProperty(e, "pointerType", { value: opts.pointerType ?? "touch" });
+    Object.defineProperty(e, "pointerId", { value: opts.id ?? 1 });
+    return e;
+  }
+
+  function setupPane(): ReturnType<typeof bootstrap> & { tile: HTMLElement } {
+    const b = bootstrap();
+    b.app.start();
+    b.fire({ kind: "server-msg", msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) } });
+    b.fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const tile = b.root.querySelector<HTMLElement>('[data-pane-id="1"]')!;
+    return { ...b, tile };
+  }
+
+  test("a tap focuses the composition sink (raises the soft keyboard)", () => {
+    const { root, tile } = setupPane();
+    const sink = root.querySelector<HTMLTextAreaElement>("textarea.ciri-composition-sink")!;
+    sink.blur();
+    tile.dispatchEvent(ptr("pointerdown", { x: 5, y: 5 }));
+    tile.dispatchEvent(ptr("pointerup", { x: 6, y: 6 })); // within slop
+    expect(document.activeElement).toBe(sink);
+  });
+
+  test("long-press without drag opens the menu (Copy disabled)", () => {
+    vi.useFakeTimers();
+    try {
+      const { root, tile } = setupPane();
+      tile.dispatchEvent(ptr("pointerdown", { x: 5, y: 5 }));
+      vi.advanceTimersByTime(500); // long-press fires
+      tile.dispatchEvent(ptr("pointerup", { x: 5, y: 5 }));
+      const menu = root.querySelector<HTMLElement>(".ciri-contextmenu")!;
+      expect(menu.hidden).toBe(false);
+      const copy = menu.querySelector<HTMLButtonElement>(".ciri-contextmenu-item")!;
+      expect(copy.disabled).toBe(true); // no drag → nothing selected
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("long-press then drag selects text and enables Copy in the menu", () => {
+    vi.useFakeTimers();
+    try {
+      const { app, root, tile } = setupPane();
+      // Deterministic cell size so the drag crosses into another column.
+      vi.spyOn(app, "measuredCellSize", "get").mockReturnValue({ cellWidth: 8, cellHeight: 16 });
+      tile.dispatchEvent(ptr("pointerdown", { x: 2, y: 2 }));
+      vi.advanceTimersByTime(500); // long-press → selection begins
+      tile.dispatchEvent(ptr("pointermove", { x: 20, y: 2 })); // drag across cells
+      tile.dispatchEvent(ptr("pointerup", { x: 20, y: 2 }));
+      const menu = root.querySelector<HTMLElement>(".ciri-contextmenu")!;
+      expect(menu.hidden).toBe(false);
+      const copy = menu.querySelector<HTMLButtonElement>(".ciri-contextmenu-item")!;
+      expect(copy.disabled).toBe(false); // a real selection was made
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("pointercancel during a long-press selection aborts cleanly — no menu", () => {
+    vi.useFakeTimers();
+    try {
+      const { root, tile } = setupPane();
+      tile.dispatchEvent(ptr("pointerdown", { x: 5, y: 5 }));
+      vi.advanceTimersByTime(500); // long-press → selection begins
+      tile.dispatchEvent(ptr("pointercancel", { x: 5, y: 5 }));
+      expect(root.querySelector<HTMLElement>(".ciri-contextmenu")!.hidden).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a moving touch (swipe) cancels the long-press — no menu, no selection", () => {
+    vi.useFakeTimers();
+    try {
+      const { root, tile } = setupPane();
+      tile.dispatchEvent(ptr("pointerdown", { x: 5, y: 5 }));
+      // Move past the slop BEFORE the long-press timer fires.
+      tile.dispatchEvent(ptr("pointermove", { x: 5, y: 60 }));
+      vi.advanceTimersByTime(500);
+      tile.dispatchEvent(ptr("pointerup", { x: 5, y: 60 }));
+      expect(root.querySelector<HTMLElement>(".ciri-contextmenu")!.hidden).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

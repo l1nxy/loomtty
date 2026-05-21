@@ -5,14 +5,24 @@
 //
 // URL params:
 //   ?ws=ws://host:port    override the WebSocket URL
-//   ?session=name         override the session name (default: "default")
+//   ?session=name         attach to a named session. When omitted, the
+//                         client sends the `__auto__` sentinel and the
+//                         server picks the most-recently-attached session
+//                         (or creates a fresh one) — same as bare
+//                         `ciritty`. The resolved name is then written
+//                         back into the URL so a reload reattaches to it.
 //   ?token=...            optional auth token forwarded to the transport
 
 import { CiriApp } from "@ciri/app";
 
+// Server-side sentinel: "auto-attach to the most recent / a new session".
+// Mirrors `AUTO_SESSION` in crates/ciri-server/src/daemon/connection.rs.
+const AUTO_SESSION = "__auto__";
+
 const params = new URLSearchParams(window.location.search);
 const wsUrl = params.get("ws") ?? "ws://localhost:8090";
-const sessionName = params.get("session") ?? "default";
+const requestedSession = params.get("session");
+const sessionName = requestedSession ?? AUTO_SESSION;
 const token = params.get("token");
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
@@ -21,12 +31,29 @@ const urlEl = statusEl.querySelector(".url") as HTMLSpanElement;
 const errEl = statusEl.querySelector(".err") as HTMLSpanElement;
 const rootEl = document.getElementById("app") as HTMLDivElement;
 
-urlEl.textContent = `${wsUrl}  ·  ${sessionName}`;
+// Show "auto…" rather than the raw `__auto__` sentinel until the
+// server reports the resolved name via onSessionChange.
+function renderUrl(name: string): void {
+  urlEl.textContent = `${wsUrl}  ·  ${name === AUTO_SESSION ? "auto…" : name}`;
+}
+renderUrl(sessionName);
 
 function setState(state: "connecting" | "connected" | "error", text: string): void {
   statusEl.classList.remove("connecting", "connected", "error");
   statusEl.classList.add(state);
   stateEl.textContent = text;
+}
+
+// Pin the URL to the concrete session the server attached us to, so a
+// reload/share reattaches to the same one instead of re-running
+// auto-attach (which could pick a different "most recent"). Uses
+// replaceState so it doesn't add a history entry per attach.
+function pinSessionInUrl(name: string): void {
+  renderUrl(name);
+  const url = new URL(window.location.href);
+  if (url.searchParams.get("session") === name) return;
+  url.searchParams.set("session", name);
+  window.history.replaceState(null, "", url);
 }
 
 const app = new CiriApp(rootEl, {
@@ -48,6 +75,15 @@ const app = new CiriApp(rootEl, {
     errEl.textContent = err.message;
     // Also log to the console so the full stack is available.
     console.error("[ciri-demo]", err);
+  },
+  onSessionChange: (name) => {
+    pinSessionInUrl(name);
+  },
+  onServerShutdown: () => {
+    // Distinct from a transport drop: the daemon stopped on purpose,
+    // so don't imply a reconnect is coming.
+    setState("error", "server shut down");
+    errEl.textContent = "";
   },
 });
 

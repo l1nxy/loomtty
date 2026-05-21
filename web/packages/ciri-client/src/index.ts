@@ -19,6 +19,7 @@ export {
 export {
   HandshakeError,
   encodeClientHello,
+  decodeClientHello,
   decodeServerHello,
   type ClientHello,
   type ServerHelloInfo,

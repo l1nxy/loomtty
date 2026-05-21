@@ -4,7 +4,10 @@
 // (matching ServerHello shape), then idles. Used by the probe
 // smoke-test when no real ciri-server is available.
 import { createServer } from "node:net";
-const port = Number(process.argv[2] ?? "7890");
+// Default matches the bridge's `--tcp-port` default (7899); see the
+// note in `index.mjs` for why we no longer use ciri-server's stock
+// 7890 here.
+const port = Number(process.argv[2] ?? "7899");
 const srv = createServer((sock) => {
   process.stdout.write(`fake-server: client connected from ${sock.remoteAddress}\n`);
   sock.on("data", (chunk) => {

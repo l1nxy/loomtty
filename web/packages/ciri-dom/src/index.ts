@@ -20,6 +20,7 @@ export {
   selectionRangeEquals,
   type DirtyRows,
   type PaneGridOptions,
+  type SearchMatch,
   type SelectionAnchor,
   type SelectionRange,
 } from "./grid.js";

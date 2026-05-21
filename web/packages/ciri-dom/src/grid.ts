@@ -17,6 +17,7 @@
 
 import {
   DEFAULT_CELL,
+  FLAG_WIDE_CHAR,
   FLAG_WIDE_CHAR_SPACER,
   type CellDelta,
   type FullPaneSync,
@@ -56,6 +57,15 @@ export interface SelectionRange {
   start: SelectionAnchor;
   end: SelectionAnchor;
   active: boolean;
+}
+
+/// One search hit from `PaneGrid.search`. `srcRow` is in the combined
+/// `[scrollback..., viewport]` space (same as `SelectionAnchor.srcRow`);
+/// `startCol`/`endCol` are inclusive columns within that row.
+export interface SearchMatch {
+  srcRow: number;
+  startCol: number;
+  endCol: number;
 }
 
 /// True when `a` and `b` describe the same span (regardless of which
@@ -115,6 +125,19 @@ export class PaneGrid {
   /// re-attach.
   scrollback: PackedCell[];
   scrollbackRows: number;
+  /// Cumulative count of rows evicted from the FRONT of scrollback by
+  /// the `maxScrollbackRows` cap. Every front-trim shifts the absolute
+  /// `srcRow` of all surviving rows down by the trim amount; consumers
+  /// holding absolute `srcRow` anchors (e.g. the renderer's inline
+  /// images) diff this counter across renders to rebase them. Append
+  /// growth does NOT change it — appended rows keep existing srcRows
+  /// stable. Monotonic.
+  scrollbackTrimmed = 0;
+  /// Bumped whenever scrollback is replaced wholesale
+  /// (`scrollbackReplace`), which redefines the absolute index space
+  /// entirely (alt-screen enter/exit, resize, …). Anchors from a prior
+  /// epoch are meaningless and must be dropped, not rebased.
+  scrollbackEpoch = 0;
 
   /// Sparse grapheme extras keyed by cell index over the concatenated
   /// `[scrollback..., cells...]` stream. The renderer's per-row reader
@@ -299,6 +322,7 @@ export class PaneGrid {
     if (sync.scrollbackReplace) {
       this.scrollback = sync.scrollback.slice();
       this.scrollbackRows = sync.scrollbackRows;
+      this.scrollbackEpoch += 1;
     } else if (sync.scrollback.length > 0) {
       // The server's `scrollback_replace = false` means "the
       // following rows are NEW history to append on top of what the
@@ -366,6 +390,7 @@ export class PaneGrid {
       this.scrollbackRows = this.maxScrollbackRows;
       this.graphemeExtras = shiftExtrasDown(this.graphemeExtras, trimCells);
       this.cellLinks = shiftExtrasDown(this.cellLinks, trimCells);
+      this.scrollbackTrimmed += trimRows;
     }
 
     // Even a scrollback-only sync may shift viewport extras forward
@@ -484,6 +509,66 @@ export class PaneGrid {
       out.push(line.replace(/[ \t]+$/u, ""));
     }
     return out.join("\n");
+  }
+
+  /// Find every occurrence of `query` in the combined buffer
+  /// (scrollback + viewport). Case-insensitive. Matches are returned in
+  /// reading order (top row first, left-to-right within a row) and
+  /// never span a row boundary — terminal lines are independent on the
+  /// wire even when visually wrapped. Wide-char spacer cells are
+  /// skipped when building each row's text so a column maps back to the
+  /// glyph's real cell. Mirrors the desktop client's `grid.search`
+  /// (`update_search_results` in `crates/ciri/src/app/action.rs`).
+  search(query: string): SearchMatch[] {
+    if (query.length === 0 || this.cols === 0) return [];
+    const needle = query.toLowerCase();
+    const out: SearchMatch[] = [];
+    const total = this.totalRows();
+    for (let srcRow = 0; srcRow < total; srcRow += 1) {
+      const cells = this.combinedRowCells(srcRow);
+      // Build the row's lowercased text plus a per-code-unit → column
+      // map. A cell whose `ch` (or its lowercase) is more than one code
+      // unit pushes its column once per unit, so `indexOf` offsets map
+      // back to columns even across case folding / multi-unit glyphs.
+      let text = "";
+      const colOf: number[] = [];
+      const rowGlobalStart = srcRow * this.cols;
+      for (let col = 0; col < this.cols; col += 1) {
+        const cell = cells[col];
+        if (cell === undefined) break;
+        if ((cell.flags & FLAG_WIDE_CHAR_SPACER) !== 0) continue;
+        // Use the full grapheme (primary codepoint + combining-mark /
+        // ZWJ extras) so a cell that renders as `é` or a multi-codepoint
+        // emoji is searchable, matching what `extractText` produces.
+        const base = cell.ch.length === 0 ? " " : cell.ch;
+        const lower = this.globalGrapheme(rowGlobalStart + col, base).toLowerCase();
+        for (let k = 0; k < lower.length; k += 1) colOf.push(col);
+        text += lower;
+      }
+      let from = 0;
+      for (;;) {
+        const idx = text.indexOf(needle, from);
+        if (idx < 0) break;
+        const startCol = colOf[idx];
+        let endCol = colOf[idx + needle.length - 1];
+        if (startCol !== undefined && endCol !== undefined) {
+          // Extend the end over a double-wide glyph's trailing spacer so
+          // the highlight covers the full 2-column cell, not just its
+          // lead column.
+          const endCell = cells[endCol];
+          if (
+            endCell !== undefined &&
+            (endCell.flags & FLAG_WIDE_CHAR) !== 0 &&
+            endCol + 1 < this.cols
+          ) {
+            endCol += 1;
+          }
+          out.push({ srcRow, startCol, endCol });
+        }
+        from = idx + 1; // allow overlapping matches
+      }
+    }
+    return out;
   }
 }
 

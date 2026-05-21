@@ -499,7 +499,8 @@ impl Server {
             | ClientMessage::RunCommand { .. }
             | ClientMessage::GetLayout { .. }
             | ClientMessage::CapturePane { .. }
-            | ClientMessage::ListPrompts { .. } => {
+            | ClientMessage::ListPrompts { .. }
+            | ClientMessage::JumpToPrompt { .. } => {
                 self.handle_ipc(msg, client_id, &mut responses);
             }
 

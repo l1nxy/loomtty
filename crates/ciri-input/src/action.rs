@@ -59,6 +59,11 @@ pub enum Action {
     ScrollLineDown,
     ScrollTop,
     ScrollBottom,
+    /// Scroll the viewport to the previous OSC 133 prompt boundary (older).
+    /// Requires shell integration; silently no-ops when no marks exist.
+    PrevPrompt,
+    /// Scroll the viewport to the next OSC 133 prompt boundary (newer).
+    NextPrompt,
     /// Detach from session (close client, server keeps running).
     Detach,
     /// Toggle the command palette overlay.
@@ -157,6 +162,8 @@ impl Action {
                 | Action::ScrollLineDown
                 | Action::ScrollTop
                 | Action::ScrollBottom
+                | Action::PrevPrompt
+                | Action::NextPrompt
                 | Action::SwitchWorkspace(_)
         )
     }
@@ -208,6 +215,8 @@ impl Action {
             (Action::ScrollLineDown, "Scroll Line Down"),
             (Action::ScrollTop, "Scroll to Top"),
             (Action::ScrollBottom, "Scroll to Bottom"),
+            (Action::PrevPrompt, "Jump to Previous Prompt"),
+            (Action::NextPrompt, "Jump to Next Prompt"),
             (Action::Detach, "Detach"),
             (Action::ToggleCommandPalette, "Toggle Command Palette"),
             (Action::ToggleSessionPalette, "Toggle Session Palette"),
@@ -261,6 +270,8 @@ fn parse_named_action(name: &str) -> Option<Action> {
         "scroll_line_down" => Some(Action::ScrollLineDown),
         "scroll_top" => Some(Action::ScrollTop),
         "scroll_bottom" => Some(Action::ScrollBottom),
+        "prev_prompt" | "previous_prompt" => Some(Action::PrevPrompt),
+        "next_prompt" => Some(Action::NextPrompt),
         "detach" => Some(Action::Detach),
         "toggle_command_palette" => Some(Action::ToggleCommandPalette),
         "toggle_session_palette" => Some(Action::ToggleSessionPalette),

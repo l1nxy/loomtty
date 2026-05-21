@@ -157,6 +157,9 @@ f = "scroll_page_down"
 b = "scroll_page_up"
 g = "scroll_top"
 "shift+g" = "scroll_bottom"
+# Jump between OSC 133 prompt boundaries (requires shell integration).
+"[" = "prev_prompt"
+"]" = "next_prompt"
 
 [keys.modes.move]
 h = "move_pane_left"

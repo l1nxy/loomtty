@@ -596,6 +596,41 @@ impl Pane {
         self.term.primary_scrollback_total()
     }
 
+    /// Resolve a `JumpToPrompt` request to a concrete client `scroll_offset`.
+    ///
+    /// `client_scrollback_total` is the absolute-line counter the requesting
+    /// client last received — typically `client.history_sent[pane_id]`. We
+    /// reason in **that** coordinate system, not the pane's current
+    /// `scrollback_total()`, because the server may have processed rows that
+    /// haven't been synced to this client yet. Using the live total during a
+    /// burst of output would pick a prompt the client cannot see, and the
+    /// returned offset would land above the intended boundary until the
+    /// pending sync catches up.
+    ///
+    /// `from_offset` is the requesting client's current scroll position (0 =
+    /// live tail). `direction` is `-1` for the previous (older) prompt and
+    /// `+1` for the next (newer) one.
+    ///
+    /// The returned offset is clamped to `[0, history_size]`. The client
+    /// further clamps against its own `max_scroll_offset`, so a mark that
+    /// was evicted from the grid still lands the user at the oldest
+    /// reachable row instead of an impossible position. `None` means there
+    /// is no mark in the requested direction — the caller should send
+    /// nothing back.
+    pub fn jump_to_prompt(
+        &self,
+        client_scrollback_total: u64,
+        from_offset: u32,
+        direction: i8,
+    ) -> Option<u32> {
+        self.prompt_marks.jump_offset(
+            client_scrollback_total,
+            self.history_size() as u64,
+            from_offset,
+            direction,
+        )
+    }
+
     pub fn is_alt_screen(&self) -> bool {
         use alacritty_terminal::term::TermMode;
         self.term.mode().contains(TermMode::ALT_SCREEN)

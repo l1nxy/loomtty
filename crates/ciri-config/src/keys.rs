@@ -87,6 +87,8 @@ impl Default for KeybindConfig {
         scroll.insert("b".to_string(), "scroll_page_up".to_string());
         scroll.insert("g".to_string(), "scroll_top".to_string());
         scroll.insert("shift+g".to_string(), "scroll_bottom".to_string());
+        scroll.insert("[".to_string(), "prev_prompt".to_string());
+        scroll.insert("]".to_string(), "next_prompt".to_string());
         modes.insert("scroll".to_string(), scroll);
 
         let mut mv = HashMap::new();

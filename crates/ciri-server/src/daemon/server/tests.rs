@@ -471,6 +471,64 @@ fn list_prompts_rejects_unknown_pane_id_in_known_session() {
 }
 
 #[test]
+fn jump_to_prompt_returns_no_message_when_no_marks_exist() {
+    // A fresh pane has no OSC 133 marks. JumpToPrompt must stay silent —
+    // the client treats absence of `SetScrollOffset` as "stay put".
+    let mut server = Server::new("", 8.0, TerminalColors::default());
+    let session_name = "jump-empty".to_string();
+    server.clients.insert(1, test_client(1, "__control__"));
+    let target_pane = {
+        let session = server.get_or_create_session(&session_name);
+        session.workspaces.active().active_pane_id().unwrap()
+    };
+
+    for direction in [-1i8, 1] {
+        let responses = server.handle_message(
+            ClientMessage::JumpToPrompt {
+                session_name: session_name.clone(),
+                pane_id: target_pane,
+                from_offset: 0,
+                direction,
+            },
+            1,
+        );
+        assert!(
+            responses.is_empty(),
+            "direction={direction}: expected no responses when ring is empty, got {} response(s)",
+            responses.len()
+        );
+    }
+}
+
+#[test]
+fn jump_to_prompt_unknown_session_or_pane_stays_silent() {
+    // Both unknown-session and unknown-pane resolve through the same
+    // "silent" path used when no neighbor exists. The control-channel
+    // `resolve_session` path may push an Error for unknown session, but
+    // unknown pane in a known session must not — we don't want a jump
+    // keystroke to surface as a popup.
+    let mut server = Server::new("", 8.0, TerminalColors::default());
+    let session_name = "jump-bad-pane".to_string();
+    server.clients.insert(1, test_client(1, "__control__"));
+    server.get_or_create_session(&session_name);
+
+    let responses = server.handle_message(
+        ClientMessage::JumpToPrompt {
+            session_name: session_name.clone(),
+            pane_id: 77_777,
+            from_offset: 0,
+            direction: -1,
+        },
+        1,
+    );
+    assert!(
+        responses.is_empty(),
+        "unknown pane should produce no response (no SetScrollOffset, no Error toast); got {} response(s)",
+        responses.len()
+    );
+}
+
+#[test]
 fn focus_pane_by_id_returns_layout_update_and_command_result() {
     let mut server = Server::new("", 8.0, TerminalColors::default());
     let session_name = "alpha".to_string();

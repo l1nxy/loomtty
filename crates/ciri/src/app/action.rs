@@ -215,6 +215,12 @@ impl App {
             Action::ScrollBottom => {
                 self.scroll_active_to_bottom();
             }
+            Action::PrevPrompt => {
+                self.request_prompt_jump(-1);
+            }
+            Action::NextPrompt => {
+                self.request_prompt_jump(1);
+            }
             Action::Detach => {
                 self.send(ClientMessage::Detach);
                 self.core.should_exit = true;
@@ -378,6 +384,28 @@ impl App {
                 // State transitions already handled in process_key_v2.
             }
         }
+    }
+
+    /// Ask the server to move the active pane's viewport to the previous
+    /// (`direction < 0`) or next (`direction > 0`) OSC 133 prompt boundary.
+    /// The server resolves the target using its own prompt ring and replies
+    /// with `SetScrollOffset` — see `ClientMessage::JumpToPrompt`.
+    fn request_prompt_jump(&mut self, direction: i8) {
+        let Some(pane_id) = self.core.workspaces.active().active_pane_id() else {
+            return;
+        };
+        let from_offset = self
+            .core
+            .pane_grids
+            .get(&pane_id)
+            .map(|g| g.scroll_offset.min(u32::MAX as usize) as u32)
+            .unwrap_or(0);
+        self.send(ClientMessage::JumpToPrompt {
+            session_name: self.core.session_name.clone(),
+            pane_id,
+            from_offset,
+            direction,
+        });
     }
 
     // ── Search helpers (used by handle_action and keyboard.rs) ──

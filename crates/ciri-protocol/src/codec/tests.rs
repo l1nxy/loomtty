@@ -2305,6 +2305,69 @@ mod network_edge_cases {
     }
 
     #[test]
+    fn client_message_jump_to_prompt_wire_format_pinned() {
+        let msg = ClientMessage::JumpToPrompt {
+            session_name: "s".into(),
+            pane_id: 1,
+            from_offset: 0,
+            direction: -1,
+        };
+        let bytes = rmp_serde::to_vec(&msg).unwrap();
+        // Expected layout:
+        //   0x81                  fixmap of size 1
+        //   0xAC                  fixstr length 12 ("JumpToPrompt")
+        //   "JumpToPrompt"        12 bytes of UTF-8
+        //   0x94                  fixarray of size 4
+        //   ...                   (session_name, pane_id, from_offset, direction)
+        assert_eq!(bytes[0], 0x81, "expected fixmap-of-size-1 prefix");
+        assert_eq!(bytes[1], 0xAC, "expected fixstr length 12 (JumpToPrompt)");
+        assert_eq!(
+            &bytes[2..14],
+            b"JumpToPrompt",
+            "variant NAME bytes must stay 'JumpToPrompt' on the wire"
+        );
+        assert_eq!(
+            bytes[14], 0x94,
+            "struct payload must be fixarray of size 4 \
+             (session_name, pane_id, from_offset, direction)"
+        );
+
+        let decoded: ClientMessage = rmp_serde::from_slice(&bytes).unwrap();
+        assert!(matches!(decoded, ClientMessage::JumpToPrompt { .. }));
+    }
+
+    #[test]
+    fn server_message_set_scroll_offset_wire_format_pinned() {
+        let msg = ServerMessage::SetScrollOffset {
+            pane_id: 1,
+            offset: 0,
+        };
+        let bytes = rmp_serde::to_vec(&msg).unwrap();
+        // Expected layout:
+        //   0x81                  fixmap of size 1
+        //   0xAF                  fixstr length 15 ("SetScrollOffset")
+        //   "SetScrollOffset"     15 bytes of UTF-8
+        //   0x92                  fixarray of size 2 (pane_id, offset)
+        assert_eq!(bytes[0], 0x81);
+        assert_eq!(
+            bytes[1], 0xAF,
+            "expected fixstr length 15 (SetScrollOffset)"
+        );
+        assert_eq!(
+            &bytes[2..17],
+            b"SetScrollOffset",
+            "variant NAME bytes must stay 'SetScrollOffset' on the wire"
+        );
+        assert_eq!(
+            bytes[17], 0x92,
+            "struct payload must be fixarray of size 2 (pane_id, offset)"
+        );
+
+        let decoded: ServerMessage = rmp_serde::from_slice(&bytes).unwrap();
+        assert!(matches!(decoded, ServerMessage::SetScrollOffset { .. }));
+    }
+
+    #[test]
     fn prompt_mark_info_partial_array_defaults_trailing_fields() {
         use crate::message::PromptMarkInfo;
         // An older sender that didn't have `duration_ms` yet emits a 4-array.

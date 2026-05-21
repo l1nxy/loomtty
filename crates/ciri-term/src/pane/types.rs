@@ -170,6 +170,61 @@ impl PromptMarkRing {
         }
     }
 
+    /// Find the nearest prompt boundary relative to an absolute reference
+    /// line, used to resolve `JumpToPrompt` on the server side.
+    ///
+    /// - `direction < 0` → largest `prompt_line` strictly less than `from_abs_line`
+    /// - `direction > 0` → smallest `prompt_line` strictly greater than `from_abs_line`
+    /// - `direction == 0` → `None`
+    ///
+    /// Returns the matching mark's `prompt_line`, or `None` when no mark
+    /// exists in that direction. The caller is responsible for clamping the
+    /// derived scroll offset against the grid's `history_size` — marks at
+    /// `prompt_line < scrollback_total - history_size` are still tracked
+    /// here but no longer reachable in the grid.
+    pub fn neighbor_prompt_line(&self, from_abs_line: u64, direction: i8) -> Option<u64> {
+        match direction.signum() {
+            -1 => self
+                .marks
+                .iter()
+                .rev()
+                .find(|m| m.prompt_line < from_abs_line)
+                .map(|m| m.prompt_line),
+            1 => self
+                .marks
+                .iter()
+                .find(|m| m.prompt_line > from_abs_line)
+                .map(|m| m.prompt_line),
+            _ => None,
+        }
+    }
+
+    /// Compute the client `scroll_offset` that puts the nearest prompt mark
+    /// (in `direction`) at the top of the viewport. The math runs in the
+    /// **client's** absolute-line coordinate system: `reference_total` is
+    /// what the client thinks the pane's `scrollback_total` is (the watermark
+    /// of the last scrollback sync sent to that client), so a jump issued
+    /// during a burst of unsent output still lands on a prompt the client
+    /// can see.
+    ///
+    /// `history_size` bounds the maximum reachable offset; the client further
+    /// clamps against its own `max_scroll_offset` if its `max_scrollback`
+    /// is smaller.
+    ///
+    /// `None` when no mark exists in the requested direction.
+    pub fn jump_offset(
+        &self,
+        reference_total: u64,
+        history_size: u64,
+        from_offset: u32,
+        direction: i8,
+    ) -> Option<u32> {
+        let current_top_abs = reference_total.saturating_sub(from_offset as u64);
+        let target_line = self.neighbor_prompt_line(current_top_abs, direction)?;
+        let target_offset = reference_total.saturating_sub(target_line);
+        Some(target_offset.min(history_size).min(u32::MAX as u64) as u32)
+    }
+
     /// Drop marks whose `prompt_line` has been evicted from the scrollback
     /// ring buffer. `min_reachable_abs_line` is `scrollback_total - history_cap`
     /// at the caller's side. No-op when nothing is evictable.
@@ -303,6 +358,94 @@ mod tests {
         assert_eq!(ring.len(), 3);
         let lines: Vec<u64> = ring.iter().map(|m| m.prompt_line).collect();
         assert_eq!(lines, vec![20, 30, 40]);
+    }
+
+    #[test]
+    fn neighbor_prompt_line_picks_strict_neighbors() {
+        let mut ring = PromptMarkRing::new();
+        for line in [100u64, 200, 300, 400] {
+            ring.begin_prompt(line);
+            ring.mark_done(line + 1, Some(0), None);
+        }
+
+        // Starting from a position between marks: prev = older, next = newer.
+        assert_eq!(ring.neighbor_prompt_line(250, -1), Some(200));
+        assert_eq!(ring.neighbor_prompt_line(250, 1), Some(300));
+
+        // Direction must be strict — landing exactly on a mark moves off it.
+        assert_eq!(ring.neighbor_prompt_line(200, -1), Some(100));
+        assert_eq!(ring.neighbor_prompt_line(200, 1), Some(300));
+
+        // Edges: no mark older than 100, no mark newer than 400.
+        assert_eq!(ring.neighbor_prompt_line(100, -1), None);
+        assert_eq!(ring.neighbor_prompt_line(400, 1), None);
+
+        // direction == 0 is meaningless.
+        assert_eq!(ring.neighbor_prompt_line(250, 0), None);
+
+        // Empty ring yields None in both directions.
+        let empty = PromptMarkRing::new();
+        assert_eq!(empty.neighbor_prompt_line(50, -1), None);
+        assert_eq!(empty.neighbor_prompt_line(50, 1), None);
+    }
+
+    #[test]
+    fn jump_offset_lands_prompt_at_viewport_top() {
+        // Two prompts at abs 100 and 200. With reference_total = 250 and
+        // a 50-row history, prompt_line 200 sits 50 rows back from live —
+        // scrolling there should land it exactly at the viewport top.
+        let mut ring = PromptMarkRing::new();
+        ring.begin_prompt(100);
+        ring.mark_done(101, Some(0), None);
+        ring.begin_prompt(200);
+        ring.mark_done(201, Some(0), None);
+
+        // From live tail (from_offset=0), "previous" finds prompt at 200.
+        assert_eq!(ring.jump_offset(250, 50, 0, -1), Some(50));
+        // From there, "previous" finds prompt at 100, but it's evicted
+        // (history_size=50, oldest reachable abs = 200); clamp keeps the
+        // user at the oldest reachable position.
+        assert_eq!(ring.jump_offset(250, 50, 50, -1), Some(50));
+        // "Next" from above 200 (e.g. scrolled up past it) finds 200.
+        assert_eq!(ring.jump_offset(250, 50, 100, 1), Some(50));
+    }
+
+    #[test]
+    fn jump_offset_runs_in_client_coordinate_not_server() {
+        // Server has produced rows past abs 300, but the client's last
+        // scrollback sync only carried it up to abs 250 (50 rows pending).
+        // A jump issued during this gap must land the client on the
+        // prompt it can see (at 200), not on one in the unsynced tail.
+        let mut ring = PromptMarkRing::new();
+        for line in [100u64, 200, 280] {
+            // 280 is past the client's view at reference_total=250.
+            ring.begin_prompt(line);
+            ring.mark_done(line + 1, Some(0), None);
+        }
+
+        // Reference_total = client's view (250), not server's (>=300).
+        // "Previous" from live tail picks 200 — the most recent prompt
+        // the client has been told about. Using the server total here
+        // would incorrectly pick 280.
+        assert_eq!(ring.jump_offset(250, 1000, 0, -1), Some(50));
+
+        // After the pending sync catches up (reference_total advances
+        // to 300), the user can reach 280.
+        assert_eq!(ring.jump_offset(300, 1000, 0, -1), Some(20));
+    }
+
+    #[test]
+    fn jump_offset_returns_none_when_no_neighbor_exists() {
+        let mut ring = PromptMarkRing::new();
+        ring.begin_prompt(100);
+        ring.mark_done(101, Some(0), None);
+
+        // Above the only mark, going up further yields nothing.
+        assert_eq!(ring.jump_offset(50, 1000, 0, -1), None);
+        // At live tail, going further down yields nothing.
+        assert_eq!(ring.jump_offset(101, 1000, 0, 1), None);
+        // direction == 0 is meaningless.
+        assert_eq!(ring.jump_offset(200, 1000, 0, 0), None);
     }
 
     #[test]

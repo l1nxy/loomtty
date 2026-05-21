@@ -506,6 +506,24 @@ pub enum ClientMessage {
         session_name: String,
         pane_id: u64,
     },
+    /// Jump the requesting client's viewport to a neighboring OSC 133 prompt
+    /// boundary. The server resolves direction against its own prompt ring,
+    /// translates the target absolute line to a client scroll offset, and
+    /// replies (to this client only) with [`ServerMessage::SetScrollOffset`].
+    ///
+    /// `from_offset` is the client's current `scroll_offset` (lines into
+    /// history from the live bottom). `direction` is `-1` for "previous"
+    /// (older, scroll up) and `+1` for "next" (newer, scroll down).
+    ///
+    /// When no prompt exists in the requested direction (already at the
+    /// oldest known mark, or no mark below the current position) the server
+    /// stays silent — clients should not block on a reply.
+    JumpToPrompt {
+        session_name: String,
+        pane_id: u64,
+        from_offset: u32,
+        direction: i8,
+    },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -623,6 +641,12 @@ pub enum ServerMessage {
         pane_id: u64,
         marks: Vec<PromptMarkInfo>,
     },
+    /// Set the requesting client's `scroll_offset` for `pane_id` directly.
+    /// Sent as the reply to [`ClientMessage::JumpToPrompt`] — single-client
+    /// unicast, not a broadcast. `offset` is in the same units as
+    /// `ClientPaneGrid::scroll_offset` (lines into history from the live
+    /// bottom).
+    SetScrollOffset { pane_id: u64, offset: u32 },
 }
 
 /// Direction of the edge bounce.

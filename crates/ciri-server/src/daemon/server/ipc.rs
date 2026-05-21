@@ -297,6 +297,43 @@ impl Server {
                     );
                 }
             }
+            ClientMessage::JumpToPrompt {
+                session_name: target,
+                pane_id,
+                from_offset,
+                direction,
+            } => {
+                // No reply when the session or pane is unknown, or when no
+                // neighboring mark exists — clients treat silence as
+                // "stay put" (see `ClientMessage::JumpToPrompt` docs).
+                //
+                // Read this client's scrollback watermark *before* the
+                // immutable session borrow so the math runs in the same
+                // coordinate space the client renders. Falling back to the
+                // pane's live `scrollback_total()` only happens on the
+                // first-ever sync (no `history_sent` entry yet), where
+                // there is no client view to be ahead of.
+                let client_total = self
+                    .clients
+                    .get(&client_id)
+                    .and_then(|c| c.history_sent.get(&pane_id))
+                    .copied();
+                let Some(session) = self.resolve_session(&target, client_id, responses) else {
+                    return;
+                };
+                if let Some(pane) = session.panes.get(&pane_id) {
+                    let reference_total =
+                        client_total.unwrap_or_else(|| pane.scrollback_total()) as u64;
+                    if let Some(offset) =
+                        pane.jump_to_prompt(reference_total, from_offset, direction)
+                    {
+                        responses.push(ServerResponse::SendToClient(
+                            client_id,
+                            ServerMessage::SetScrollOffset { pane_id, offset },
+                        ));
+                    }
+                }
+            }
             _ => {}
         }
     }

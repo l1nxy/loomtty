@@ -557,6 +557,21 @@ impl App {
                     }) => {
                         self.core.prediction.on_pong(seq, client_time_us);
                     }
+                    ServerEvent::Control(ServerMessage::SetScrollOffset { pane_id, offset }) => {
+                        // Reply to `ClientMessage::JumpToPrompt`: the server
+                        // resolved the target prompt mark and computed a
+                        // scroll offset; apply it as-is. `set_scroll_offset`
+                        // clamps to this client's current `max_scroll_offset`
+                        // (which may differ if `max_scrollback` is smaller
+                        // than the server's history), so a stale or
+                        // out-of-range offset just lands at the oldest
+                        // reachable row.
+                        if let Some(grid) = self.core.pane_grids.get_mut(&pane_id) {
+                            grid.set_scroll_offset(offset as usize);
+                            self.invalidate_pane_cache(pane_id);
+                            needs_redraw = true;
+                        }
+                    }
                     // IPC-only responses — not relevant for the GUI client
                     ServerEvent::Control(ServerMessage::SessionInfoReply { .. })
                     | ServerEvent::Control(ServerMessage::PaneListReply { .. })

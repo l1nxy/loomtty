@@ -2729,19 +2729,39 @@ describe("CiriApp — IME composition", () => {
 });
 
 describe("CiriApp — chrome actions (workspace + session)", () => {
-  test("new-workspace action sends SplitDown", () => {
-    const { app, fire, sent } = bootstrap();
+  test("workspace strip '+' sends SplitDown (new workspace)", () => {
+    const { root, app, fire, sent } = bootstrap();
     app.start();
     fire({
       kind: "server-msg",
       msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
     });
-    const btn = document.querySelector<HTMLButtonElement>(
-      '.ciri-action[data-action-id="new-workspace"]',
-    )!;
+    const btn = root.querySelector<HTMLButtonElement>(".ciri-ws-new");
     expect(btn).not.toBeNull();
-    btn.click();
+    btn!.click();
     expect(sent.some((m) => m.tag === "SplitDown")).toBe(true);
+  });
+
+  test("session bar '+' creates and switches to a fresh session", () => {
+    const { root, app, fire, sent } = bootstrap({ sessionName: "alpha" });
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: {
+        tag: "SessionList",
+        sessions: [
+          { name: "alpha", running: true, paneCount: 1n, clientCount: 1n },
+          { name: "session-1", running: true, paneCount: 1n, clientCount: 0n },
+        ],
+      },
+    });
+    const btn = root.querySelector<HTMLButtonElement>(".ciri-session-new");
+    expect(btn).not.toBeNull();
+    btn!.click();
+    // session-1 is taken → next free is session-2.
+    const sw = sent.find((m) => m.tag === "SwitchSession");
+    expect(sw).toBeDefined();
+    if (sw?.tag === "SwitchSession") expect(sw.sessionName).toBe("session-2");
   });
 
   test("ListSessions (running only, all:false) is requested on open", () => {

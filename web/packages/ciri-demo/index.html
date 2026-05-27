@@ -155,9 +155,58 @@
            `overflow-x: auto` clip & scroll instead of spilling. */
         min-width: 0;
       }
+      /* Top bar: session switcher + workspace tabs on one row. */
+      .ciri-topbar {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        min-width: 0;
+        overflow-x: auto;
+      }
       .ciri-workspaces {
         flex: 0 0 auto;
         min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: var(--space-1);
+        padding: var(--space-1) var(--space-2);
+      }
+      /* Divider between the session bar and the workspace tabs — only
+         when the session bar is actually showing (it's [hidden] until a
+         session is known), so there's no dangling leading border. */
+      .ciri-sessions:not([hidden]) + .ciri-workspaces {
+        border-left: 1px solid var(--border);
+        margin-left: var(--space-1);
+      }
+      /* Workspace tabs + the trailing "+" (new workspace). */
+      .ciri-ws,
+      .ciri-ws-new {
+        flex: 0 0 auto;
+        min-height: var(--hit-cozy);
+        min-width: var(--hit-cozy);
+        padding: var(--space-1) var(--space-2);
+        background: var(--bg-chip);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-pill);
+        font-family: inherit;
+        font-size: var(--font-md);
+        line-height: 1;
+        cursor: pointer;
+      }
+      .ciri-ws:hover,
+      .ciri-ws-new:hover {
+        background: var(--bg-chip-hover);
+        border-color: var(--border-strong);
+      }
+      .ciri-ws-active {
+        border-color: var(--border-accent);
+        color: var(--fg);
+      }
+      .ciri-ws:focus-visible,
+      .ciri-ws-new:focus-visible {
+        outline: 2px solid var(--border-accent);
+        outline-offset: 1px;
       }
       /* Session switcher — a native <select> styled to match the chip
          chrome. Sits above the workspace tabs. Hidden (via the [hidden]
@@ -166,10 +215,34 @@
         flex: 0 0 auto;
         display: flex;
         align-items: center;
+        gap: var(--space-1);
         padding: var(--space-1) var(--space-2);
       }
       .ciri-sessions[hidden] {
         display: none;
+      }
+      /* "+" next to the session dropdown (new session). */
+      .ciri-session-new {
+        flex: 0 0 auto;
+        min-height: var(--hit-cozy);
+        min-width: var(--hit-cozy);
+        padding: var(--space-1) var(--space-2);
+        background: var(--bg-chip);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-pill);
+        font-family: inherit;
+        font-size: var(--font-md);
+        line-height: 1;
+        cursor: pointer;
+      }
+      .ciri-session-new:hover {
+        background: var(--bg-chip-hover);
+        border-color: var(--border-strong);
+      }
+      .ciri-session-new:focus-visible {
+        outline: 2px solid var(--border-accent);
+        outline-offset: 1px;
       }
       .ciri-session-select {
         flex: 0 0 auto;

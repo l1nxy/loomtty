@@ -74,6 +74,13 @@ export interface LayoutManagerOptions {
   /// Fired when the user clicks a workspace tab — typically wired to
   /// `client.send({ tag: "SwitchWorkspace", workspaceIdx })`.
   onWorkspaceClick?: (idx: bigint) => void;
+  /// Fired when the user clicks the "+" at the end of the workspace tab
+  /// strip — typically wired to `client.send({ tag: "SplitDown" })`
+  /// (which opens a pane in a new workspace below).
+  onNewWorkspace?: () => void;
+  /// Fired when the user clicks the "+" next to the session dropdown —
+  /// typically wired to create and switch to a fresh session.
+  onNewSession?: () => void;
   /// Optional resolver that returns the current title for a pane,
   /// used to populate the tile's `data-title` attribute on layout
   /// reshape. Defaults to empty. Themes can read this attribute via
@@ -141,6 +148,16 @@ export class LayoutManager {
       if (name.length > 0) this.opts.onSessionSelect?.(name);
     });
     this.sessionBar.appendChild(this.sessionSelect);
+    // "+" — create and switch to a new session. Persists with the bar
+    // (not rebuilt by setSessions).
+    const newSessionBtn = doc.createElement("button");
+    newSessionBtn.type = "button";
+    newSessionBtn.className = "ciri-session-new";
+    newSessionBtn.textContent = "+";
+    newSessionBtn.setAttribute("aria-label", "New session");
+    newSessionBtn.title = "New session";
+    newSessionBtn.addEventListener("click", () => this.opts.onNewSession?.());
+    this.sessionBar.appendChild(newSessionBtn);
     this.wsTabs = doc.createElement("div");
     this.wsTabs.className = "ciri-workspaces";
     this.paneBar = doc.createElement("nav");
@@ -150,8 +167,13 @@ export class LayoutManager {
     this.paneBar.setAttribute("aria-orientation", "horizontal");
     this.wsContent = doc.createElement("div");
     this.wsContent.className = "ciri-workspace";
-    this.chrome.appendChild(this.sessionBar);
-    this.chrome.appendChild(this.wsTabs);
+    // Session switcher + workspace tabs share one row (a flex top bar),
+    // separated by a divider; the pane chips and content sit below.
+    const topBar = doc.createElement("div");
+    topBar.className = "ciri-topbar";
+    topBar.appendChild(this.sessionBar);
+    topBar.appendChild(this.wsTabs);
+    this.chrome.appendChild(topBar);
     this.chrome.appendChild(this.paneBar);
     this.chrome.appendChild(this.wsContent);
     this.root.appendChild(this.chrome);
@@ -215,6 +237,15 @@ export class LayoutManager {
       });
       tabs[i] = btn;
     }
+    // "+" at the end of the strip — create a new workspace. Appended
+    // after the numbered tabs so it reads as "add another".
+    const newWsBtn = this.doc.createElement("button");
+    newWsBtn.className = "ciri-ws-new";
+    newWsBtn.textContent = "+";
+    newWsBtn.setAttribute("aria-label", "New workspace");
+    newWsBtn.title = "New workspace";
+    newWsBtn.addEventListener("click", () => this.opts.onNewWorkspace?.());
+    tabs.push(newWsBtn);
     this.wsTabs.replaceChildren(...tabs);
 
     // Active workspace content. Empty layout (no workspaces) leaves

@@ -121,15 +121,9 @@ const BELL_FLASH_MS = 1000;
 /// renders one pane at a time (chips are the visual navigation), so
 /// the desktop client's "focus left / right / up / down" arrows have
 /// no spatial meaning here — only operations that produce a new chip
-/// or remove one belong on the bar.
-///
-/// `SplitDown` creates a new pane in a *new workspace below* the
-/// active one (server: `session.rs` "Create a new pane in a new
-/// workspace below", via `add_workspace_below`). It's surfaced here as
-/// "New workspace" so the workspace tab strip has something to switch
-/// between — without it the session only ever has one workspace and
-/// the tabs are inert. (Contrast `CreatePane`, which adds a column in
-/// the *current* workspace.)
+/// or remove one belong on the bar. "New workspace" lives on the
+/// workspace tab strip (its "+") and "New session" on the session bar
+/// (its "+"), next to the things they create.
 ///
 /// "Close" is rendered per-chip (next to the chip itself) rather
 /// than as a global action, matching the browser tab UX where each
@@ -140,7 +134,6 @@ const BELL_FLASH_MS = 1000;
 /// in sync when adding new actions.
 const DEFAULT_PANE_ACTIONS: readonly PaneAction[] = [
   { id: "new-pane", icon: "+", label: "New pane" },
-  { id: "new-workspace", icon: "⊞", label: "New workspace" },
 ];
 
 export class CiriApp {
@@ -657,6 +650,8 @@ export class CiriApp {
       actions: DEFAULT_PANE_ACTIONS,
       onAction: (id) => this.onAction(id),
       onSessionSelect: (name) => this.onSessionSelected(name),
+      onNewWorkspace: () => this.createWorkspace(),
+      onNewSession: () => this.createSession(),
     });
 
     this.installInteractionHandlers();
@@ -2802,6 +2797,32 @@ export class CiriApp {
     this.client.send({ tag: "ListSessions", all: false });
   }
 
+  /// Create a new workspace (the "+" on the workspace tab strip).
+  /// `SplitDown` opens a pane in a brand-new workspace below and the
+  /// server promotes it to active, so the next LayoutUpdate has a
+  /// different active-workspace shape — re-aim the viewport lie just
+  /// like CreatePane / SwitchWorkspace.
+  private createWorkspace(): void {
+    this.expectStructuralChange = true;
+    this.client.send({ tag: "SplitDown" });
+  }
+
+  /// Create and switch to a new session (the "+" next to the session
+  /// dropdown). The protocol has no dedicated "new session" message —
+  /// `SwitchSession` to a name the server doesn't know creates it
+  /// (server `get_or_create_session`). We pick the lowest unused
+  /// `session-N` against the known list (the desktop uses a random
+  /// name; a predictable one is friendlier here and the server's
+  /// `validate_name` accepts lowercase + digits + hyphens). A collision
+  /// with a saved-but-not-listed session just attaches to it instead,
+  /// which is harmless.
+  private createSession(): void {
+    const taken = new Set(this.knownSessions);
+    let n = 1;
+    while (taken.has(`session-${n}`)) n += 1;
+    this.onSessionSelected(`session-${n}`);
+  }
+
   /// Open the scrollback find bar against the active pane. No-op when
   /// there's no active pane/grid. Re-opening while already open just
   /// re-focuses the input (and re-targets if the active pane changed).
@@ -2912,14 +2933,6 @@ export class CiriApp {
         // applyLayout to recompute and re-send.
         this.expectStructuralChange = true;
         this.client.send({ tag: "CreatePane" });
-        return;
-      case "new-workspace":
-        // SplitDown opens a pane in a brand-new workspace below; the
-        // server promotes it to active, so the next LayoutUpdate has a
-        // different active-workspace shape — re-aim the viewport lie
-        // just like CreatePane/SwitchWorkspace.
-        this.expectStructuralChange = true;
-        this.client.send({ tag: "SplitDown" });
         return;
       default:
         // Unknown id — surfaced rather than silently swallowed so a

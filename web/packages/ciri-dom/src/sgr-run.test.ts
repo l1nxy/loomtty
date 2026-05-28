@@ -134,6 +134,34 @@ describe("rowRuns", () => {
     // merge into one run.
     expect(runs).toHaveLength(1);
     expect(runs[0]!.text).toBe("中a");
+    // The wide glyph is isolated into its own segment so the renderer
+    // can pin it to a two-column box; the trailing narrow `a` is a
+    // separate narrow segment.
+    expect(runs[0]!.segments).toEqual([
+      { text: "中", wide: true },
+      { text: "a", wide: false },
+    ]);
+  });
+
+  test("adjacent wide chars each get their own segment", () => {
+    const cells = [
+      cell("中", DEFAULT_FG, DEFAULT_BG, FLAG_WIDE_CHAR),
+      cell(" ", DEFAULT_FG, DEFAULT_BG, FLAG_WIDE_CHAR_SPACER),
+      cell("文", DEFAULT_FG, DEFAULT_BG, FLAG_WIDE_CHAR),
+      cell(" ", DEFAULT_FG, DEFAULT_BG, FLAG_WIDE_CHAR_SPACER),
+    ];
+    const runs = rowRuns(cells, 0, emptyExtras(), DEFAULT_THEME);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.segments).toEqual([
+      { text: "中", wide: true },
+      { text: "文", wide: true },
+    ]);
+  });
+
+  test("narrow glyphs coalesce into one segment", () => {
+    const cells = [cell("a"), cell("b"), cell("c")];
+    const runs = rowRuns(cells, 0, emptyExtras(), DEFAULT_THEME);
+    expect(runs[0]!.segments).toEqual([{ text: "abc", wide: false }]);
   });
 
   test("wide-char run breaks when a style flag differs after the spacer", () => {

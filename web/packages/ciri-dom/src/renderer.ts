@@ -1472,8 +1472,45 @@ export class PaneRenderer {
       el.style.textDecorationLine = line;
       el.style.textDecorationStyle = mapUnderlineStyle(run.underline);
     }
-    el.textContent = run.text;
+    this.paintRunText(el, run);
     return el;
+  }
+
+  /// Fill a run element with its glyphs. The common case — a run with a
+  /// single all-narrow segment — sets `textContent` directly so narrow
+  /// text flows naturally (a true monospace advance of exactly `1ch`
+  /// per column, zero accumulated rounding). Wide glyphs are wrapped in
+  /// an `inline-block` pinned to `2ch` and centered: the cell model
+  /// reserves two columns for them, but a fallback CJK/emoji font
+  /// typically paints at ~1.6ch, so without the box every following
+  /// column — and the `col×ch` cursor overlay — would drift right by
+  /// the shortfall, growing with each wide glyph on the line.
+  ///
+  /// The box uses `overflow: visible` deliberately: a glyph wider than
+  /// `2ch` spills over its neighbors visually but the box's own width
+  /// stays an exact `2ch`, so column boundaries never move. (An earlier
+  /// attempt used `overflow: hidden`, which turns the box into an
+  /// integer-pixel scroll container — that both clipped tall glyphs and
+  /// reintroduced the very drift this is meant to remove.)
+  private paintRunText(el: HTMLElement, run: SgrRun): void {
+    if (run.segments.length === 1 && !run.segments[0]!.wide) {
+      el.textContent = run.segments[0]!.text;
+      return;
+    }
+    for (const seg of run.segments) {
+      if (!seg.wide) {
+        el.appendChild(this.doc.createTextNode(seg.text));
+        continue;
+      }
+      const box = this.doc.createElement("span");
+      box.textContent = seg.text;
+      box.style.display = "inline-block";
+      box.style.width = "2ch";
+      box.style.textAlign = "center";
+      box.style.overflow = "visible";
+      box.style.verticalAlign = "baseline";
+      el.appendChild(box);
+    }
   }
 }
 

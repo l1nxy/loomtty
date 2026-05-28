@@ -22,6 +22,7 @@ import {
   FLAG_UNDERLINE_DASHED,
   FLAG_UNDERLINE_DOTTED,
   FLAG_UNDERLINE_DOUBLE,
+  FLAG_WIDE_CHAR,
   FLAG_WIDE_CHAR_SPACER,
   type PackedCell,
 } from "@ciri/codec";
@@ -39,12 +40,29 @@ export type UnderlineStyle =
   | "dotted"
   | "dashed";
 
+/// A maximal slice of a run that the renderer lays out as one unit.
+/// Narrow glyphs flow naturally (one segment can hold many), but each
+/// wide (double-width) glyph is its own segment so the renderer can pin
+/// it to an exact two-column box — see `RunSegment.wide`.
+export interface RunSegment {
+  text: string;
+  /// True for a CJK / emoji glyph the cell model reserves two columns
+  /// for. A monospace fallback font usually paints these at ~1.6ch, not
+  /// the 2ch the grid assumes, so the renderer boxes them at `2ch` to
+  /// keep every following column — and the `col×ch` cursor — aligned.
+  wide: boolean;
+}
+
 /// A contiguous span of cells with the same style. The renderer emits
 /// one `<span>` (or `<a>` if `linkUri !== null`) per run.
 export interface SgrRun {
   /// Already-resolved cell glyphs concatenated in row order (with
-  /// grapheme extras applied, wide-char spacers omitted).
+  /// grapheme extras applied, wide-char spacers omitted). Kept as a
+  /// flat string for search / copy; the renderer paints `segments`.
   text: string;
+  /// The same glyphs partitioned into narrow batches and individual
+  /// wide glyphs. `segments.map(s => s.text).join("") === text`.
+  segments: RunSegment[];
   /// Effective foreground after INVERSE swap + theme resolution.
   fg: ColorString;
   /// Effective background after INVERSE swap + theme resolution.
@@ -93,6 +111,7 @@ export function rowRuns(
     }
     const globalIdx = rowGlobalStart + i;
     const text = readCellText(cell, globalIdx, extras.graphemeExtras);
+    const wide = (cell.flags & FLAG_WIDE_CHAR) !== 0;
     const linkUri = readCellLink(globalIdx, extras.cellLinks, extras.linkMap);
 
     // Resolve fg / bg in their original roles first so DIM (applied by
@@ -119,10 +138,12 @@ export function rowRuns(
 
     if (current !== null && key === currentKey) {
       current.text += text;
+      pushSegment(current, text, wide);
       continue;
     }
     current = {
       text,
+      segments: [],
       fg,
       bg,
       bold,
@@ -131,11 +152,28 @@ export function rowRuns(
       strikeout,
       linkUri,
     };
+    pushSegment(current, text, wide);
     currentKey = key;
     runs.push(current);
   }
 
   return runs;
+}
+
+/// Append `text` to a run's segment list. Each wide glyph becomes its
+/// own segment (so the renderer can box it at exactly two columns);
+/// consecutive narrow glyphs coalesce into the trailing narrow segment.
+function pushSegment(run: SgrRun, text: string, wide: boolean): void {
+  if (wide) {
+    run.segments.push({ text, wide: true });
+    return;
+  }
+  const last = run.segments[run.segments.length - 1];
+  if (last !== undefined && !last.wide) {
+    last.text += text;
+  } else {
+    run.segments.push({ text, wide: false });
+  }
 }
 
 function readCellText(

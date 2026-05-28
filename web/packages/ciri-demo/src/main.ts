@@ -102,3 +102,16 @@ if (document.fonts !== undefined && typeof document.fonts.ready?.then === "funct
 
 // Make the app handle available to the devtools console for debugging.
 (window as unknown as { __ciri?: CiriApp }).__ciri = app;
+
+// Register the app-shell service worker — only in a production build.
+// In `vite dev` the SW's cache-first asset strategy would fight HMR and
+// serve stale modules, so we skip it there. It's a pure progressive
+// enhancement: registration failure (insecure origin, unsupported
+// browser) is non-fatal.
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch(() => {
+      /* SW is optional; ignore registration failures. */
+    });
+  });
+}

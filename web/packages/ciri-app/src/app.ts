@@ -116,6 +116,10 @@ const DEFAULT_FONT_SIZE = "14px";
 /// How long the `ciri-tile-bell` class lingers after a Bell event.
 /// Themes typically animate a brief opacity pulse over this window.
 const BELL_FLASH_MS = 1000;
+/// How long an in-app toast stays before auto-dismissing. Long enough
+/// to read a "command finished" / "session killed" line, short enough
+/// not to pile up.
+const TOAST_MS = 6000;
 
 /// Quick-action buttons rendered after the pane chip strip. The web
 /// renders one pane at a time (chips are the visual navigation), so
@@ -358,6 +362,22 @@ export class CiriApp {
   /// repeat bell on the same pane re-arms cleanly instead of leaving
   /// the class permanently stuck.
   private readonly bellTimers = new Map<string, ReturnType<Window["setTimeout"]>>();
+  /// Transient in-app notification stack ("toast"). The universal,
+  /// always-available surface for server-pushed Notification /
+  /// SessionKilled / CommandCompleted cues — it works where OS
+  /// notifications don't (iOS Safari pages, denied permission), and is
+  /// the thing the user sees the moment they return to the tab.
+  private readonly toastEl: HTMLElement;
+  /// Live toast auto-dismiss timers, cleared on destroy.
+  private readonly toastTimers = new Set<ReturnType<Window["setTimeout"]>>();
+  /// Set true the first time we'd have fired an OS notification but the
+  /// permission was still "default". The next user gesture upgrades it
+  /// into an actual permission prompt — so we only ever ask *after*
+  /// something relevant happened, and only inside a gesture (which some
+  /// browsers require for `Notification.requestPermission`).
+  private notifyWanted = false;
+  /// One-shot guard so we prompt for notification permission at most once.
+  private notifyPermissionAsked = false;
   /// In-flight mouse drag state, recorded on mousedown and updated on
   /// each window-level mousemove. `null` when no drag is active.
   private dragState: {
@@ -642,6 +662,12 @@ export class CiriApp {
       this.focusInputSink();
     });
 
+    // Toast stack — server-pushed notification / session / command cues
+    // land here. `aria-live` so a screen reader announces new entries.
+    this.toastEl = doc.createElement("div");
+    this.toastEl.className = "ciri-toast-stack";
+    this.toastEl.setAttribute("aria-live", "polite");
+
     this.cellSize = this.measureCellsOrFallback();
 
     this.layout = new LayoutManager(this.root, {
@@ -763,6 +789,11 @@ export class CiriApp {
       win?.clearTimeout(t);
     }
     this.bellTimers.clear();
+    for (const t of this.toastTimers) {
+      win?.clearTimeout(t);
+    }
+    this.toastTimers.clear();
+    this.toastEl.remove();
     this.client.close();
     for (const r of this.renderers.values()) r.destroy();
     this.renderers.clear();
@@ -841,6 +872,7 @@ export class CiriApp {
     this.root.appendChild(this.searchBarEl);
     this.root.appendChild(this.contextMenuEl);
     this.root.appendChild(this.keyboardBtnEl);
+    this.root.appendChild(this.toastEl);
     // `queueMicrotask` rather than synchronous focus — jsdom can
     // assert during construction if the element isn't yet visible.
     // Focus targets the composition sink so the browser engages its
@@ -970,6 +1002,9 @@ export class CiriApp {
   /// forwarded via the mouse path).
   private onTouchPointerDown(e: PointerEvent): void {
     if (e.pointerType !== "touch") return;
+    // A tap is a gesture too — touch-only users (no hardware keyboard)
+    // need this path to ever reach the notification-permission prompt.
+    this.maybeAskNotifyPermission();
     if (!(e.target instanceof Element)) return;
     const tileEl = e.target.closest(".ciri-tile");
     if (!(tileEl instanceof HTMLElement)) return;
@@ -2112,6 +2147,12 @@ export class CiriApp {
     // Ctrl+Shift+V / Cmd+V are the canonical terminal copy/paste
     // bindings and we DO want to handle them.
     if (this.tryHandleClipboardChord(e)) return;
+    // Take this gesture as the chance to ask for notification permission
+    // (cheap no-op unless something wanted to notify). Deliberately
+    // AFTER the clipboard chords: `Notification.requestPermission()`
+    // would otherwise spend the transient user activation that
+    // Ctrl+Shift+V's `clipboard.readText()` depends on.
+    this.maybeAskNotifyPermission();
     // Prefer the pending-focus target over the layout-derived active
     // pane so a click-then-type sequence reaches the just-clicked
     // pane even before the server's LayoutUpdate has confirmed the
@@ -3129,9 +3170,23 @@ export class CiriApp {
       case "ImageDeleted":
         this.renderers.get(msg.paneId.toString())?.clearImages();
         return;
+      case "Notification":
+        // A TUI explicitly asked to notify (OSC 9 / OSC 777). Always
+        // surface it — the app requested it on purpose.
+        this.notify(msg.title, msg.body);
+        return;
+      case "SessionKilled":
+        // The session this client is (or was) attached to went away.
+        // Warn prominently — the panes may be about to vanish.
+        this.notify("Session killed", msg.sessionName, "warn");
+        return;
+      case "CommandCompleted":
+        this.handleCommandCompleted(msg);
+        return;
       default:
-        // v1: ignore everything else (ImagePlacement, … — those grow
-        // their own handlers in later phases).
+        // Reply-only messages the web doesn't request yet (template /
+        // session-info / pane-list / command-result, …) fall through
+        // here harmlessly.
         return;
     }
   }
@@ -3183,6 +3238,124 @@ export class CiriApp {
       this.bellTimers.delete(paneId.toString());
     }, BELL_FLASH_MS);
     this.bellTimers.set(paneId.toString(), t);
+  }
+
+  /// Push a transient line into the toast stack. Always available
+  /// (works on iOS pages and with notifications denied) and tap-to-
+  /// dismiss so it never sits on top of content the user wants to reach.
+  private showToast(text: string, kind: "info" | "warn" = "info"): void {
+    if (this.destroyed) return;
+    const win = this.doc.defaultView;
+    const el = this.doc.createElement("div");
+    el.className = `ciri-toast ciri-toast-${kind}`;
+    el.setAttribute("role", "status");
+    el.textContent = text;
+    // One dismissal path for both the tap and the auto-timeout — it
+    // detaches the element AND clears/forgets the timer, so a burst of
+    // tapped-away toasts doesn't leave dead timers ticking until
+    // `TOAST_MS`.
+    let timer: ReturnType<Window["setTimeout"]> | null = null;
+    const dismiss = (): void => {
+      el.remove();
+      if (timer !== null) {
+        win?.clearTimeout(timer);
+        this.toastTimers.delete(timer);
+        timer = null;
+      }
+    };
+    el.addEventListener("pointerdown", dismiss);
+    this.toastEl.appendChild(el);
+    if (win === null) return;
+    timer = win.setTimeout(dismiss, TOAST_MS);
+    this.toastTimers.add(timer);
+  }
+
+  /// Surface an event as an in-app toast (always) and, when the user has
+  /// granted permission, an OS notification too — the only thing visible
+  /// when the tab is backgrounded, which is the whole point on mobile.
+  /// When permission is still "default", remember the intent so the next
+  /// gesture can ask (see `maybeAskNotifyPermission`).
+  private notify(title: string, body: string, kind: "info" | "warn" = "info"): void {
+    const text = body.length > 0 ? `${title} — ${body}` : title;
+    this.showToast(text, kind);
+    const win = this.doc.defaultView;
+    const Notif = win?.Notification;
+    if (Notif === undefined) return;
+    if (Notif.permission !== "granted") {
+      if (Notif.permission === "default") this.notifyWanted = true;
+      return;
+    }
+    // Prefer a service-worker notification when one is controlling the
+    // page — Android Chrome throws on `new Notification()` and only
+    // delivers via `registration.showNotification`. Gate on
+    // `controller` (not a bare `serviceWorker.ready`, which never
+    // resolves when no SW is registered, e.g. in dev) and fall back to
+    // the page constructor on browsers that allow it.
+    const sw = win?.navigator?.serviceWorker;
+    if (sw?.controller != null && typeof sw.ready?.then === "function") {
+      sw.ready
+        .then((reg) => reg.showNotification(title, { body }))
+        .catch(() => this.firePageNotification(Notif, title, body));
+      return;
+    }
+    this.firePageNotification(Notif, title, body);
+  }
+
+  /// Page-context OS notification (`new Notification`). Throws on
+  /// browsers that only support service-worker notifications (Android
+  /// Chrome) — the in-app toast already covered the event, so swallow.
+  private firePageNotification(
+    Notif: typeof Notification,
+    title: string,
+    body: string,
+  ): void {
+    try {
+      void new Notif(title, { body });
+    } catch {
+      /* SW-only browser; toast is the fallback. */
+    }
+  }
+
+  /// Ask for OS-notification permission lazily, once, on a real user
+  /// gesture — but only after something actually wanted to notify
+  /// (`notifyWanted`). Prompting out of context gets reflexively blocked,
+  /// and several browsers now require a gesture for `requestPermission`.
+  /// Called from the keydown / touch entry points.
+  private maybeAskNotifyPermission(): void {
+    if (this.notifyPermissionAsked || !this.notifyWanted) return;
+    const Notif = this.doc.defaultView?.Notification;
+    if (Notif === undefined || Notif.permission !== "default") return;
+    this.notifyPermissionAsked = true;
+    try {
+      void Notif.requestPermission();
+    } catch {
+      // Safari historically only accepted the callback form and throws
+      // on the promise call; ignore — toasts remain the fallback.
+    }
+  }
+
+  /// Shell-integration cue (OSC 133): a foreground command in `paneId`
+  /// finished. Only notify when the tab is hidden — when it's visible
+  /// the user is watching the output already and a toast per command
+  /// would be noise. This is the "kick off a build, switch away, get
+  /// pinged when it's done" path that matters on mobile.
+  private handleCommandCompleted(msg: {
+    paneId: bigint;
+    durationSecs: bigint;
+    exitCode: number | null;
+  }): void {
+    if (!this.doc.hidden) return;
+    const title = this.grids.get(msg.paneId.toString())?.title ?? "";
+    const head = title.length > 0 ? `Done: ${title}` : "Command finished";
+    const dur = `${msg.durationSecs.toString()}s`;
+    const failed = msg.exitCode !== null && msg.exitCode !== 0;
+    const status =
+      msg.exitCode === null
+        ? dur
+        : failed
+          ? `exit ${msg.exitCode} · ${dur}`
+          : `ok · ${dur}`;
+    this.notify(head, status, failed ? "warn" : "info");
   }
 
   private handleTitleChanged(paneId: bigint, title: string): void {

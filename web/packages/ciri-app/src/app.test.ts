@@ -4196,6 +4196,179 @@ describe("CiriApp — clipboard receive / server errors / images / search", () =
     expect(shutdownCalls.length).toBe(1);
   });
 
+  test("Notification message shows an in-app toast", () => {
+    const { root, fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "Notification", paneId: 1n, title: "Build", body: "passed" },
+    });
+    const toasts = root.querySelectorAll(".ciri-toast");
+    expect(toasts.length).toBe(1);
+    expect(toasts[0]!.textContent).toContain("Build");
+    expect(toasts[0]!.textContent).toContain("passed");
+  });
+
+  test("SessionKilled shows a warning toast naming the session", () => {
+    const { root, fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "SessionKilled", sessionName: "work" },
+    });
+    const toast = root.querySelector(".ciri-toast");
+    expect(toast).not.toBeNull();
+    expect(toast!.classList.contains("ciri-toast-warn")).toBe(true);
+    expect(toast!.textContent).toContain("work");
+  });
+
+  test("CommandCompleted notifies only when the tab is hidden", () => {
+    const { root, fire } = bootstrap();
+    fire({ kind: "server-msg", msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) } });
+    // Visible tab → the user is watching; no toast.
+    Object.defineProperty(document, "hidden", { value: false, configurable: true });
+    fire({
+      kind: "server-msg",
+      msg: { tag: "CommandCompleted", paneId: 1n, durationSecs: 3n, exitCode: 0 },
+    });
+    expect(root.querySelectorAll(".ciri-toast").length).toBe(0);
+    // Hidden tab → toast carrying the failing exit status.
+    Object.defineProperty(document, "hidden", { value: true, configurable: true });
+    fire({
+      kind: "server-msg",
+      msg: { tag: "CommandCompleted", paneId: 1n, durationSecs: 5n, exitCode: 1 },
+    });
+    const toasts = root.querySelectorAll(".ciri-toast");
+    expect(toasts.length).toBe(1);
+    expect(toasts[0]!.textContent).toContain("exit 1");
+    expect(toasts[0]!.classList.contains("ciri-toast-warn")).toBe(true);
+    Object.defineProperty(document, "hidden", { value: false, configurable: true });
+  });
+
+  test("notify fires an OS Notification when permission is granted", () => {
+    const created: Array<{ title: string; body?: string }> = [];
+    class FakeNotification {
+      static permission = "granted";
+      static requestPermission = vi.fn();
+      constructor(public title: string, public opts?: { body?: string }) {
+        created.push({ title, body: opts?.body });
+      }
+    }
+    Object.defineProperty(window, "Notification", {
+      value: FakeNotification,
+      configurable: true,
+    });
+    try {
+      const { fire } = bootstrap();
+      fire({
+        kind: "server-msg",
+        msg: { tag: "Notification", paneId: 1n, title: "Hi", body: "there" },
+      });
+      expect(created).toEqual([{ title: "Hi", body: "there" }]);
+    } finally {
+      Object.defineProperty(window, "Notification", {
+        value: undefined,
+        configurable: true,
+      });
+    }
+  });
+
+  test("Ctrl+Shift+V does not spend its gesture on a permission prompt", () => {
+    const requestPermission = vi.fn(async () => "default" as const);
+    class FakeNotification {
+      static permission = "default";
+      static requestPermission = requestPermission;
+    }
+    Object.defineProperty(window, "Notification", {
+      value: FakeNotification,
+      configurable: true,
+    });
+    Object.defineProperty(window.navigator, "clipboard", {
+      value: { writeText: vi.fn(async () => {}), readText: vi.fn(async () => "x") },
+      configurable: true,
+    });
+    try {
+      const { fire } = bootstrap();
+      fire({ kind: "server-msg", msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) } });
+      fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+      // A Notification (permission still "default") arms `notifyWanted`.
+      fire({
+        kind: "server-msg",
+        msg: { tag: "Notification", paneId: 1n, title: "hi", body: "" },
+      });
+      const root = document.querySelector(".ciri-app")!.parentElement as HTMLElement;
+      // Ctrl+Shift+V must return BEFORE the permission ask — the gesture
+      // is reserved for clipboard.readText().
+      root.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "v",
+          ctrlKey: true,
+          shiftKey: true,
+          bubbles: true,
+        }),
+      );
+      expect(requestPermission).not.toHaveBeenCalled();
+      // A plain keystroke is free to take the chance to prompt.
+      root.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+      expect(requestPermission).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(window, "Notification", {
+        value: undefined,
+        configurable: true,
+      });
+    }
+  });
+
+  test("notify uses the service-worker registration when one controls the page", async () => {
+    const reg = { showNotification: vi.fn() };
+    class FakeNotification {
+      static permission = "granted";
+      static requestPermission = vi.fn();
+      constructor() {
+        // Android Chrome: page-context Notification throws. If notify
+        // fell through to here the test would surface it.
+        throw new Error("page Notification unsupported");
+      }
+    }
+    Object.defineProperty(window, "Notification", {
+      value: FakeNotification,
+      configurable: true,
+    });
+    Object.defineProperty(window.navigator, "serviceWorker", {
+      value: { controller: {}, ready: Promise.resolve(reg) },
+      configurable: true,
+    });
+    try {
+      const { fire } = bootstrap();
+      fire({
+        kind: "server-msg",
+        msg: { tag: "Notification", paneId: 1n, title: "Build", body: "done" },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(reg.showNotification).toHaveBeenCalledWith("Build", { body: "done" });
+    } finally {
+      Object.defineProperty(window, "Notification", {
+        value: undefined,
+        configurable: true,
+      });
+      Object.defineProperty(window.navigator, "serviceWorker", {
+        value: undefined,
+        configurable: true,
+      });
+    }
+  });
+
+  test("tapping a toast dismisses it", () => {
+    const { root, fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "SessionKilled", sessionName: "x" },
+    });
+    const toast = root.querySelector(".ciri-toast");
+    expect(toast).not.toBeNull();
+    toast!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(root.querySelector(".ciri-toast")).toBeNull();
+  });
+
   test("ImagePlacement mounts an image canvas in the pane; ImageDeleted clears it", () => {
     const { root, app, fire } = bootstrap();
     app.start();

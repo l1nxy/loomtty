@@ -393,6 +393,52 @@
           display: flex;
         }
       }
+      /* Toast stack — server-pushed Notification / SessionKilled /
+         CommandCompleted cues. Top-center so it clears the bottom-right
+         keyboard button; the container never blocks the terminal, but
+         each toast is tappable to dismiss. */
+      .ciri-toast-stack {
+        position: fixed;
+        top: var(--space-3, 16px);
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 40;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        align-items: center;
+        pointer-events: none;
+        max-width: min(92vw, 420px);
+      }
+      .ciri-toast {
+        pointer-events: auto;
+        cursor: pointer;
+        padding: 10px 14px;
+        max-width: 100%;
+        color: var(--fg);
+        background: var(--bg-chip);
+        border: 1px solid var(--border-strong);
+        border-left: 3px solid var(--accent, #4aa3ff);
+        border-radius: 8px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        font-size: 13px;
+        line-height: 1.4;
+        word-break: break-word;
+        animation: ciri-toast-in 0.18s ease-out;
+      }
+      .ciri-toast-warn {
+        border-left-color: var(--danger, #ff5c5c);
+      }
+      @keyframes ciri-toast-in {
+        from {
+          opacity: 0;
+          transform: translateY(-8px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
       /* "One screen, one pane" rendering — web never shows multiple
          panes side-by-side. The server's column/tile layout still
          exists for protocol fidelity (CreatePane / FocusPane round-

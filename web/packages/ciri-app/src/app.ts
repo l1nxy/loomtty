@@ -274,6 +274,7 @@ export class CiriApp {
   private readonly onTouchPointerMoveHandler: (e: PointerEvent) => void;
   private readonly onTouchPointerUpHandler: (e: PointerEvent) => void;
   private readonly onTouchPointerCancelHandler: (e: PointerEvent) => void;
+  private readonly onPasteHandler: (e: ClipboardEvent) => void;
   private readonly onVisualViewportResizeHandler: () => void;
   /// `true` between `compositionstart` and `compositionend`. Used as a
   /// backstop so keydown events that slip through `e.isComposing` (an
@@ -504,6 +505,7 @@ export class CiriApp {
     this.onTouchPointerMoveHandler = (e) => this.onTouchPointerMove(e);
     this.onTouchPointerUpHandler = (e) => this.onTouchPointerUp(e);
     this.onTouchPointerCancelHandler = (e) => this.onTouchPointerCancel(e);
+    this.onPasteHandler = (e) => this.onPaste(e);
     this.onVisualViewportResizeHandler = () => this.onVisualViewportResize();
 
     // Hidden container for pane renderers whose tile isn't currently
@@ -725,6 +727,7 @@ export class CiriApp {
       "input",
       this.onSinkInputHandler,
     );
+    this.compositionSinkEl.removeEventListener("paste", this.onPasteHandler);
     this.root.removeEventListener("focus", this.onRootFocusHandler);
     this.root.removeEventListener("pointerdown", this.onTouchPointerDownHandler);
     this.root.removeEventListener("pointermove", this.onTouchPointerMoveHandler);
@@ -898,6 +901,9 @@ export class CiriApp {
       "input",
       this.onSinkInputHandler,
     );
+    // Native paste (Cmd/Ctrl+V, right-click "Paste", mobile) lands on
+    // the focused sink — the permission-free paste path.
+    this.compositionSinkEl.addEventListener("paste", this.onPasteHandler);
     // `focus` doesn't bubble, so listening on root catches only
     // focus events whose target is the root itself (Tab-in, or a
     // programmatic `root.focus()` from host code). Inner focus
@@ -2589,10 +2595,11 @@ export class CiriApp {
     if (this.composing) this.repositionCompositionSink();
   }
 
-  /// Intercept the Ctrl+Shift+C / Cmd+C copy and Ctrl+Shift+V /
-  /// Cmd+V paste chords before the regular keystroke encoder gets a
-  /// chance to reject them. Returns `true` if the event was handled
-  /// (and `preventDefault` invoked).
+  /// Intercept the copy / paste chords before the regular keystroke
+  /// encoder runs. Returns `true` when the chord owns the event and the
+  /// caller should stop. Most branches also call `preventDefault`, but
+  /// the plain Ctrl+V / Cmd+V paste branch deliberately does NOT — it
+  /// lets the browser's native paste proceed (see the inline note).
   private tryHandleClipboardChord(e: KeyboardEvent): boolean {
     const key = e.key.toLowerCase();
     // metaKey on macOS Safari/Chrome maps to Cmd. We also accept the
@@ -2612,7 +2619,30 @@ export class CiriApp {
       // default is (which for Cmd+C is the system copy, harmless).
       return false;
     }
-    if (key === "v" && (isCtrlShift || isCmdChord)) {
+    // Plain Ctrl+V (and Cmd+V) are the browser's *native* paste triggers.
+    // Return "handled" WITHOUT preventDefault so the keydown's default
+    // proceeds: the browser then fires a real `paste` event on the
+    // focused sink, which `onPaste` turns into (bracketed) PTY input —
+    // the permission-free path that needs no Clipboard-API grant.
+    //
+    // The key bit is what we DON'T do. If this fell through to the key
+    // encoder, Ctrl+V would map to the SYN control byte (0x16) and the
+    // encoder's `preventDefault` would cancel the keydown — so the
+    // browser would never fire `paste` and Ctrl+V "wouldn't paste".
+    // That was the bug. The cost of fixing it: Ctrl+V no longer sends a
+    // literal SYN (readline "quoted-insert"), which is the right call
+    // for a browser terminal where Ctrl+V = paste is what users expect.
+    // Cmd+V already fell through (the encoder returns null on metaKey);
+    // handling it here too keeps the paste affordance explicit.
+    const isPlainCtrlV = e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey;
+    if (key === "v" && (isPlainCtrlV || isCmdChord)) {
+      // No preventDefault — let the native paste event fire.
+      return true;
+    }
+    // Ctrl+Shift+V can't trigger a native `paste` event (it isn't a
+    // browser paste shortcut), so it goes through the async Clipboard
+    // API as a secondary path for users who've granted clipboard-read.
+    if (key === "v" && isCtrlShift) {
       e.preventDefault();
       void this.pasteFromClipboard();
       return true;
@@ -2699,30 +2729,32 @@ export class CiriApp {
   /// pane's PTY, wrapping in `ESC[200~ ... ESC[201~` when the pane's
   /// terminal app has set `MODE_BRACKETED_PASTE` (mirror of the Rust
   /// client's paste path in `context_menu.rs`).
-  private async pasteFromClipboard(): Promise<void> {
+  /// Native `paste` event on the focused sink — the robust, permission-
+  /// free paste path (web.dev async-clipboard guidance; the fallback
+  /// xterm.js/VSCode rely on). `clipboardData` grants temporary read
+  /// access with no permission prompt, so this works where
+  /// `navigator.clipboard.readText()` is blocked (Firefox pages, no
+  /// activation, unfocused). Fires for Cmd/Ctrl+V, the browser's
+  /// right-click "Paste", and mobile paste. preventDefault keeps the
+  /// text out of the hidden textarea.
+  private onPaste(e: ClipboardEvent): void {
+    const text = e.clipboardData?.getData("text/plain") ?? "";
+    if (text.length === 0) return;
+    e.preventDefault();
+    this.sendPasteText(text);
+  }
+
+  /// Send pasted `text` to the active pane, wrapping in
+  /// `ESC[200~ … ESC[201~` when the pane has `MODE_BRACKETED_PASTE`.
+  /// Shared by the native `paste` event and the readText fallback.
+  private sendPasteText(text: string): void {
+    if (text.length === 0 || this.destroyed) return;
     if (this.currentLayout === null) return;
     const activePaneId =
       this.pendingFocusedPaneId ?? LayoutManager.activePaneId(this.currentLayout);
     if (activePaneId === null) return;
     const grid = this.grids.get(activePaneId.toString());
     if (grid === undefined) return;
-    const win = this.doc.defaultView;
-    const clipboard = win?.navigator?.clipboard;
-    if (clipboard === undefined || typeof clipboard.readText !== "function") {
-      return;
-    }
-    let text: string;
-    try {
-      text = await clipboard.readText();
-    } catch (err: unknown) {
-      // User-denied permission or browser without clipboard support —
-      // surface but don't crash.
-      const e = err instanceof Error ? err : new Error(String(err));
-      this.handlerOnError?.(e);
-      return;
-    }
-    if (this.destroyed) return;
-    if (text.length === 0) return;
     const enc = new TextEncoder();
     const body = enc.encode(text);
     const bracketed = (grid.meta.modeFlags & MODE_BRACKETED_PASTE) !== 0;
@@ -2737,6 +2769,58 @@ export class CiriApp {
     wrapped.set(body, prefix.length);
     wrapped.set(suffix, prefix.length + body.length);
     this.client.sendInput(activePaneId, wrapped);
+  }
+
+  /// Explicit-shortcut (Ctrl+Shift+V) and context-menu "Paste". These
+  /// can't ride a native `paste` event, so they use the async Clipboard
+  /// API — which the browser may block (Firefox web pages don't
+  /// implement readText; Chrome needs focus + activation + permission).
+  /// On failure we can't read here, so point the user at a native paste
+  /// (Ctrl/Cmd+V or the right-click menu), which `onPaste` handles.
+  private async pasteFromClipboard(): Promise<void> {
+    const view = this.doc.defaultView;
+    const clipboard = view?.navigator?.clipboard;
+    if (clipboard === undefined || typeof clipboard.readText !== "function") {
+      this.handlerOnError?.(
+        new Error(
+          "This browser won't let the page read the clipboard — paste with Ctrl+V / Cmd+V or the browser's own right-click menu.",
+        ),
+      );
+      return;
+    }
+    let text: string;
+    try {
+      // Call `readText()` first — before any other `await`. The async
+      // Clipboard API only grants a read while the triggering gesture's
+      // transient user activation is still live, and awaiting anything
+      // (e.g. a permission probe) beforehand would consume it and make
+      // the read fail spuriously even where it's allowed.
+      text = await clipboard.readText();
+    } catch {
+      // The read was rejected. Probe the permission *now* (activation no
+      // longer matters) so a hard site-level block gets a precise,
+      // actionable hint instead of the generic "blocked" line. The
+      // descriptor is non-standard — Firefox throws on the query — so a
+      // failure here just falls back to the generic message.
+      let denied = false;
+      try {
+        const status = await view?.navigator?.permissions?.query?.({
+          name: "clipboard-read" as PermissionName,
+        });
+        denied = status?.state === "denied";
+      } catch {
+        /* permission descriptor unsupported — keep the generic hint */
+      }
+      this.handlerOnError?.(
+        new Error(
+          denied
+            ? "Clipboard access is blocked for this site — allow it via the address-bar site settings, or paste with Ctrl+V / Cmd+V (the right-click \"Paste\" in the browser's own menu also works)."
+            : "Clipboard read was blocked — paste with Ctrl+V / Cmd+V or the browser's right-click menu.",
+        ),
+      );
+      return;
+    }
+    this.sendPasteText(text);
   }
 
   private onPaneClicked(paneId: bigint): void {

@@ -1139,6 +1139,95 @@ describe("CiriApp — selection + clipboard", () => {
     expect(new TextDecoder().decode(inputs[0]!.data)).toBe("\x1b[200~safe\x1b[201~");
   });
 
+  test("Ctrl+Shift+V with denied clipboard permission surfaces a site-settings hint", async () => {
+    // readText rejects (Chromium hard-block); the permission probe in
+    // the catch path reports "denied" → the hint must point the user at
+    // site settings, not the generic "blocked" line.
+    const clipboard = {
+      writeText: vi.fn(async () => {}),
+      readText: vi.fn(async () => {
+        throw new DOMException("Read permission denied.", "NotAllowedError");
+      }),
+    };
+    Object.defineProperty(window.navigator, "clipboard", {
+      value: clipboard,
+      configurable: true,
+    });
+    Object.defineProperty(window.navigator, "permissions", {
+      value: { query: vi.fn(async () => ({ state: "denied" })) },
+      configurable: true,
+    });
+    const { fire, inputs, onErrorCalls } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const root = document.querySelector(".ciri-app")!.parentElement as HTMLElement;
+    root.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "v",
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    // readText reject → permission query → onError, three microtasks.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(inputs.length).toBe(0);
+    expect(onErrorCalls.at(-1)?.message).toContain("site settings");
+  });
+
+  test("plain Ctrl+V is not eaten as SYN — it falls through to native paste", () => {
+    // Regression: the key encoder maps Ctrl+V → 0x16 (SYN) with
+    // preventDefault, which would cancel the keydown and stop the
+    // browser from ever firing a `paste` event. The clipboard-chord
+    // guard must let plain Ctrl+V through unhandled (no input byte, no
+    // preventDefault) so the native paste path can run.
+    const { fire, inputs } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const root = document.querySelector(".ciri-app")!.parentElement as HTMLElement;
+    const evt = new KeyboardEvent("keydown", {
+      key: "v",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    root.dispatchEvent(evt);
+    // No SYN byte sent, and the keydown's default is left intact so the
+    // browser can raise its `paste` event.
+    expect(inputs.length).toBe(0);
+    expect(evt.defaultPrevented).toBe(false);
+  });
+
+  test("native paste event sends clipboardData text without the async API", () => {
+    // No clipboard mock — the native `paste` event must work even when
+    // navigator.clipboard.readText is unavailable/blocked.
+    const { root, fire, inputs } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const sink = root.querySelector<HTMLTextAreaElement>(
+      "textarea.ciri-composition-sink",
+    )!;
+    const evt = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(evt, "clipboardData", {
+      value: { getData: (t: string) => (t === "text/plain" ? "pasted!" : "") },
+    });
+    sink.dispatchEvent(evt);
+    expect(evt.defaultPrevented).toBe(true);
+    expect(inputs.length).toBe(1);
+    expect(new TextDecoder().decode(inputs[0]!.data)).toBe("pasted!");
+  });
+
   test("destroy() detaches window mousemove/mouseup listeners", () => {
     stubContainerRect();
     const { app, fire } = bootstrap();

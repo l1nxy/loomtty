@@ -199,6 +199,48 @@ describe("PaneRenderer", () => {
     root.remove();
   });
 
+  test("bare URLs in plain text are autolinked as <a target=_blank>", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const text = "go https://a.io ok";
+    const grid = new PaneGrid(1n, text.length, 1);
+    const sync = blankSync(text.length, 1);
+    sync.cells = [...text].map((c) => cell(c));
+    grid.applyFullPaneSync(sync);
+    r.render(grid);
+    const a = root.querySelector("a");
+    expect(a).not.toBeNull();
+    expect(a!.getAttribute("href")).toBe("https://a.io");
+    expect(a!.target).toBe("_blank");
+    expect(a!.rel).toBe("noopener noreferrer");
+    expect(a!.textContent).toBe("https://a.io");
+    // The plain text around the link is preserved verbatim.
+    expect(root.querySelector(".ciri-row")!.textContent).toBe(text);
+    root.remove();
+  });
+
+  test("an OSC 8 link whose text is itself a URL is not double-wrapped", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const text = "https://x.io";
+    const grid = new PaneGrid(1n, text.length, 1);
+    const sync = blankSync(text.length, 1);
+    sync.cells = [...text].map((c) => cell(c));
+    // Whole row carries one OSC 8 link id.
+    sync.cellLinks = new Map([...text].map((_, i) => [i, 1] as [number, number]));
+    sync.linkMap = new Map([[1, "https://override.example"]]);
+    grid.applyFullPaneSync(sync);
+    r.render(grid);
+    const anchors = root.querySelectorAll("a");
+    // Exactly one anchor — the OSC 8 one — and it keeps the explicit
+    // OSC 8 href, not the bare-URL autolink of the visible text.
+    expect(anchors.length).toBe(1);
+    expect(anchors[0]!.getAttribute("href")).toBe("https://override.example");
+    root.remove();
+  });
+
   test("hyperlink cells render as <a target=_blank rel=noopener>", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);

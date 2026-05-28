@@ -39,6 +39,7 @@ import {
   rowRuns,
   type SgrRun,
 } from "./sgr-run.js";
+import { linkify } from "./linkify.js";
 
 export interface RendererOptions {
   /// Color palette. Defaults to `DEFAULT_THEME` (16-color ANSI + a
@@ -1493,24 +1494,59 @@ export class PaneRenderer {
   /// integer-pixel scroll container — that both clipped tall glyphs and
   /// reintroduced the very drift this is meant to remove.)
   private paintRunText(el: HTMLElement, run: SgrRun): void {
+    // OSC 8 runs are already a single `<a>`; don't also scan their text
+    // for bare URLs. Everything else gets autolinked.
+    const scan = run.linkUri === null;
     if (run.segments.length === 1 && !run.segments[0]!.wide) {
-      el.textContent = run.segments[0]!.text;
-      return;
+      const t = run.segments[0]!.text;
+      // Keep the zero-allocation fast path for the common case: a plain
+      // narrow run with nothing that could be a URL.
+      if (!scan || (!t.includes("://") && !t.includes("www."))) {
+        el.textContent = t;
+        return;
+      }
     }
     for (const seg of run.segments) {
-      if (!seg.wide) {
+      if (seg.wide) {
+        const box = this.doc.createElement("span");
+        box.textContent = seg.text;
+        box.style.display = "inline-block";
+        box.style.width = "2ch";
+        box.style.textAlign = "center";
+        box.style.overflow = "visible";
+        box.style.verticalAlign = "baseline";
+        el.appendChild(box);
+        continue;
+      }
+      if (!scan) {
         el.appendChild(this.doc.createTextNode(seg.text));
         continue;
       }
-      const box = this.doc.createElement("span");
-      box.textContent = seg.text;
-      box.style.display = "inline-block";
-      box.style.width = "2ch";
-      box.style.textAlign = "center";
-      box.style.overflow = "visible";
-      box.style.verticalAlign = "baseline";
-      el.appendChild(box);
+      for (const part of linkify(seg.text)) {
+        if (part.href === null) {
+          el.appendChild(this.doc.createTextNode(part.text));
+        } else {
+          el.appendChild(this.makeBareLink(part.href, part.text));
+        }
+      }
     }
+  }
+
+  /// An `<a>` for an autolinked bare URL. The href is always http(s)
+  /// (a `www.` host is promoted to https by `linkify`), so it needs no
+  /// scheme allowlist. `color: inherit` keeps the terminal's own
+  /// foreground; an underline is the only affordance that it's
+  /// clickable. Inline (not inline-block) so it flows like text and
+  /// never perturbs the `col×ch` cursor alignment.
+  private makeBareLink(href: string, text: string): HTMLAnchorElement {
+    const a = this.doc.createElement("a");
+    a.href = href;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.style.color = "inherit";
+    a.style.textDecorationLine = "underline";
+    a.textContent = text;
+    return a;
   }
 }
 

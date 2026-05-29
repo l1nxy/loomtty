@@ -76,6 +76,19 @@ freetype-rs = "0.36"
 nix = { version = "0.29", features = ["term", "process", "fs", "signal"] }
 libc = "0.2"
 notify-rust = "4"
+# TLS is intentionally NOT enabled here. The WS gateway in ciri-server
+# expects an upstream reverse proxy (caddy/nginx) to terminate TLS when
+# bind != loopback. Enabling `native-tls` or `rustls-tls-*` here would
+# add a server-side TLS code path that the gateway does not implement —
+# bump features explicitly only if you also wire the cert plumbing.
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink", "async-await"] }
+# Side-channel-resistant byte compare for token authentication.
+subtle = { version = "2", default-features = false }
+# Best-effort zeroing of the in-memory copy of the bearer token when
+# the daemon shuts down or a per-connection clone is dropped. The
+# `alloc` feature enables Zeroize for String/Vec.
+zeroize = { version = "1", default-features = false, features = ["alloc"] }
 
 # Patched forks (l1nxy/*, branch: ciri-patches)
 # winit: Windows 11 multi-monitor DPI fix + Wayland DnD (https://github.com/rust-windowing/winit/issues/4041)

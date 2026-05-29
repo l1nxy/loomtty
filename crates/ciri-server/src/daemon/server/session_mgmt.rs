@@ -152,6 +152,22 @@ impl Server {
         ));
     }
 
+    /// Resolve the `__auto__` handshake sentinel to a concrete session
+    /// name: the most-recently-attached real session, or a fresh unique
+    /// name when none exist. Server-side mirror of the desktop client's
+    /// `choose_default_session` ("attach to most recent, else create
+    /// new"), so the web client — which can't read local state files —
+    /// gets the same bare-`ciritty` UX. The caller is responsible for
+    /// `get_or_create_session` on the returned name and for telling the
+    /// client which session it actually landed on (via `SessionSwitched`).
+    pub(crate) fn resolve_auto_session(&self) -> String {
+        if let Some(name) = self.most_recently_attached_session("") {
+            return name;
+        }
+        let existing: Vec<String> = self.sessions.keys().cloned().collect();
+        ciri_session::names::unique_name(&existing)
+    }
+
     /// Find the most-recently-attached session other than `exclude`, if any.
     /// Used to pick a fallback when killing a session that has attached clients.
     fn most_recently_attached_session(&self, exclude: &str) -> Option<String> {

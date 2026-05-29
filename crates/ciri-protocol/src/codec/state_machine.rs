@@ -5,32 +5,39 @@ use std::io;
 
 // ─── Opcode constants ────────────────────────────────────────────────
 
-pub(super) const OP_SET_FG: u8 = 0x01;
-pub(super) const OP_SET_BG: u8 = 0x02;
-pub(super) const OP_SET_FLAGS: u8 = 0x03;
-pub(super) const OP_SET_FG_BG: u8 = 0x04;
-pub(super) const OP_RESET: u8 = 0x05;
+pub const OP_SET_FG: u8 = 0x01;
+pub const OP_SET_BG: u8 = 0x02;
+pub const OP_SET_FLAGS: u8 = 0x03;
+pub const OP_SET_FG_BG: u8 = 0x04;
+pub const OP_RESET: u8 = 0x05;
 
-pub(super) const OP_CHAR1: u8 = 0x10;
-pub(super) const OP_CHARS: u8 = 0x11;
-pub(super) const OP_REPEAT: u8 = 0x12;
-pub(super) const OP_CHARS_LONG: u8 = 0x13;
+pub const OP_CHAR1: u8 = 0x10;
+pub const OP_CHARS: u8 = 0x11;
+pub const OP_REPEAT: u8 = 0x12;
+pub const OP_CHARS_LONG: u8 = 0x13;
 /// ASCII run: 1-byte count + N raw ASCII bytes (1 byte each instead of 4).
-pub(super) const OP_ASCII: u8 = 0x14;
+pub const OP_ASCII: u8 = 0x14;
 /// Single ASCII repeat: 2-byte count + 1 ASCII byte.
-pub(super) const OP_ASCII_REPEAT: u8 = 0x15;
+pub const OP_ASCII_REPEAT: u8 = 0x15;
 
 /// Compact color opcodes: Named/Indexed use 2 bytes instead of 4.
-pub(super) const OP_SET_FG_NAMED: u8 = 0x06;
-pub(super) const OP_SET_BG_NAMED: u8 = 0x07;
-pub(super) const OP_SET_FG_INDEXED: u8 = 0x08;
-pub(super) const OP_SET_BG_INDEXED: u8 = 0x09;
+pub const OP_SET_FG_NAMED: u8 = 0x06;
+pub const OP_SET_BG_NAMED: u8 = 0x07;
+pub const OP_SET_FG_INDEXED: u8 = 0x08;
+pub const OP_SET_BG_INDEXED: u8 = 0x09;
 
-pub(super) const OP_END: u8 = 0xFF;
+pub const OP_END: u8 = 0xFF;
 
 // ─── Encoder ─────────────────────────────────────────────────────────
 
 /// Encodes a stream of `PackedCell`s into a compact opcode stream.
+///
+/// Lifecycle: `new()` → `push_cell(...)` * N → `finish()` → reference
+/// bytes. After `finish()` the encoder is "sealed" — any further
+/// `push_cell` would append opcodes after the terminating `OP_END`,
+/// which the decoder would silently ignore. Call `reset()` to reuse
+/// the encoder; otherwise post-finish pushes panic in debug builds
+/// and are no-ops in release.
 pub struct StateEncoder {
     cur_fg: PackedColor,
     cur_bg: PackedColor,
@@ -39,6 +46,7 @@ pub struct StateEncoder {
     run_count: u16,
     char_buf: Vec<[u8; 4]>,
     out: Vec<u8>,
+    finished: bool,
 }
 
 fn default_cell_state() -> (PackedColor, PackedColor, u16) {
@@ -96,10 +104,16 @@ impl StateEncoder {
             run_count: 0,
             char_buf: Vec::new(),
             out: Vec::with_capacity(256),
+            finished: false,
         }
     }
 
     pub fn push_cell(&mut self, cell: &PackedCell) {
+        debug_assert!(
+            !self.finished,
+            "StateEncoder::push_cell called after finish() — call reset() first \
+             or any opcodes pushed here will be silently ignored by the decoder",
+        );
         let fg = cell.fg;
         let bg = cell.bg;
         let flags = cell.flags_u16();
@@ -248,12 +262,26 @@ impl StateEncoder {
                     for j in start..start + n {
                         self.out.extend_from_slice(&self.char_buf[j]);
                     }
-                } else {
+                } else if n <= u16::MAX as usize {
                     self.out.push(OP_CHARS_LONG);
                     self.out.extend_from_slice(&(n as u16).to_le_bytes());
                     for j in start..start + n {
                         self.out.extend_from_slice(&self.char_buf[j]);
                     }
+                } else {
+                    // Runs longer than 65 535 chars must split — the
+                    // count field is u16. Without the split a `n as u16`
+                    // truncates silently and the decoder reads only the
+                    // wrapped count's worth of cells, mis-parsing the
+                    // rest of the stream as garbage opcodes.
+                    self.out.push(OP_CHARS_LONG);
+                    self.out.extend_from_slice(&u16::MAX.to_le_bytes());
+                    let end = start + u16::MAX as usize;
+                    for j in start..end {
+                        self.out.extend_from_slice(&self.char_buf[j]);
+                    }
+                    i = end; // pick up the remainder in the next iteration
+                    continue;
                 }
             }
         }
@@ -261,9 +289,12 @@ impl StateEncoder {
     }
 
     pub fn finish(&mut self) -> &[u8] {
-        self.flush_run();
-        self.flush_char_buf();
-        self.out.push(OP_END);
+        if !self.finished {
+            self.flush_run();
+            self.flush_char_buf();
+            self.out.push(OP_END);
+            self.finished = true;
+        }
         &self.out
     }
 
@@ -276,6 +307,7 @@ impl StateEncoder {
         self.run_count = 0;
         self.char_buf.clear();
         self.out.clear();
+        self.finished = false;
     }
 }
 

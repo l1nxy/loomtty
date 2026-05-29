@@ -203,3 +203,33 @@ enter = "confirm_paste"
 y = "confirm_paste"
 escape = "dismiss_paste_confirm"
 n = "dismiss_paste_confirm"
+
+# Browser-facing WebSocket gateway. Disabled by default. When enabled, the
+# daemon accepts WS upgrades alongside the existing Unix/TCP listeners.
+# The gateway speaks plain ws:// — terminate TLS upstream (caddy/nginx) if
+# you point `bind` at a non-loopback address. Token must be at least 16
+# bytes; generate one with `openssl rand -hex 16`.
+[web]
+enabled = false
+# Empty string is the loopback placeholder — the daemon substitutes
+# 127.0.0.1 at bind time. Matches WebConfig::default() so a config
+# round-tripped through serde produces no diff.
+bind = ""
+port = 7891
+# Generate with `openssl rand -hex 16` (32 hex chars) and paste the
+# value between the quotes. Leave as "" while `enabled = false`.
+# Avoid base64-style tokens for query-string clients: characters
+# `+`, `;`, `=`, `&`, `%` must be percent-encoded by the client or
+# they will silently truncate / mis-split the value. Hex tokens
+# need no escaping.
+# Do NOT ship the example below — it is a placeholder string that
+# the schema validator rejects as too short / well-known.
+# token = "REPLACE_WITH_OUTPUT_OF_openssl_rand_hex_16"
+token = ""
+# Exact-match Origin allowlist for browser clients (CSRF defense).
+# Empty + loopback bind = permissive (fine for local dev). Empty +
+# non-loopback bind = daemon refuses to start. Non-empty = each
+# inbound upgrade's Origin header must match one of these entries.
+# Examples: "http://localhost:5173", "https://terminal.example.com",
+# or the literal "null" for file:// / sandboxed origins.
+allowed_origins = []

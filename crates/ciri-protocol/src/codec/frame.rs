@@ -10,15 +10,15 @@ use super::full_sync::{decode_full_pane_sync_borrowed, encode_full_pane_sync_pay
 // ─── Frame tags ─────────────────────────────────────────────────────
 
 // Client → Server (msgpack)
-pub(super) const TAG_CLIENT_MSG: u8 = 0x01;
-pub(super) const TAG_SERVER_MSG: u8 = 0x10;
+pub const TAG_CLIENT_MSG: u8 = 0x01;
+pub const TAG_SERVER_MSG: u8 = 0x10;
 
 // Server → Client (custom binary, hot path)
-pub(super) const TAG_CELL_DELTA: u8 = 0x20;
-pub(super) const TAG_FULL_PANE_SYNC: u8 = 0x21;
+pub const TAG_CELL_DELTA: u8 = 0x20;
+pub const TAG_FULL_PANE_SYNC: u8 = 0x21;
 // LZ4-compressed variants (payload is [u32 LE uncompressed_len][lz4 data])
-pub(super) const TAG_CELL_DELTA_LZ4: u8 = 0x22;
-pub(super) const TAG_FULL_PANE_SYNC_LZ4: u8 = 0x23;
+pub const TAG_CELL_DELTA_LZ4: u8 = 0x22;
+pub const TAG_FULL_PANE_SYNC_LZ4: u8 = 0x23;
 
 /// Minimum payload size before LZ4 compression kicks in (bytes).
 /// Below this threshold, compression overhead exceeds savings.
@@ -26,11 +26,11 @@ const LZ4_COMPRESS_THRESHOLD: usize = 128;
 
 /// Maximum frame size for control messages (msgpack).  Control messages are
 /// small — 1 MiB is generous.
-pub(super) const MAX_CONTROL_FRAME_LEN: u32 = 1024 * 1024;
+pub const MAX_CONTROL_FRAME_LEN: u32 = 1024 * 1024;
 
 /// Maximum frame size for data frames (CellDelta, FullPaneSync).
 /// Large grids with scrollback can legitimately reach several MiB.
-pub(super) const MAX_DATA_FRAME_LEN: u32 = 16 * 1024 * 1024;
+pub const MAX_DATA_FRAME_LEN: u32 = 16 * 1024 * 1024;
 
 // ─── Frame format: [u8 tag][u32 LE payload_len][payload] ───────────
 
@@ -72,7 +72,15 @@ async fn read_frame_header<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<(
         TAG_CELL_DELTA | TAG_FULL_PANE_SYNC | TAG_CELL_DELTA_LZ4 | TAG_FULL_PANE_SYNC_LZ4 => {
             MAX_DATA_FRAME_LEN
         }
-        _ => MAX_DATA_FRAME_LEN,
+        // Unknown tag: reject the frame at the header rather than letting
+        // a malicious peer dictate up to 16 MiB of read buffer before the
+        // payload is even examined.
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unknown frame tag: 0x{tag:02x}"),
+            ));
+        }
     };
     if len > limit {
         return Err(io::Error::new(
@@ -259,6 +267,17 @@ pub(crate) fn finalize_frame_compression(
     uncompressed_tag: u8,
     compressed_tag: u8,
 ) {
+    // The function unconditionally writes the tag at buf[0] and the
+    // 4-byte length placeholder at buf[1..5]. Callers must lay out
+    // `[tag][u32 len placeholder][payload...]` and pass `payload_start
+    // = 5`. Catch a future regression at debug time rather than letting
+    // it surface as an opaque index-out-of-bounds panic.
+    debug_assert!(
+        payload_start >= 5 && buf.len() >= payload_start,
+        "finalize_frame_compression: payload_start={payload_start} buf.len()={} — \
+         layout must be [tag (1B)][u32 LE len (4B)][payload]",
+        buf.len(),
+    );
     let payload = &buf[payload_start..];
     let payload_len = payload.len();
 

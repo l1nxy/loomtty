@@ -44,6 +44,8 @@ pub struct CiriConfig {
     pub server: ServerConfig,
     #[garde(skip)]
     pub prediction: PredictionConfig,
+    #[garde(dive)]
+    pub web: WebConfig,
 }
 
 /// Controls when ligatures are applied during shaping.
@@ -867,6 +869,430 @@ impl Default for PredictionConfig {
             threshold_ms: 30,
             show_underline: true,
         }
+    }
+}
+
+// ── Web (browser) gateway ──────────────────────────────────────────
+
+/// Browser-facing WebSocket gateway. Disabled by default; when enabled,
+/// the daemon spins up an extra listener that wraps each WS connection
+/// in an `AsyncRead + AsyncWrite` shim and hands it to the same client
+/// handler used by Unix/TCP transports.
+///
+/// `bind` defaults to loopback. If you point this at a non-loopback
+/// address you are responsible for terminating TLS upstream — the
+/// gateway itself speaks plain ws:// and relies on a single shared
+/// token for authentication.
+/// Minimum byte-length for `web.token` when the gateway is enabled.
+/// Exposed at config-crate scope so the schema validator and the daemon
+/// startup check agree on a single floor. `openssl rand -hex 16`
+/// produces 32 bytes, well above this.
+pub const MIN_WEB_TOKEN_BYTES: usize = 16;
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WebConfig {
+    pub enabled: bool,
+    /// Empty string is read as "127.0.0.1" by the daemon. Otherwise the
+    /// value must parse as an IP address.
+    pub bind: String,
+    /// Reject `port = 0` (OS-assigned ephemeral); see Validate impl.
+    pub port: u16,
+    /// Shared token required on the upgrade. The Validate impl enforces
+    /// a `MIN_WEB_TOKEN_BYTES` floor when `enabled = true`. `enabled =
+    /// false, token = ""` is a valid resting state.
+    pub token: String,
+    /// CSRF defense for browser clients. Each entry is exact-matched
+    /// against the `Origin` header on the upgrade request (e.g.,
+    /// `"http://localhost:5173"`, `"https://terminal.example.com"`, or
+    /// the literal `"null"` for `file://` / sandboxed contexts).
+    ///
+    /// Behavior:
+    /// - empty + loopback `bind` → permissive (no Origin check).
+    /// - empty + non-loopback `bind` → daemon refuses to start; an
+    ///   exposed gateway with no Origin policy is a CSRF magnet.
+    /// - non-empty → strict exact-match on every handshake.
+    pub allowed_origins: Vec<String>,
+}
+
+/// `Validate` is implemented manually rather than via `#[derive]` so
+/// it can enforce the cross-field `enabled = true → token >=
+/// MIN_WEB_TOKEN_BYTES` rule that no per-field attribute can express.
+impl garde::Validate for WebConfig {
+    type Context = ();
+
+    fn validate_into(
+        &self,
+        _ctx: &Self::Context,
+        parent: &mut dyn FnMut() -> garde::Path,
+        report: &mut garde::Report,
+    ) {
+        if self.port == 0 {
+            report.append(
+                parent().join("port"),
+                garde::Error::new("port 0 is OS-assigned ephemeral; pick an explicit port"),
+            );
+        }
+
+        let parsed_bind = if self.bind.is_empty() {
+            // Empty means "default to loopback" at daemon bind time.
+            Some(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
+        } else {
+            match self.bind.parse::<std::net::IpAddr>() {
+                Ok(ip) => Some(ip),
+                Err(_) => {
+                    report.append(
+                        parent().join("bind"),
+                        garde::Error::new(format!(
+                            "`bind` must be an IP address, got {:?}",
+                            self.bind,
+                        )),
+                    );
+                    None
+                }
+            }
+        };
+
+        if self.enabled {
+            let trimmed = self.token.trim();
+            if trimmed.is_empty() {
+                report.append(
+                    parent().join("token"),
+                    garde::Error::new("token must be non-empty when web.enabled = true"),
+                );
+            } else if trimmed.len() < MIN_WEB_TOKEN_BYTES {
+                report.append(
+                    parent().join("token"),
+                    garde::Error::new(format!(
+                        "token is {} bytes (after trim); minimum is {MIN_WEB_TOKEN_BYTES} \
+                         bytes when web.enabled = true",
+                        trimmed.len(),
+                    )),
+                );
+            } else if is_placeholder_token(trimmed) {
+                // The sample in `config/default.toml` is longer than
+                // MIN_WEB_TOKEN_BYTES, so it passes the length floor
+                // and would otherwise start the gateway with a token
+                // every clone of this repo knows. On the default
+                // loopback bind + empty origins policy, any local
+                // browser tab could then authenticate to the daemon.
+                report.append(
+                    parent().join("token"),
+                    garde::Error::new(
+                        "token looks like the documented placeholder; \
+                         replace it with a real secret (e.g. \
+                         `openssl rand -hex 16`)",
+                    ),
+                );
+            }
+
+            // Non-loopback bind with no Origin allowlist invites CSRF
+            // from any browser tab. Enforce at schema level so
+            // config-only validation (e.g., a future --check-config
+            // CLI) catches it without booting the daemon.
+            if let Some(ip) = parsed_bind
+                && !ip.is_loopback()
+                && self.allowed_origins.is_empty()
+            {
+                report.append(
+                    parent().join("allowed_origins"),
+                    garde::Error::new(format!(
+                        "bind {ip} is not loopback — set allowed_origins to the \
+                         browser origin(s) you intend to serve"
+                    )),
+                );
+            }
+        }
+
+        for (i, origin) in self.allowed_origins.iter().enumerate() {
+            if !looks_like_origin(origin) {
+                report.append(
+                    parent().join("allowed_origins").join(i),
+                    garde::Error::new(format!(
+                        "{origin:?} is not a valid origin \
+                         (expected scheme://host[:port] or the literal \"null\")"
+                    )),
+                );
+            } else if origin != "null" && origin_contains_uppercase(origin) {
+                // Browsers normalise scheme/host to lowercase per RFC
+                // 6454 §6.2; an uppercase entry here would never match
+                // the inbound Origin header on a real handshake.
+                report.append(
+                    parent().join("allowed_origins").join(i),
+                    garde::Error::new(format!(
+                        "{origin:?} contains uppercase characters; \
+                         browsers always send lowercase scheme/host — \
+                         normalise this entry to lowercase"
+                    )),
+                );
+            }
+        }
+    }
+}
+
+fn origin_contains_uppercase(value: &str) -> bool {
+    value.chars().any(|c| c.is_ascii_uppercase())
+}
+
+/// Reject the documented sample token (and a handful of obvious
+/// near-variants) so a user who uncomments the example in
+/// `config/default.toml` without replacing the value can't start a
+/// gateway with a secret every clone of this repo knows.
+fn is_placeholder_token(trimmed: &str) -> bool {
+    const PLACEHOLDERS: &[&str] = &[
+        "REPLACE_WITH_OUTPUT_OF_openssl_rand_hex_16",
+        "replace_with_output_of_openssl_rand_hex_16",
+        "CHANGE_ME",
+        "changeme",
+        "TODO",
+        "placeholder",
+    ];
+    PLACEHOLDERS.iter().any(|p| trimmed.eq_ignore_ascii_case(p))
+}
+
+fn looks_like_origin(value: &str) -> bool {
+    // Cheap structural check; defers full RFC 6454 parsing to the
+    // browser. `null` is the sentinel sandboxed contexts send (RFC
+    // 6454 §6).
+    //
+    // Only http/https are accepted. Per RFC 6454 the Origin header
+    // always carries an HTTP-origin even for WebSocket connections —
+    // browsers re-derive the HTTP scheme from the page's URL. A
+    // configured `ws://` / `wss://` entry would never match a real
+    // browser handshake and would silently break authentication.
+    if value == "null" {
+        return true;
+    }
+    let Some(rest) = value
+        .strip_prefix("http://")
+        .or_else(|| value.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    // Origin is exactly `scheme://host[:port]` — reject any path,
+    // query, fragment, or userinfo that would never appear in a real
+    // browser `Origin` header (and that the exact-match runtime check
+    // would silently fail against).
+    !rest.is_empty()
+        && !rest.contains('/')
+        && !rest.contains('?')
+        && !rest.contains('#')
+        && !rest.contains('@')
+}
+
+#[cfg(test)]
+mod web_config_tests {
+    use super::*;
+    use garde::Validate;
+
+    #[test]
+    fn defaults_validate() {
+        WebConfig::default().validate().expect("default must pass");
+    }
+
+    #[test]
+    fn rejects_port_zero() {
+        let cfg = WebConfig {
+            port: 0,
+            ..WebConfig::default()
+        };
+        let err = cfg.validate().expect_err("port=0 must fail");
+        assert!(err.to_string().contains("port"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_hostname_bind() {
+        for bind in ["example.com", "localhost", "host.local", "10.0.0..1"] {
+            let cfg = WebConfig {
+                bind: bind.to_string(),
+                ..WebConfig::default()
+            };
+            cfg.validate()
+                .expect_err(&format!("bind={bind:?} must fail"));
+        }
+    }
+
+    #[test]
+    fn accepts_valid_ipv4_and_ipv6_binds() {
+        for bind in ["127.0.0.1", "0.0.0.0", "10.0.0.1", "::1", "::"] {
+            let cfg = WebConfig {
+                bind: bind.to_string(),
+                ..WebConfig::default()
+            };
+            cfg.validate()
+                .unwrap_or_else(|e| panic!("bind={bind:?} should validate, got {e}"));
+        }
+    }
+
+    #[test]
+    fn accepts_empty_bind_as_loopback_placeholder() {
+        let cfg = WebConfig {
+            bind: String::new(),
+            ..WebConfig::default()
+        };
+        cfg.validate().expect("empty bind defers to daemon default");
+    }
+
+    #[test]
+    fn rejects_enabled_without_token() {
+        let cfg = WebConfig {
+            enabled: true,
+            token: String::new(),
+            ..WebConfig::default()
+        };
+        let err = cfg.validate().expect_err("enabled+empty token must fail");
+        assert!(err.to_string().contains("token"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_enabled_with_short_token() {
+        let cfg = WebConfig {
+            enabled: true,
+            token: "a".repeat(MIN_WEB_TOKEN_BYTES - 1),
+            ..WebConfig::default()
+        };
+        let err = cfg.validate().expect_err("short token must fail");
+        let s = err.to_string();
+        assert!(s.contains("15 bytes"), "got: {s}");
+        assert!(s.contains("16"), "got: {s}");
+    }
+
+    #[test]
+    fn rejects_enabled_with_only_whitespace_token() {
+        let cfg = WebConfig {
+            enabled: true,
+            token: "   \n\t".to_string(),
+            ..WebConfig::default()
+        };
+        cfg.validate()
+            .expect_err("whitespace-only token must fail when enabled");
+    }
+
+    #[test]
+    fn disabled_with_empty_token_validates() {
+        // Resting default state must pass — the floor only applies when
+        // the gateway is actually enabled.
+        let cfg = WebConfig {
+            enabled: false,
+            token: String::new(),
+            ..WebConfig::default()
+        };
+        cfg.validate().expect("disabled with empty token is fine");
+    }
+
+    #[test]
+    fn allowed_origins_accepts_valid_entries() {
+        let cfg = WebConfig {
+            allowed_origins: vec![
+                "http://localhost:5173".to_string(),
+                "https://terminal.example.com".to_string(),
+                "null".to_string(),
+            ],
+            ..WebConfig::default()
+        };
+        cfg.validate().expect("valid origins must pass");
+    }
+
+    #[test]
+    fn allowed_origins_rejects_uppercase_host() {
+        // Browsers send lowercase scheme/host; an uppercase entry would
+        // never match.
+        let cfg = WebConfig {
+            allowed_origins: vec!["https://Terminal.Example.com".to_string()],
+            ..WebConfig::default()
+        };
+        cfg.validate()
+            .expect_err("uppercase origin host must be rejected");
+    }
+
+    #[test]
+    fn allowed_origins_rejects_malformed_entries() {
+        for bad in [
+            "example.com",              // no scheme
+            "http://example.com/path",  // path attached
+            "http://",                  // no host
+            "",                         // empty
+            "ws://127.0.0.1:7891",      // browsers never send ws:// Origin
+            "wss://example.com",        // ditto for wss://
+            "http://user@example.com",  // userinfo never in real Origin
+            "http://example.com?foo=1", // query never in real Origin
+            "http://example.com#frag",  // fragment never in real Origin
+        ] {
+            let cfg = WebConfig {
+                allowed_origins: vec![bad.to_string()],
+                ..WebConfig::default()
+            };
+            cfg.validate()
+                .expect_err(&format!("origin={bad:?} must fail"));
+        }
+    }
+
+    #[test]
+    fn rejects_non_loopback_bind_without_allowed_origins() {
+        let cfg = WebConfig {
+            enabled: true,
+            token: "0123456789abcdef0123456789abcdef".to_string(),
+            bind: "0.0.0.0".to_string(),
+            allowed_origins: Vec::new(),
+            ..WebConfig::default()
+        };
+        let err = cfg
+            .validate()
+            .expect_err("non-loopback bind + empty origins must fail");
+        assert!(
+            err.to_string().contains("allowed_origins"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn accepts_non_loopback_bind_with_explicit_origins() {
+        let cfg = WebConfig {
+            enabled: true,
+            token: "0123456789abcdef0123456789abcdef".to_string(),
+            bind: "0.0.0.0".to_string(),
+            allowed_origins: vec!["https://terminal.example.com".to_string()],
+            ..WebConfig::default()
+        };
+        cfg.validate()
+            .expect("non-loopback bind with explicit origins is fine");
+    }
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        WebConfig {
+            enabled: false,
+            // Empty string is the loopback placeholder — the daemon
+            // substitutes 127.0.0.1 at bind time.
+            bind: String::new(),
+            port: 7891,
+            token: String::new(),
+            allowed_origins: Vec::new(),
+        }
+    }
+}
+
+/// Custom `Debug` that redacts the bearer token. The `Debug` derive
+/// would otherwise let any `log::debug!("{config:?}")` (or a panic
+/// payload, or a `dbg!` left in by a careless reviewer) print the
+/// secret in plaintext into operator logs.
+impl std::fmt::Debug for WebConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebConfig")
+            .field("enabled", &self.enabled)
+            .field("bind", &self.bind)
+            .field("port", &self.port)
+            .field(
+                "token",
+                &if self.token.is_empty() {
+                    "<empty>"
+                } else {
+                    "<redacted>"
+                },
+            )
+            .field("allowed_origins", &self.allowed_origins)
+            .finish()
     }
 }
 

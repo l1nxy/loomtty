@@ -4,8 +4,9 @@ mod damage;
 pub(crate) mod server;
 pub(crate) mod session;
 mod tick;
+mod ws;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use ciri_layout::column::ColumnWidth;
 use ciri_protocol::transport;
 use std::sync::Arc;
@@ -14,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::net::UnixListener;
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::ServerOptions;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, Semaphore};
 
 use server::Server;
 
@@ -252,7 +253,7 @@ pub async fn prepare_daemon() -> Result<DaemonState> {
 }
 
 /// Run the accept loop. Call after `prepare_daemon`.
-pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
+pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
     let state = ds.state;
     let shutdown = ds.shutdown;
     let server_exited = ds.server_exited;
@@ -263,6 +264,19 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
     let pipe_name = ds.pipe_name;
     #[cfg(windows)]
     let mut pipe_server = ds.pipe_server;
+
+    // Port collision check (runtime gate; schema-level can't see across
+    // RemoteConfig and WebConfig with derive-Validate).
+    if ds.config.remote.enabled
+        && ds.config.web.enabled
+        && ds.config.remote.port == ds.config.web.port
+    {
+        anyhow::bail!(
+            "remote.port and web.port both set to {} — pick distinct ports \
+             (defaults are 7890/7891)",
+            ds.config.remote.port,
+        );
+    }
 
     let tcp_listener = if ds.config.remote.enabled {
         let addr = format!("127.0.0.1:{}", ds.config.remote.port);
@@ -275,6 +289,77 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
     } else {
         None
     };
+
+    let (ws_listener, ws_token, ws_allowed_origins) = if ds.config.web.enabled {
+        // Token: trimmed, zeroized-on-drop, refcounted. The helper enforces
+        // the 16-byte floor and any surrounding whitespace is stripped so
+        // a trailing newline in the config does not silently break auth.
+        let token = ws::prepare_web_token(&ds.config.web.token)?;
+        // `bind` has already passed schema validation (accepts empty or a
+        // parseable IpAddr) — empty means "use loopback".
+        let parsed_bind: std::net::IpAddr = if ds.config.web.bind.is_empty() {
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+        } else {
+            ds.config.web.bind.parse().with_context(|| {
+                format!(
+                    "[web] bind {:?} passed config validation but failed to parse here",
+                    ds.config.web.bind,
+                )
+            })?
+        };
+        // Origin policy: an empty allowlist is only safe on loopback,
+        // because only same-host pages can reach the listener. On a
+        // non-loopback bind, an unscoped allowlist invites CSRF from any
+        // page in the browser — refuse to start.
+        if !parsed_bind.is_loopback() && ds.config.web.allowed_origins.is_empty() {
+            anyhow::bail!(
+                "[web] bind={parsed_bind} is not loopback but allowed_origins is empty. \
+                 Add the browser origin(s) you intend to serve (e.g. \
+                 allowed_origins = [\"https://terminal.example.com\"]) before exposing \
+                 the gateway."
+            );
+        }
+        // Construct the listener from the canonical IpAddr so the logged
+        // address and the loopback check agree on a single normalised
+        // form (matters for IPv6: `::0001` and `::1` parse to the same
+        // address but compare as different strings).
+        let addr = std::net::SocketAddr::new(parsed_bind, ds.config.web.port);
+        let tcp = tokio::net::TcpListener::bind(&addr).await?;
+        log::info!("ciritty-server WS listener on {addr}");
+        if !parsed_bind.is_loopback() {
+            log::warn!(
+                "ws bind={parsed_bind} is not loopback — terminate TLS upstream \
+                 and ensure the token is rotated; the gateway speaks plain ws://"
+            );
+            // `"null"` is the Origin every sandboxed iframe, `data:` URI,
+            // local `file://` page, and some redirected cross-origin
+            // request shares — on a publicly-exposed bind, listing it in
+            // the allowlist comes close to "no Origin check at all" for
+            // anyone who can social-engineer a victim into opening a
+            // local file.
+            if ds.config.web.allowed_origins.iter().any(|o| o == "null") {
+                log::warn!(
+                    "ws allowed_origins contains \"null\" on a non-loopback bind — \
+                     this admits any sandboxed/file:// page in the user's browser; \
+                     remove it unless you intentionally accept that risk"
+                );
+            }
+        }
+        let origins = Arc::new(ds.config.web.allowed_origins.clone());
+        // The raw config string still holds a plaintext copy of the
+        // secret; the zeroized SharedToken only covers our runtime
+        // copy. Wipe the source so a core dump or post-startup memory
+        // read can't recover the token from `ds.config`. (Operationally
+        // this is best-effort: the allocator may have reused the
+        // buffer before we got here, but it's free defense.)
+        use zeroize::Zeroize;
+        ds.config.web.token.zeroize();
+        (Some(tcp), Some(token), origins)
+    } else {
+        (None, None, Arc::new(Vec::new()))
+    };
+
+    let ws_handshake_sem = Arc::new(Semaphore::new(MAX_IN_FLIGHT_WS_HANDSHAKES));
 
     loop {
         #[cfg(unix)]
@@ -316,6 +401,37 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
                     let (reader, writer) = stream.into_split();
                     tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown, client_input_notify));
                 }
+                result = tcp_accept(&ws_listener) => {
+                    let (stream, addr) = match result {
+                        Ok(v) => v,
+                        Err(e) => {
+                            // EMFILE/ENFILE/ECONNABORTED and similar
+                            // transient errors must not kill the entire
+                            // daemon — log and keep accepting.
+                            log::warn!("ws accept failed: {e}");
+                            continue;
+                        }
+                    };
+                    stream.set_nodelay(true).ok();
+                    // ws_listener is only Some when ws_token is also Some
+                    // (set together in prepare phase); the .as_ref()/.clone()
+                    // here is cheap (Arc refcount bump) so the unwrap is
+                    // load-bearing only for the type system's benefit.
+                    let token = ws_token
+                        .as_ref()
+                        .expect("ws_listener Some implies ws_token Some")
+                        .clone();
+                    spawn_ws_client(
+                        stream,
+                        addr,
+                        state.clone(),
+                        shutdown.clone(),
+                        input_notify.clone(),
+                        token,
+                        ws_allowed_origins.clone(),
+                        ws_handshake_sem.clone(),
+                    );
+                }
                 _ = shutdown.notified() => {
                     log::info!("accept loop shutting down");
                     connection::graceful_shutdown(&state).await;
@@ -330,6 +446,14 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
                 result = pipe_server.connect() => {
                     if let Err(e) = result {
                         log::error!("named pipe accept error: {e}");
+                        // `connect()` is one-shot; once it fails, the
+                        // existing pipe_server handle is unusable. Build
+                        // a fresh one so the next loop iteration has a
+                        // working listener (without this, the daemon
+                        // silently stops accepting pipe clients).
+                        pipe_server = ServerOptions::new()
+                            .reject_remote_clients(true)
+                            .create(&pipe_name)?;
                         continue;
                     }
                 }
@@ -342,6 +466,35 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
                     let client_input_notify = input_notify.clone();
                     let (reader, writer) = stream.into_split();
                     tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown, client_input_notify));
+                    continue;
+                }
+                result = tcp_accept(&ws_listener) => {
+                    let (stream, addr) = match result {
+                        Ok(v) => v,
+                        Err(e) => {
+                            log::warn!("ws accept failed: {e}");
+                            continue;
+                        }
+                    };
+                    stream.set_nodelay(true).ok();
+                    // ws_listener is only Some when ws_token is also Some
+                    // (set together in prepare phase); the .as_ref()/.clone()
+                    // here is cheap (Arc refcount bump) so the unwrap is
+                    // load-bearing only for the type system's benefit.
+                    let token = ws_token
+                        .as_ref()
+                        .expect("ws_listener Some implies ws_token Some")
+                        .clone();
+                    spawn_ws_client(
+                        stream,
+                        addr,
+                        state.clone(),
+                        shutdown.clone(),
+                        input_notify.clone(),
+                        token,
+                        ws_allowed_origins.clone(),
+                        ws_handshake_sem.clone(),
+                    );
                     continue;
                 }
                 _ = shutdown.notified() => {
@@ -387,4 +540,62 @@ async fn tcp_accept(
         Some(l) => l.accept().await,
         None => std::future::pending().await,
     }
+}
+
+/// Cap on concurrent in-flight WS handshakes. A handshake is bounded by
+/// `ws::HANDSHAKE_TIMEOUT` (10s); 64 concurrent slots give legitimate
+/// burst load plenty of room while putting a hard ceiling on tasks an
+/// attacker can pin by completing the TCP handshake and stalling the
+/// HTTP upgrade. Excess attempts are rejected immediately rather than
+/// queued so an attacker can't hold attempts in line.
+const MAX_IN_FLIGHT_WS_HANDSHAKES: usize = 64;
+
+/// Perform the WS handshake off the accept-loop thread and, on success,
+/// hand the wrapped stream to `connection::handle_client`. Errors from
+/// the handshake (bad token, malformed upgrade, etc.) are logged and
+/// the connection is dropped — the accept loop must stay responsive
+/// for other clients regardless of any single peer's misbehaviour.
+#[allow(clippy::too_many_arguments)]
+fn spawn_ws_client(
+    stream: tokio::net::TcpStream,
+    addr: std::net::SocketAddr,
+    state: Arc<Mutex<Server>>,
+    shutdown: Arc<Notify>,
+    input_notify: Arc<Notify>,
+    token: ws::SharedToken,
+    allowed_origins: Arc<Vec<String>>,
+    handshake_sem: Arc<Semaphore>,
+) {
+    // `try_acquire_owned` is non-blocking: when the cap is reached we
+    // reject the new attempt immediately and free the TCP stream rather
+    // than queueing it, so an attacker can't keep a pipeline of stalled
+    // upgrades in line.
+    let permit = match handshake_sem.try_acquire_owned() {
+        Ok(p) => p,
+        Err(_) => {
+            log::warn!(
+                "ws handshake from {addr} rejected: {MAX_IN_FLIGHT_WS_HANDSHAKES} \
+                 concurrent handshakes already in flight"
+            );
+            return;
+        }
+    };
+
+    tokio::spawn(async move {
+        log::debug!("ws TCP accept from {addr}; starting handshake");
+        let ws_stream = match ws::accept_ws(stream, token, allowed_origins).await {
+            Ok(ws) => ws,
+            Err(e) => {
+                log::warn!("ws handshake from {addr} failed: {e}");
+                return;
+            }
+        };
+        // Handshake done — release the slot before the long-lived client
+        // session begins; the session itself does not count against the
+        // handshake budget.
+        drop(permit);
+        log::info!("ws upgrade from {addr} accepted (handshake complete)");
+        let (reader, writer) = tokio::io::split(ws_stream);
+        connection::handle_client(reader, writer, state, shutdown, input_notify).await;
+    });
 }

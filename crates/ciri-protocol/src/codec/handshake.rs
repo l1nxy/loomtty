@@ -40,13 +40,14 @@ const MAX_SESSION_NAME_LEN: usize = 255;
 /// Wire protocol version. Incremented whenever the handshake or frame format
 /// changes in a backward-incompatible way.
 ///
-/// History:
-///   1 = initial codec layout
-///   2 = mode_flags expanded from u8 to u16 (kitty keyboard levels 1-5)
-///   3 = echo_ack (u64) added to PaneFrameMeta for input prediction timing
-///   4 = received_ack (u64) added — early ack for cursor prediction validation
-///       (Overwatch-style packet-level ack, decoupled from PTY drain)
-pub const WIRE_PROTOCOL_VERSION: u8 = 4;
+/// Pre-release: the wire format is NOT frozen. Rather than carry a version
+/// ladder while client and server still co-evolve in lockstep, we pin a
+/// single current version and rev it freely. The current format folds in
+/// every change made so far — u16 mode_flags, echo_ack + received_ack on
+/// PaneFrameMeta (input-prediction / early-ack timing), and an always-
+/// serialized ColumnState.width_fixed_px (fixed-arity for the schema-driven
+/// TS web client). Bump to 2 at the first post-release wire change.
+pub const WIRE_PROTOCOL_VERSION: u8 = 1;
 
 /// Version compatibility result.
 #[derive(Debug, Clone, PartialEq, Eq)]

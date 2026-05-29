@@ -52,16 +52,17 @@ self.addEventListener("fetch", (event) => {
       fetch(req)
         .then((res) => {
           // Only cache a successful response — a transient 500/404 HTML
-          // page must not poison the offline shell fallback.
+          // page must not poison the offline shell fallback. Cache under
+          // the canonical "./" key, NOT `req`: the app shell is the same
+          // regardless of query string, and keying by the full request
+          // would persist the `?token=` bearer in Cache Storage.
           if (res.ok) {
             const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(req, copy));
+            caches.open(CACHE).then((c) => c.put("./", copy));
           }
           return res;
         })
-        .catch(() =>
-          caches.match(req).then((hit) => hit ?? caches.match("./")),
-        ),
+        .catch(() => caches.match("./")),
     );
     return;
   }

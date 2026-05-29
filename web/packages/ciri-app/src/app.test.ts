@@ -2827,6 +2827,28 @@ describe("CiriApp — IME composition", () => {
     expect(root.querySelector("textarea.ciri-composition-sink")).toBeNull();
   });
 
+  test("destroy() removes all app-owned chrome appended to the root", () => {
+    // Every node `installInteractionHandlers` appends to the caller-
+    // owned root must be removed on destroy so repeated mount/destroy
+    // cycles don't leave stale controls (and their listeners) behind.
+    const { app, root } = bootstrap();
+    const selectors = [
+      ".ciri-search",
+      ".ciri-contextmenu",
+      ".ciri-keyboard-toggle",
+      ".ciri-scroll-bottom",
+      ".ciri-toast-stack",
+      "textarea.ciri-composition-sink",
+    ];
+    for (const sel of selectors) {
+      expect(root.querySelector(sel), `${sel} present before destroy`).not.toBeNull();
+    }
+    app.destroy();
+    for (const sel of selectors) {
+      expect(root.querySelector(sel), `${sel} removed after destroy`).toBeNull();
+    }
+  });
+
   test("destroy() unregisters composition handlers", () => {
     const { root, app, fire, inputs } = bootstrap();
     app.start();

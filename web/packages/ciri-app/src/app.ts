@@ -816,6 +816,14 @@ export class CiriApp {
     this.toastTimers.clear();
     this.toastEl.remove();
     this.scrollBottomEl.remove();
+    // The search bar, context menu, and keyboard toggle were also
+    // appended to the caller-owned root (see `installInteractionHandlers`).
+    // Remove them too so a destroy + re-create cycle on the same root
+    // doesn't leave a growing stack of inert controls (and the closures
+    // their listeners capture) pinned in the host page.
+    this.searchBarEl.remove();
+    this.contextMenuEl.remove();
+    this.keyboardBtnEl.remove();
     this.client.close();
     for (const r of this.renderers.values()) r.destroy();
     this.renderers.clear();

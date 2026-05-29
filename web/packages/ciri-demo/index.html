@@ -99,7 +99,14 @@
       /* ── Connection status strip ─────────────────────────────── */
       #status {
         flex: 0 0 auto;
-        padding: var(--space-1) var(--space-3);
+        /* Top strip sits under the notch / status bar in standalone
+           (installed PWA) mode. Fold the safe-area insets into the
+           padding so text clears the cutout while the background still
+           bleeds edge-to-edge. */
+        padding: calc(env(safe-area-inset-top, 0px) + var(--space-1))
+          calc(env(safe-area-inset-right, 0px) + var(--space-3))
+          var(--space-1)
+          calc(env(safe-area-inset-left, 0px) + var(--space-3));
         font-size: var(--font-sm);
         line-height: 18px;
         background: var(--bg-chrome-strong);
@@ -378,8 +385,12 @@
       /* Floating "show keyboard" button — touch devices only. */
       .ciri-keyboard-toggle {
         position: fixed;
-        right: var(--space-3, 16px);
-        bottom: var(--space-3, 16px);
+        /* Offsets fold in the notch / home-bar safe-area insets so the
+           button never hides under rounded corners or the gesture bar
+           (the page sets viewport-fit=cover, which is what makes env()
+           insets non-zero). */
+        right: calc(env(safe-area-inset-right, 0px) + var(--space-3, 16px));
+        bottom: calc(env(safe-area-inset-bottom, 0px) + var(--space-3, 16px));
         z-index: 25;
         width: 48px;
         height: 48px;
@@ -401,13 +412,53 @@
           display: flex;
         }
       }
+      /* "Scroll to bottom" — bottom-right, stacked just above the
+         keyboard toggle so the two never overlap. Shown (via the
+         [hidden] attribute, toggled by the app) only while the active
+         pane is scrolled up. On touch there's no wheel / End key, so
+         this is the primary way back to live output. */
+      .ciri-scroll-bottom {
+        position: fixed;
+        right: calc(env(safe-area-inset-right, 0px) + var(--space-3, 16px));
+        /* Default (fine pointer): flush to the bottom-right like the
+           keyboard toggle's slot, since that toggle is hidden here. */
+        bottom: calc(env(safe-area-inset-bottom, 0px) + var(--space-3, 16px));
+        z-index: 26;
+        width: 48px;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        font-size: 22px;
+        line-height: 1;
+        color: var(--fg);
+        background: var(--bg-chip);
+        border: 1px solid var(--border-strong);
+        border-radius: 50%;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        cursor: pointer;
+      }
+      .ciri-scroll-bottom[hidden] {
+        display: none;
+      }
+      /* On coarse pointers the keyboard toggle occupies the bottom-right
+         slot, so lift the scroll-to-bottom button one slot above it. */
+      @media (pointer: coarse) {
+        .ciri-scroll-bottom {
+          bottom: calc(
+            env(safe-area-inset-bottom, 0px) + var(--space-3, 16px) + 48px +
+              var(--space-2, 8px)
+          );
+        }
+      }
       /* Toast stack — server-pushed Notification / SessionKilled /
          CommandCompleted cues. Top-center so it clears the bottom-right
          keyboard button; the container never blocks the terminal, but
          each toast is tappable to dismiss. */
       .ciri-toast-stack {
         position: fixed;
-        top: var(--space-3, 16px);
+        top: calc(env(safe-area-inset-top, 0px) + var(--space-3, 16px));
         left: 50%;
         transform: translateX(-50%);
         z-index: 40;

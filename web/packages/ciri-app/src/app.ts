@@ -358,6 +358,9 @@ export class CiriApp {
   /// pointers (touch); tapping it focuses the sink inside the gesture
   /// as a reliable fallback when tap-to-focus didn't raise the keyboard.
   private readonly keyboardBtnEl: HTMLButtonElement;
+  /// Floating "scroll to bottom" button. Shown only while the active
+  /// pane is scrolled up into scrollback; tapping pins back to live.
+  private readonly scrollBottomEl: HTMLButtonElement;
   /// Pending bell-flash clear timers, keyed by paneId-as-string so a
   /// repeat bell on the same pane re-arms cleanly instead of leaving
   /// the class permanently stuck.
@@ -662,6 +665,24 @@ export class CiriApp {
       this.focusInputSink();
     });
 
+    // Floating "scroll to bottom" button. Hidden until the active pane
+    // is scrolled up into scrollback (toggled by `updateScrollBottomBtn`
+    // off the renderer's `onScrollChange`). On touch there's no wheel /
+    // End key, so this is the primary way back to live output.
+    this.scrollBottomEl = doc.createElement("button");
+    this.scrollBottomEl.type = "button";
+    this.scrollBottomEl.className = "ciri-scroll-bottom";
+    this.scrollBottomEl.hidden = true;
+    this.scrollBottomEl.textContent = "↓";
+    this.scrollBottomEl.setAttribute("aria-label", "Scroll to bottom");
+    this.scrollBottomEl.title = "Scroll to bottom";
+    // `pointerdown` + preventDefault so the tap doesn't steal focus from
+    // the input sink (keeps the keyboard up on mobile).
+    this.scrollBottomEl.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      this.scrollActivePaneToBottom();
+    });
+
     // Toast stack — server-pushed notification / session / command cues
     // land here. `aria-live` so a screen reader announces new entries.
     this.toastEl = doc.createElement("div");
@@ -794,6 +815,7 @@ export class CiriApp {
     }
     this.toastTimers.clear();
     this.toastEl.remove();
+    this.scrollBottomEl.remove();
     this.client.close();
     for (const r of this.renderers.values()) r.destroy();
     this.renderers.clear();
@@ -872,6 +894,7 @@ export class CiriApp {
     this.root.appendChild(this.searchBarEl);
     this.root.appendChild(this.contextMenuEl);
     this.root.appendChild(this.keyboardBtnEl);
+    this.root.appendChild(this.scrollBottomEl);
     this.root.appendChild(this.toastEl);
     // `queueMicrotask` rather than synchronous focus — jsdom can
     // assert during construction if the element isn't yet visible.
@@ -2870,6 +2893,11 @@ export class CiriApp {
     // server is asked to confirm via FocusPane; the next LayoutUpdate
     // clears the pending state.
     this.pendingFocusedPaneId = paneId;
+    // The optimistic active pane just changed — refresh the scroll-
+    // bottom button against it now, rather than letting it show the
+    // previous pane's scroll state until the server's LayoutUpdate
+    // lands. `activePaneId()` already honors `pendingFocusedPaneId`.
+    this.updateScrollBottomBtn();
     // Eager Resize: re-aim the viewport lie at the clicked pane
     // *before* FocusPane lands so the server's resize_all_panes
     // runs against the new dims in a single batch. Without this,
@@ -3240,6 +3268,32 @@ export class CiriApp {
     this.bellTimers.set(paneId.toString(), t);
   }
 
+  /// Show/hide the floating "scroll to bottom" button to match the
+  /// active pane: visible only when that pane is scrolled up into
+  /// scrollback. Cheap — a single attribute flip — so it's fine to call
+  /// from every renderer scroll-change and on focus/layout changes.
+  private updateScrollBottomBtn(): void {
+    if (this.destroyed) return;
+    const id = this.activePaneId();
+    const renderer = id !== null ? this.renderers.get(id.toString()) : undefined;
+    const scrolledUp = renderer !== undefined && renderer.scrollOffsetRows > 0;
+    this.scrollBottomEl.hidden = !scrolledUp;
+  }
+
+  /// Pin the active pane back to live output and refresh it. Wired to
+  /// the floating button; the subsequent render fires `onScrollChange`,
+  /// which hides the button again.
+  private scrollActivePaneToBottom(): void {
+    const id = this.activePaneId();
+    if (id === null) return;
+    const key = id.toString();
+    const renderer = this.renderers.get(key);
+    const grid = this.grids.get(key);
+    if (renderer === undefined || grid === undefined) return;
+    renderer.setScrollOffset(0);
+    renderer.render(grid);
+  }
+
   /// Push a transient line into the toast stack. Always available
   /// (works on iOS pages and with notifications denied) and tap-to-
   /// dismiss so it never sits on top of content the user wants to reach.
@@ -3496,6 +3550,9 @@ export class CiriApp {
       // `crates/ciri/src/app/render.rs`. Round-12 codex P3.
       if (this.composing) this.repositionCompositionSink();
     }
+    // The active pane may have changed; re-evaluate the scroll-bottom
+    // button against whichever pane is now active.
+    this.updateScrollBottomBtn();
   }
 
   private handleCellDeltaBytes(bytes: Uint8Array): void {
@@ -3566,6 +3623,10 @@ export class CiriApp {
         theme: this.theme,
         fontFamily: this.fontFamily,
         fontSize: this.fontSize,
+        // Any pane's scroll change re-evaluates the button, which reads
+        // the *active* pane's offset — so a background pane scrolling
+        // (output appended under a clamp) resolves correctly.
+        onScrollChange: () => this.updateScrollBottomBtn(),
       });
       this.renderers.set(key, renderer);
       const slot = this.layout.getSlot(sync.meta.paneId);

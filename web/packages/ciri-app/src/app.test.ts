@@ -623,6 +623,35 @@ describe("CiriApp — mouse + wheel", () => {
     void root;
   });
 
+  test("scroll-to-bottom button shows when scrolled up and pins back to live", () => {
+    const { root, fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(3n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_2X1.hex) });
+    const btn = root.querySelector<HTMLButtonElement>(".ciri-scroll-bottom")!;
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='3']")!;
+    const pane = tile.querySelector(".ciri-pane")!;
+    // Pinned to live initially → button hidden.
+    expect(btn.hidden).toBe(true);
+    // Wheel up into the 1 row of scrollback → button appears.
+    tile.dispatchEvent(
+      new WheelEvent("wheel", {
+        deltaY: -100,
+        deltaMode: 0,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    expect(pane.querySelector(".ciri-row")!.textContent).toBe("ok");
+    expect(btn.hidden).toBe(false);
+    // Tapping pins back to live and re-hides the button.
+    btn.dispatchEvent(new Event("pointerdown", { bubbles: true, cancelable: true }));
+    expect(pane.querySelector(".ciri-row")!.textContent).toBe("hi");
+    expect(btn.hidden).toBe(true);
+  });
+
   test("wheel with Ctrl is left alone (browser zoom)", () => {
     const { app, fire } = bootstrap();
     app.start();

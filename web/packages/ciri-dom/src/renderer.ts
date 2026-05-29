@@ -55,6 +55,13 @@ export interface RendererOptions {
   /// who find blinking distracting; callers can also override with a
   /// `prefers-reduced-motion` media query at the page level.
   cursorBlink?: boolean;
+  /// Called whenever the effective scroll offset changes (after the
+  /// per-render clamp), with the new offset in rows above the live
+  /// bottom. `0` means pinned to live output. Fires for every scroll
+  /// path — swipe, wheel, scrollbar, search, and growth/shrink clamps —
+  /// since `render()` is the single funnel they all flow through. Used
+  /// by the app to toggle a "scroll to bottom" affordance.
+  onScrollChange?: (offsetRows: number) => void;
 }
 
 const DEFAULT_FONT_FAMILY = `"JetBrains Mono", "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace`;
@@ -96,6 +103,10 @@ export class PaneRenderer {
   /// toward the live bottom on every append). `null` means "not yet
   /// observed" — the first render skips the delta check.
   private lastScrollbackRows: number | null = null;
+  /// `onScrollChange` callback + the last offset we reported through it,
+  /// so `render()` only fires on an actual change.
+  private readonly onScrollChange: ((offsetRows: number) => void) | undefined;
+  private lastReportedScrollOffset = 0;
   /// Cursor overlay element. Absolute-positioned inside the wrapper;
   /// hidden until the first render with a usable meta. Position is
   /// driven by `grid.meta.cursorLine` / `cursorCol`, sized via
@@ -299,6 +310,7 @@ export class PaneRenderer {
     this.root.appendChild(this.wrapper);
 
     this.cursorBlink = opts.cursorBlink ?? true;
+    this.onScrollChange = opts.onScrollChange;
     this.cursorEl = this.doc.createElement("div");
     this.cursorEl.className = "ciri-cursor";
     this.cursorEl.style.position = "absolute";
@@ -530,6 +542,12 @@ export class PaneRenderer {
     // a callback closure.
     this.gridRef = grid;
     this.updateScrollbar(grid);
+    // Notify on a settled offset change (post-clamp). Covers every
+    // scroll path since they all re-render through here.
+    if (this.scrollOffset !== this.lastReportedScrollOffset) {
+      this.lastReportedScrollOffset = this.scrollOffset;
+      this.onScrollChange?.(this.scrollOffset);
+    }
   }
 
   private updateScrollbar(grid: PaneGrid): void {

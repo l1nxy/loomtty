@@ -465,6 +465,33 @@ describe("PaneRenderer", () => {
     root.remove();
   });
 
+  test("onScrollChange fires on settled offset changes (incl. clamp)", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const seen: number[] = [];
+    const r = new PaneRenderer(root, { onScrollChange: (n) => seen.push(n) });
+    const grid = new PaneGrid(1n, 2, 2);
+    grid.applyFullPaneSync(syncWithScrollback(2, 3, 2));
+    r.render(grid); // offset 0, unchanged → no fire
+    expect(seen).toEqual([]);
+    r.setScrollOffset(2);
+    r.render(grid);
+    expect(seen).toEqual([2]);
+    // Re-render at the same offset must not re-fire.
+    r.render(grid);
+    expect(seen).toEqual([2]);
+    // A render-time clamp (offset exceeds available scrollback) reports
+    // the clamped value, not the requested one.
+    r.setScrollOffset(99);
+    r.render(grid);
+    expect(seen).toEqual([2, 3]);
+    // Back to live.
+    r.setScrollOffset(0);
+    r.render(grid);
+    expect(seen).toEqual([2, 3, 0]);
+    root.remove();
+  });
+
   test("negative or non-integer setScrollOffset is clamped at 0", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);

@@ -96,6 +96,31 @@ pub enum Command {
         #[command(subcommand)]
         subcommand: TemplateCommand,
     },
+
+    /// Serve the browser web UI (HTTP + WebSocket) and run the server in
+    /// the foreground. Enables `[web]` and mints a token on first run,
+    /// persisting both to your config so the desktop app shares them.
+    Web {
+        /// Listen port (default: web.port from config, else 7891)
+        #[arg(long)]
+        port: Option<u16>,
+        /// Bind address (default: 127.0.0.1). Use 0.0.0.0 to expose on
+        /// the LAN — then also set web.allowed_origins in your config.
+        #[arg(long)]
+        bind: Option<String>,
+        /// Auth token. Default: reuse the configured one, or generate a
+        /// fresh 32-hex-char token. Either way it's saved to your config.
+        /// NOTE: a value passed here is visible to other users in process
+        /// listings — on a shared host prefer the CIRITTY_WEB_TOKEN env var.
+        #[arg(long)]
+        token: Option<String>,
+        /// Directory of the built web bundle (default: <server-dir>/web)
+        #[arg(long)]
+        static_dir: Option<String>,
+        /// Open the URL in your default browser after starting
+        #[arg(long)]
+        open: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -293,6 +318,19 @@ pub fn resolve(cli: Cli) -> CliCommand {
             };
             CliCommand::Template { subcommand: sub }
         }
+        Some(Command::Web {
+            port,
+            bind,
+            token,
+            static_dir,
+            open,
+        }) => CliCommand::Web {
+            port,
+            bind,
+            token,
+            static_dir,
+            open,
+        },
     }
 }
 
@@ -332,6 +370,13 @@ pub enum CliCommand {
     },
     Template {
         subcommand: TemplateSubcommand,
+    },
+    Web {
+        port: Option<u16>,
+        bind: Option<String>,
+        token: Option<String>,
+        static_dir: Option<String>,
+        open: bool,
     },
 }
 

@@ -21,7 +21,9 @@
     "//dev:bridge": "Direct `node` (not nested `npm -w … run start`) so `npm run dev:bridge -- --tcp-port 7900` actually forwards the flag — npm consumes args after `--` for the directly-invoked script, but a wrapping `npm run start` swallows them as npm config instead of passing them on. Pre-builds the upstream packages first because bridge imports `decodeClientHello` from `@ciri/client`, which resolves through its gitignored `dist/`.",
     "prebuild-bridge": "npm -w @ciri/codec run build && npm -w @ciri/client run build",
     "dev:bridge": "npm run prebuild-bridge && node packages/ciri-bridge/src/index.mjs",
-    "dev:demo": "npm -w @ciri/demo run dev"
+    "dev:demo": "npm -w @ciri/demo run dev",
+    "//install-assets": "Build the production @ciri/web bundle and copy it into the directory ciri-server serves the SPA from (default `<repo>/target/debug/web`, the dev server's default static_dir). Pass a path for release/installed binaries. After this, `ciritty web` serves the UI.",
+    "install-assets": "node scripts/install-assets.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",

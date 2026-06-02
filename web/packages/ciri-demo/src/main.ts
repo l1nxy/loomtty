@@ -13,6 +13,7 @@
 //                         back into the URL so a reload reattaches to it.
 //   ?token=...            optional auth token forwarded to the transport
 
+import "@ciri/app/chrome.css";
 import { CiriApp } from "@ciri/app";
 
 // Server-side sentinel: "auto-attach to the most recent / a new session".

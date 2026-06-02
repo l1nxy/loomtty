@@ -8,10 +8,73 @@ Packages:
 | `@ciri/client`  | WebSocket transport + typed message dispatch.                   |
 | `@ciri/dom`     | Pane grid model + DOM renderer (rows, SGR runs, cursor, …).     |
 | `@ciri/app`     | Orchestrator: layout, keyboard, mouse, IME, clipboard, resize.  |
+| `@ciri/web`     | **Production** SPA: same-origin connect + token login screen.    |
 | `@ciri/bridge`  | Dev-time WebSocket ↔ TCP bridge to ciri-server.                 |
 | `@ciri/demo`    | Dev-time HTML + vite page that mounts `CiriApp`.                |
 
-## Running the demo
+## Production: serve the web UI from ciri-server
+
+In production there is **no bridge and no separate web host**. `ciri-server`
+itself serves the built `@ciri/web` SPA over plain HTTP and upgrades `/ws`
+to the binary protocol — both on the one `[web]` port. The browser connects
+same-origin and authenticates through a token login screen (the token lives
+in `sessionStorage`, never in the URL).
+
+**One-time setup — build the bundle into the server's static dir:**
+
+```bash
+cd web
+npm install
+node scripts/install-assets.mjs        # → <repo>/target/debug/web
+# release build: node scripts/install-assets.mjs path/to/target/release/web
+```
+
+`ciri-server` serves `web.static_dir` (empty → `<server-exe-dir>/web`). The
+install script builds `@ciri/web` and copies the bundle there.
+
+**Run it:**
+
+```bash
+ciritty web                 # enables [web], mints+saves a token, prints the
+                            # URL, runs the server in the foreground
+```
+
+`ciritty web` prints something like:
+
+```
+    URL:    http://127.0.0.1:7891/
+    Token:  3f9c…(32 hex chars)
+```
+
+Open the URL, paste the token, and you're in. Flags: `--port`, `--bind`,
+`--token`, `--static-dir`, `--open`. The token is saved to your config, so
+the desktop app and later `ciritty web` runs share it.
+
+Equivalent manual path (the server reads `[web]` from your config):
+
+```toml
+[web]
+enabled = true
+port = 7891
+token = "…32+ hex chars…"   # openssl rand -hex 16
+# static_dir = ""            # empty → <server-exe-dir>/web
+```
+
+```bash
+ciritty-server --headless          # or just run the desktop app
+```
+
+**Exposing beyond loopback.** The gateway speaks plain `http://` + `ws://`.
+For anything other than `127.0.0.1`, set `web.allowed_origins` to the exact
+browser origin(s) and put TLS in front (caddy/nginx) or use a tunnel
+(SSH / Tailscale). The static assets are public (only `/ws` is
+token-gated), so keep `static_dir` to the web bundle alone — no secrets.
+
+## Development (demo + bridge)
+
+The rest of this file describes the **dev-only** demo, which talks to
+`ciri-server` through the `@ciri/bridge` WebSocket↔TCP shim instead of the
+production gateway. It has no auth and no TLS — never expose it.
 
 Three pieces have to be up at the same time:
 

@@ -6,6 +6,7 @@ mod grid;
 mod init;
 mod recent_hosts;
 mod remote_validate;
+mod web;
 
 use anyhow::Result;
 use app::App;
@@ -164,6 +165,15 @@ fn main() -> Result<()> {
                     );
                 }
             }
+        }
+        CliCommand::Web {
+            port,
+            bind,
+            token,
+            static_dir,
+            open,
+        } => {
+            return web::run_web(port, bind, token, static_dir, open);
         }
         _ => {}
     }

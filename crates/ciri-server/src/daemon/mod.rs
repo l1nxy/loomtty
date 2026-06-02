@@ -4,7 +4,7 @@ mod damage;
 pub(crate) mod server;
 pub(crate) mod session;
 mod tick;
-mod ws;
+mod web;
 
 use anyhow::{Context, Result};
 use ciri_layout::column::ColumnWidth;
@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::net::UnixListener;
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::ServerOptions;
-use tokio::sync::{Mutex, Notify, Semaphore};
+use tokio::sync::{Mutex, Notify};
 
 use server::Server;
 
@@ -32,7 +32,7 @@ fn parse_cursor_shape_config(name: &str) -> u8 {
     }
 }
 
-/// Shared daemon state returned by `prepare_daemon`.
+/// Shared daemon state returned by `prepare_daemon_with`.
 pub struct DaemonState {
     pub state: Arc<Mutex<Server>>,
     pub shutdown: Arc<Notify>,
@@ -49,10 +49,19 @@ pub struct DaemonState {
     config: ciri_config::config::CiriConfig,
 }
 
-/// Initialize the server, bind the socket, start tick loop and signal handlers.
-/// Returns shared state that can be passed to `run_daemon_loop` or the tray.
-pub async fn prepare_daemon() -> Result<DaemonState> {
-    let config = ciri_config::config::CiriConfig::load()?;
+/// Initialize the server, bind the socket, start tick loop and signal
+/// handlers. Returns shared state for `run_daemon_loop` or the tray.
+///
+/// `config_override` injects an already-built config instead of loading
+/// from disk — used by the `ciritty web` command / `--web*` server flags
+/// to override `[web]` settings in memory. `None` loads from disk.
+pub async fn prepare_daemon_with(
+    config_override: Option<ciri_config::config::CiriConfig>,
+) -> Result<DaemonState> {
+    let config = match config_override {
+        Some(c) => c,
+        None => ciri_config::config::CiriConfig::load()?,
+    };
     let shell = config.terminal.shell.clone();
 
     // Apply user's preferred cursor shape as alacritty's default. TUI apps
@@ -252,7 +261,7 @@ pub async fn prepare_daemon() -> Result<DaemonState> {
     })
 }
 
-/// Run the accept loop. Call after `prepare_daemon`.
+/// Run the accept loop. Call after `prepare_daemon_with`.
 pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
     let state = ds.state;
     let shutdown = ds.shutdown;
@@ -290,11 +299,22 @@ pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
         None
     };
 
-    let (ws_listener, ws_token, ws_allowed_origins) = if ds.config.web.enabled {
+    // Web gateway: serve the SPA + the authenticated `/ws` upgrade on the
+    // `[web]` port via an axum app on its own task. Bound here (not in the
+    // accept loop) so a bind failure still propagates synchronously. Its
+    // graceful shutdown rides a dedicated Notify (not the master
+    // `shutdown`, whose `notify_one` would otherwise be stolen from the
+    // accept loop), triggered when this function returns by ANY path —
+    // normal shutdown, an early `?` from the accept loop, or an unwind —
+    // via the drop guard below (so the serve task can never be left
+    // waiting on `serve_shutdown.notified()`).
+    let web_shutdown = Arc::new(Notify::new());
+    let _web_shutdown_guard = NotifyOnDrop(web_shutdown.clone());
+    if ds.config.web.enabled {
         // Token: trimmed, zeroized-on-drop, refcounted. The helper enforces
-        // the 16-byte floor and any surrounding whitespace is stripped so
-        // a trailing newline in the config does not silently break auth.
-        let token = ws::prepare_web_token(&ds.config.web.token)?;
+        // the 16-byte floor and strips a trailing newline so a stray one in
+        // the config does not silently break auth.
+        let token = web::prepare_web_token(&ds.config.web.token)?;
         // `bind` has already passed schema validation (accepts empty or a
         // parseable IpAddr) — empty means "use loopback".
         let parsed_bind: std::net::IpAddr = if ds.config.web.bind.is_empty() {
@@ -307,10 +327,9 @@ pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
                 )
             })?
         };
-        // Origin policy: an empty allowlist is only safe on loopback,
-        // because only same-host pages can reach the listener. On a
-        // non-loopback bind, an unscoped allowlist invites CSRF from any
-        // page in the browser — refuse to start.
+        // An empty allowlist is only safe on loopback (only same-host pages
+        // can reach the listener); on a non-loopback bind an unscoped
+        // allowlist invites CSRF from any page in the browser — refuse.
         if !parsed_bind.is_loopback() && ds.config.web.allowed_origins.is_empty() {
             anyhow::bail!(
                 "[web] bind={parsed_bind} is not loopback but allowed_origins is empty. \
@@ -320,46 +339,55 @@ pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
             );
         }
         // Construct the listener from the canonical IpAddr so the logged
-        // address and the loopback check agree on a single normalised
-        // form (matters for IPv6: `::0001` and `::1` parse to the same
-        // address but compare as different strings).
+        // address and the loopback check agree on one normalised form
+        // (matters for IPv6: `::0001` and `::1` parse equal but compare as
+        // different strings).
         let addr = std::net::SocketAddr::new(parsed_bind, ds.config.web.port);
-        let tcp = tokio::net::TcpListener::bind(&addr).await?;
-        log::info!("ciritty-server WS listener on {addr}");
+        let listener = tokio::net::TcpListener::bind(&addr).await?;
+        log::info!("ciritty-server web listener (HTTP + WS) on {addr}");
         if !parsed_bind.is_loopback() {
             log::warn!(
-                "ws bind={parsed_bind} is not loopback — terminate TLS upstream \
-                 and ensure the token is rotated; the gateway speaks plain ws://"
+                "web bind={parsed_bind} is not loopback — terminate TLS upstream \
+                 and ensure the token is rotated; the gateway speaks plain http:// + ws://"
             );
             // `"null"` is the Origin every sandboxed iframe, `data:` URI,
-            // local `file://` page, and some redirected cross-origin
-            // request shares — on a publicly-exposed bind, listing it in
-            // the allowlist comes close to "no Origin check at all" for
-            // anyone who can social-engineer a victim into opening a
-            // local file.
+            // `file://` page, and some redirected cross-origin request
+            // shares — on a public bind, listing it is close to "no Origin
+            // check at all" for anyone who can lure a victim into a local
+            // file.
             if ds.config.web.allowed_origins.iter().any(|o| o == "null") {
                 log::warn!(
-                    "ws allowed_origins contains \"null\" on a non-loopback bind — \
+                    "web allowed_origins contains \"null\" on a non-loopback bind — \
                      this admits any sandboxed/file:// page in the user's browser; \
                      remove it unless you intentionally accept that risk"
                 );
             }
         }
         let origins = Arc::new(ds.config.web.allowed_origins.clone());
-        // The raw config string still holds a plaintext copy of the
-        // secret; the zeroized SharedToken only covers our runtime
-        // copy. Wipe the source so a core dump or post-startup memory
-        // read can't recover the token from `ds.config`. (Operationally
-        // this is best-effort: the allocator may have reused the
-        // buffer before we got here, but it's free defense.)
+        let static_dir = web::resolve_static_dir(&ds.config.web.static_dir);
+        // The loaded config still holds a plaintext copy of the secret; the
+        // zeroized SharedToken now owns the live copy. Wipe the source so a
+        // core dump or post-startup memory read can't recover it from
+        // `ds.config` (best-effort: the allocator may have reused the
+        // buffer already, but it's free defense).
         use zeroize::Zeroize;
         ds.config.web.token.zeroize();
-        (Some(tcp), Some(token), origins)
-    } else {
-        (None, None, Arc::new(Vec::new()))
-    };
-
-    let ws_handshake_sem = Arc::new(Semaphore::new(MAX_IN_FLIGHT_WS_HANDSHAKES));
+        let web_state = web::WebState::new(
+            token,
+            origins,
+            state.clone(),
+            shutdown.clone(),
+            input_notify.clone(),
+        );
+        let app = web::build_router(web_state, static_dir);
+        let serve_shutdown = web_shutdown.clone();
+        // Serve the SPA + `/ws` over hyper directly (with a header-read
+        // timeout) rather than `axum::serve`, so stalled or idle pre-auth
+        // sockets can't pin accept permits. `serve_web` stops accepting when
+        // `serve_shutdown` fires (driven by the drop guard above on every
+        // exit path). See `daemon::web::serve_web`.
+        tokio::spawn(web::serve_web(listener, app, serve_shutdown));
+    }
 
     loop {
         #[cfg(unix)]
@@ -401,37 +429,6 @@ pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
                     let (reader, writer) = stream.into_split();
                     tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown, client_input_notify));
                 }
-                result = tcp_accept(&ws_listener) => {
-                    let (stream, addr) = match result {
-                        Ok(v) => v,
-                        Err(e) => {
-                            // EMFILE/ENFILE/ECONNABORTED and similar
-                            // transient errors must not kill the entire
-                            // daemon — log and keep accepting.
-                            log::warn!("ws accept failed: {e}");
-                            continue;
-                        }
-                    };
-                    stream.set_nodelay(true).ok();
-                    // ws_listener is only Some when ws_token is also Some
-                    // (set together in prepare phase); the .as_ref()/.clone()
-                    // here is cheap (Arc refcount bump) so the unwrap is
-                    // load-bearing only for the type system's benefit.
-                    let token = ws_token
-                        .as_ref()
-                        .expect("ws_listener Some implies ws_token Some")
-                        .clone();
-                    spawn_ws_client(
-                        stream,
-                        addr,
-                        state.clone(),
-                        shutdown.clone(),
-                        input_notify.clone(),
-                        token,
-                        ws_allowed_origins.clone(),
-                        ws_handshake_sem.clone(),
-                    );
-                }
                 _ = shutdown.notified() => {
                     log::info!("accept loop shutting down");
                     connection::graceful_shutdown(&state).await;
@@ -468,35 +465,6 @@ pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
                     tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown, client_input_notify));
                     continue;
                 }
-                result = tcp_accept(&ws_listener) => {
-                    let (stream, addr) = match result {
-                        Ok(v) => v,
-                        Err(e) => {
-                            log::warn!("ws accept failed: {e}");
-                            continue;
-                        }
-                    };
-                    stream.set_nodelay(true).ok();
-                    // ws_listener is only Some when ws_token is also Some
-                    // (set together in prepare phase); the .as_ref()/.clone()
-                    // here is cheap (Arc refcount bump) so the unwrap is
-                    // load-bearing only for the type system's benefit.
-                    let token = ws_token
-                        .as_ref()
-                        .expect("ws_listener Some implies ws_token Some")
-                        .clone();
-                    spawn_ws_client(
-                        stream,
-                        addr,
-                        state.clone(),
-                        shutdown.clone(),
-                        input_notify.clone(),
-                        token,
-                        ws_allowed_origins.clone(),
-                        ws_handshake_sem.clone(),
-                    );
-                    continue;
-                }
                 _ = shutdown.notified() => {
                     log::info!("accept loop shutting down");
                     connection::graceful_shutdown(&state).await;
@@ -521,14 +489,35 @@ pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
         }
     }
 
+    // The web server task is signalled by `_web_shutdown_guard` on the way
+    // out of this function (it fires on drop), so no explicit call here.
+
     // Signal the tray thread that the server has exited.
     server_exited.store(true, Ordering::Relaxed);
     Ok(())
 }
 
-/// Legacy entry point: prepare + run in one call (for headless/daemonize mode).
-pub async fn run_daemon() -> Result<()> {
-    let ds = prepare_daemon().await?;
+/// Fires a `Notify` exactly once on drop. Used to drive the web server's
+/// graceful shutdown on EVERY exit path of the accept loop — the normal
+/// `break`, an early `?` (e.g. a transient accept error), or an unwind —
+/// not just the happy path. `notify_one` (not `notify_waiters`) so the
+/// signal is stored if the serve task hasn't yet reached `.notified()`.
+struct NotifyOnDrop(Arc<Notify>);
+
+impl Drop for NotifyOnDrop {
+    fn drop(&mut self) {
+        self.0.notify_one();
+    }
+}
+
+/// Prepare + run in one call (headless / daemonize mode).
+/// `config_override` injects an already-built config (used by `ciritty
+/// web` / `--web*` server flags to override `[web]` settings without
+/// rewriting the user's TOML); `None` loads from disk.
+pub async fn run_daemon_with(
+    config_override: Option<ciri_config::config::CiriConfig>,
+) -> Result<()> {
+    let ds = prepare_daemon_with(config_override).await?;
     run_daemon_loop(ds).await
 }
 
@@ -542,60 +531,3 @@ async fn tcp_accept(
     }
 }
 
-/// Cap on concurrent in-flight WS handshakes. A handshake is bounded by
-/// `ws::HANDSHAKE_TIMEOUT` (10s); 64 concurrent slots give legitimate
-/// burst load plenty of room while putting a hard ceiling on tasks an
-/// attacker can pin by completing the TCP handshake and stalling the
-/// HTTP upgrade. Excess attempts are rejected immediately rather than
-/// queued so an attacker can't hold attempts in line.
-const MAX_IN_FLIGHT_WS_HANDSHAKES: usize = 64;
-
-/// Perform the WS handshake off the accept-loop thread and, on success,
-/// hand the wrapped stream to `connection::handle_client`. Errors from
-/// the handshake (bad token, malformed upgrade, etc.) are logged and
-/// the connection is dropped — the accept loop must stay responsive
-/// for other clients regardless of any single peer's misbehaviour.
-#[allow(clippy::too_many_arguments)]
-fn spawn_ws_client(
-    stream: tokio::net::TcpStream,
-    addr: std::net::SocketAddr,
-    state: Arc<Mutex<Server>>,
-    shutdown: Arc<Notify>,
-    input_notify: Arc<Notify>,
-    token: ws::SharedToken,
-    allowed_origins: Arc<Vec<String>>,
-    handshake_sem: Arc<Semaphore>,
-) {
-    // `try_acquire_owned` is non-blocking: when the cap is reached we
-    // reject the new attempt immediately and free the TCP stream rather
-    // than queueing it, so an attacker can't keep a pipeline of stalled
-    // upgrades in line.
-    let permit = match handshake_sem.try_acquire_owned() {
-        Ok(p) => p,
-        Err(_) => {
-            log::warn!(
-                "ws handshake from {addr} rejected: {MAX_IN_FLIGHT_WS_HANDSHAKES} \
-                 concurrent handshakes already in flight"
-            );
-            return;
-        }
-    };
-
-    tokio::spawn(async move {
-        log::debug!("ws TCP accept from {addr}; starting handshake");
-        let ws_stream = match ws::accept_ws(stream, token, allowed_origins).await {
-            Ok(ws) => ws,
-            Err(e) => {
-                log::warn!("ws handshake from {addr} failed: {e}");
-                return;
-            }
-        };
-        // Handshake done — release the slot before the long-lived client
-        // session begins; the session itself does not count against the
-        // handshake budget.
-        drop(permit);
-        log::info!("ws upgrade from {addr} accepted (handshake complete)");
-        let (reader, writer) = tokio::io::split(ws_stream);
-        connection::handle_client(reader, writer, state, shutdown, input_notify).await;
-    });
-}

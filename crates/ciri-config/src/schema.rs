@@ -913,6 +913,13 @@ pub struct WebConfig {
     ///   exposed gateway with no Origin policy is a CSRF magnet.
     /// - non-empty → strict exact-match on every handshake.
     pub allowed_origins: Vec<String>,
+    /// Directory the daemon serves the browser SPA from over plain HTTP
+    /// on the same `[web]` port. Empty → `<server-exe-dir>/web` (the
+    /// install directory next to `ciritty-server`). These files are
+    /// served WITHOUT the token (only the `/ws` data channel is
+    /// authenticated), so the directory must contain only the public web
+    /// bundle — never secrets, `.env`, or config dumps.
+    pub static_dir: String,
 }
 
 /// `Validate` is implemented manually rather than via `#[derive]` so
@@ -1038,6 +1045,15 @@ fn origin_contains_uppercase(value: &str) -> bool {
 /// near-variants) so a user who uncomments the example in
 /// `config/default.toml` without replacing the value can't start a
 /// gateway with a secret every clone of this repo knows.
+/// Returns true if `token` is fit to enable the web gateway: non-empty,
+/// meets the [`MIN_WEB_TOKEN_BYTES`] floor, and isn't a known
+/// placeholder. `ciritty web` uses this to decide whether to reuse the
+/// configured token or mint a fresh one.
+pub fn web_token_is_usable(token: &str) -> bool {
+    let t = token.trim();
+    t.len() >= MIN_WEB_TOKEN_BYTES && !is_placeholder_token(t)
+}
+
 fn is_placeholder_token(trimmed: &str) -> bool {
     const PLACEHOLDERS: &[&str] = &[
         "REPLACE_WITH_OUTPUT_OF_openssl_rand_hex_16",
@@ -1269,6 +1285,8 @@ impl Default for WebConfig {
             port: 7891,
             token: String::new(),
             allowed_origins: Vec::new(),
+            // Empty → daemon resolves `<server-exe-dir>/web` at startup.
+            static_dir: String::new(),
         }
     }
 }
@@ -1292,6 +1310,7 @@ impl std::fmt::Debug for WebConfig {
                 },
             )
             .field("allowed_origins", &self.allowed_origins)
+            .field("static_dir", &self.static_dir)
             .finish()
     }
 }

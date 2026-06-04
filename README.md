@@ -103,6 +103,9 @@ ciritty rm SESSION                 # Delete saved session state
 # Remote
 ciritty remote HOST [SESSION] [--port PORT] [--ssh-port SSH_PORT]
 
+# Web UI (browser terminal) — serve the SPA + WS gateway, print the URL+token
+ciritty web [--port PORT] [--bind ADDR] [--token TOK] [--static-dir DIR] [--open]
+
 # IPC scripting
 ciritty msg send-keys SESSION PANE_ID KEYS
 ciritty msg list-panes SESSION [--json]
@@ -197,4 +200,22 @@ name = "my-server"
 host = "user@example.com"
 port = 7890
 ssh_port = 22
+
+[web]                         # browser terminal (HTTP SPA + /ws gateway)
+enabled = false
+bind = ""                     # empty = 127.0.0.1
+port = 7891
+token = ""                    # ≥16 bytes; openssl rand -hex 16
+allowed_origins = []          # required (exact-match) for non-loopback binds
+static_dir = ""               # empty = <server-exe-dir>/web
 ```
+
+### Web UI
+
+`ciritty web` turns the desktop multiplexer into a browser terminal: it
+enables `[web]`, mints and saves a token, prints the access URL, and runs
+the server. Build the SPA into the server's static dir once with
+`node web/scripts/install-assets.mjs`, then open the printed URL and log in
+with the token. The gateway speaks plain `http`/`ws` — front it with TLS
+(reverse proxy or tunnel) before exposing it past loopback. See
+[`web/README.md`](web/README.md) for the full guide.

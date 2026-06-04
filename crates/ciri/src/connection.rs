@@ -332,49 +332,10 @@ pub fn connect_or_spawn(
             format!("invalid session name: {reason}"),
         ));
     }
-    let _sock_path = transport::server_socket_path();
-
-    // Spawn server if not running (non-blocking — IO thread handles retry)
-    {
-        let server_ready = || -> bool {
-            #[cfg(unix)]
-            {
-                if !_sock_path.exists() {
-                    return false;
-                }
-                // Probe the socket to distinguish live server from stale socket.
-                // A stale socket (left by a crashed server) returns ConnectionRefused.
-                match std::os::unix::net::UnixStream::connect(&_sock_path) {
-                    Ok(_) => true,
-                    Err(_) => {
-                        // Socket file exists but nobody is listening — stale.
-                        log::info!("removing stale server socket: {}", _sock_path.display());
-                        let _ = std::fs::remove_file(&_sock_path);
-                        false
-                    }
-                }
-            }
-            #[cfg(windows)]
-            {
-                // On Windows, opening a named pipe consumes the server's only pipe
-                // instance. Use WaitNamedPipeW to probe without connecting, avoiding
-                // ERROR_PIPE_BUSY (os error 231) on the real connection attempt.
-                use std::os::windows::ffi::OsStrExt;
-                unsafe extern "system" {
-                    fn WaitNamedPipeW(name: *const u16, timeout: u32) -> i32;
-                }
-                let pipe_name = transport::server_pipe_name();
-                let wide: Vec<u16> = std::ffi::OsStr::new(&pipe_name)
-                    .encode_wide()
-                    .chain(std::iter::once(0))
-                    .collect();
-                // Timeout 0 = don't wait, just check if pipe exists
-                unsafe { WaitNamedPipeW(wide.as_ptr(), 0) != 0 }
-            }
-        };
-        if !server_ready() {
-            spawn_server(session_name)?;
-        }
+    // Spawn the server if one isn't already accepting connections
+    // (non-blocking — the IO thread handles connect retry).
+    if !server_is_running() {
+        spawn_server(session_name)?;
     }
 
     let (msg_tx, msg_rx) = crossbeam_channel::bounded::<ClientMessage>(256);
@@ -721,6 +682,47 @@ async fn probe_remote(host: &str, remote_port: u16, ssh_port: u16) -> RemoteProb
             // running a ciri-server.
             RemoteProbeResult::NoServer
         }
+    }
+}
+
+/// Probe whether a ciritty server is currently accepting connections.
+///
+/// Non-destructive: on Unix it connects to the socket (removing a stale
+/// one left by a crashed server); on Windows it uses `WaitNamedPipeW`
+/// without consuming the server's single pipe instance. Shared by
+/// `connect_or_spawn` and `ciritty web` so neither spawns a duplicate
+/// daemon over a live one (which would corrupt the per-user socket).
+pub(crate) fn server_is_running() -> bool {
+    #[cfg(unix)]
+    {
+        let sock_path = transport::server_socket_path();
+        if !sock_path.exists() {
+            return false;
+        }
+        match std::os::unix::net::UnixStream::connect(&sock_path) {
+            Ok(_) => true,
+            Err(_) => {
+                // Socket file exists but nobody is listening — stale.
+                log::info!("removing stale server socket: {}", sock_path.display());
+                let _ = std::fs::remove_file(&sock_path);
+                false
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        // Opening a named pipe consumes the server's only instance; probe
+        // with WaitNamedPipeW (timeout 0 = just check existence) instead.
+        use std::os::windows::ffi::OsStrExt;
+        unsafe extern "system" {
+            fn WaitNamedPipeW(name: *const u16, timeout: u32) -> i32;
+        }
+        let pipe_name = transport::server_pipe_name();
+        let wide: Vec<u16> = std::ffi::OsStr::new(&pipe_name)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        unsafe { WaitNamedPipeW(wide.as_ptr(), 0) != 0 }
     }
 }
 

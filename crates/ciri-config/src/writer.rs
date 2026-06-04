@@ -214,6 +214,39 @@ impl EditableConfig {
         self.section_mut("prediction")["mode"] = value(v);
     }
 
+    /// Enable/disable the browser web gateway. Written by `ciritty web`
+    /// (which also persists a token) so the desktop daemon and the web
+    /// command share one `[web]` configuration.
+    pub fn set_web_enabled(&mut self, v: bool) {
+        self.section_mut("web")["enabled"] = value(v);
+    }
+    /// Persist the web auth token. `toml_edit`'s `value` escapes the
+    /// string, so a token containing quotes/backslashes round-trips
+    /// safely.
+    pub fn set_web_token(&mut self, v: &str) {
+        self.section_mut("web")["token"] = value(v);
+    }
+    /// Persist the web listen port. `ciritty web` writes this only for an
+    /// explicit `--port`, so the saved `[web]` stays internally consistent
+    /// with `enabled = true` — the spawned server and every later
+    /// desktop/server launch reload and re-validate the whole file.
+    pub fn set_web_port(&mut self, v: u16) {
+        self.section_mut("web")["port"] = value(v as i64);
+    }
+    /// Persist the web bind address. `ciritty web` writes this only for an
+    /// explicit `--bind`. See [`Self::set_web_port`] for why an acted-on
+    /// override must land on disk rather than stay transient.
+    pub fn set_web_bind(&mut self, v: &str) {
+        self.section_mut("web")["bind"] = value(v);
+    }
+    /// Persist the web static-asset directory. `ciritty web` writes this
+    /// only for an explicit `--static-dir`, so the path still applies after
+    /// the user restarts an already-running server (which won't see the
+    /// transient `--web-static-dir` flag). See [`Self::set_web_port`].
+    pub fn set_web_static_dir(&mut self, v: &str) {
+        self.section_mut("web")["static_dir"] = value(v);
+    }
+
     /// Render the document back to disk. Atomic: writes to
     /// `<file>.tmp`, fsyncs, then renames over the target.
     pub fn save(&self) -> Result<()> {
@@ -225,8 +258,13 @@ impl EditableConfig {
         let serialized = self.doc.to_string();
         let tmp = tmp_sibling(&self.path);
         {
+            // Create owner-only: the config can hold the web bearer token,
+            // and the atomic rename below carries the temp file's mode onto
+            // the final file. Without this, a default umask (022) leaves a
+            // freshly created settings.toml world-readable and any local
+            // user could lift the token and reach the loopback gateway.
             let mut f =
-                fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
+                create_owner_only(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
             f.write_all(serialized.as_bytes())
                 .with_context(|| format!("writing {}", tmp.display()))?;
             // Best-effort fsync. Some filesystems / Windows handles
@@ -260,6 +298,30 @@ fn float_item(v: f32) -> Item {
     let s = format!("{v}");
     let f: f64 = s.parse().unwrap_or(v as f64);
     value(f)
+}
+
+/// Create (truncating) a file readable/writable only by its owner.
+///
+/// On Unix the mode is set at creation (so there's no world-readable
+/// window) and re-asserted in case a leftover temp from a crashed write
+/// pre-existed with looser bits. On other platforms the user profile
+/// directory is already per-user, so the default applies.
+#[cfg(unix)]
+fn create_owner_only(path: &Path) -> std::io::Result<fs::File> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let f = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    Ok(f)
+}
+
+#[cfg(not(unix))]
+fn create_owner_only(path: &Path) -> std::io::Result<fs::File> {
+    fs::File::create(path)
 }
 
 fn tmp_sibling(target: &Path) -> PathBuf {
@@ -381,6 +443,100 @@ mod tests {
         let border_pos = raw.find("border_width").unwrap();
         assert!(opacity_pos < border_pos, "ordering not preserved: {raw}");
         assert!(raw.contains("pane_opacity = 0.7"));
+    }
+
+    /// `ciritty web` persists enabled + token, and (only) an explicit
+    /// `--bind`/`--port`. The written `[web]` must load AND pass schema
+    /// validation, since the spawned server and every later launch reload
+    /// and re-validate the whole file.
+    #[test]
+    fn web_overrides_round_trip_and_validate() {
+        let path = temp_path("web-overrides");
+        let mut cfg = EditableConfig::load_from_path(&path).unwrap();
+        cfg.set_web_enabled(true);
+        cfg.set_web_token("0123456789abcdef0123456789abcdef");
+        cfg.set_web_bind("127.0.0.1");
+        cfg.set_web_port(7891);
+        cfg.set_web_static_dir("/opt/ciri/web");
+        cfg.save().unwrap();
+
+        let raw = fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("enabled = true"), "{raw}");
+        assert!(raw.contains("bind = \"127.0.0.1\""), "{raw}");
+        assert!(raw.contains("port = 7891"), "{raw}");
+        assert!(raw.contains("static_dir = \"/opt/ciri/web\""), "{raw}");
+
+        let loaded: crate::CiriConfig = toml::from_str(&raw).unwrap();
+        assert!(loaded.web.enabled);
+        assert_eq!(loaded.web.bind, "127.0.0.1");
+        assert_eq!(loaded.web.port, 7891);
+        assert_eq!(loaded.web.static_dir, "/opt/ciri/web");
+        loaded
+            .validate_schema()
+            .expect("persisted web config must pass schema validation");
+    }
+
+    /// Regression for the persist-the-override fix: a stored non-loopback
+    /// `bind` with no `allowed_origins` is valid only while web is
+    /// DISABLED. Enabling it AND writing the loopback `--bind` override
+    /// yields a loadable config; enabling WITHOUT writing the override
+    /// (the old behaviour) leaves a config that fails to load — which is
+    /// exactly why an acted-on override must land on disk.
+    #[test]
+    fn enabling_web_must_persist_a_loopback_override_to_stay_valid() {
+        // Stored, pre-existing: LAN bind, no origins, web off → valid.
+        let base = "[web]\nbind = \"0.0.0.0\"\nallowed_origins = []\n";
+
+        // Old behaviour: flip enabled + token but DON'T fix the bind.
+        let path_bad = temp_path("web-stale-bind");
+        fs::write(&path_bad, base).unwrap();
+        let mut bad = EditableConfig::load_from_path(&path_bad).unwrap();
+        bad.set_web_enabled(true);
+        bad.set_web_token("0123456789abcdef0123456789abcdef");
+        bad.save().unwrap();
+        let bad_cfg: crate::CiriConfig =
+            toml::from_str(&fs::read_to_string(&path_bad).unwrap()).unwrap();
+        assert!(
+            bad_cfg.validate_schema().is_err(),
+            "enabled web with a stale non-loopback bind + empty origins must be invalid",
+        );
+
+        // New behaviour: also persist the explicit loopback `--bind`.
+        let path_ok = temp_path("web-fixed-bind");
+        fs::write(&path_ok, base).unwrap();
+        let mut ok = EditableConfig::load_from_path(&path_ok).unwrap();
+        ok.set_web_enabled(true);
+        ok.set_web_token("0123456789abcdef0123456789abcdef");
+        ok.set_web_bind("127.0.0.1");
+        ok.save().unwrap();
+        let ok_cfg: crate::CiriConfig =
+            toml::from_str(&fs::read_to_string(&path_ok).unwrap()).unwrap();
+        assert_eq!(ok_cfg.web.bind, "127.0.0.1");
+        ok_cfg
+            .validate_schema()
+            .expect("enabling web with a persisted loopback override must be valid");
+    }
+
+    /// The config can hold the web bearer token, so a written file must be
+    /// owner-only (0600) on Unix — otherwise a default umask leaves the
+    /// secret world-readable to other local users.
+    #[cfg(unix)]
+    #[test]
+    fn saved_config_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_path("perms");
+        let mut cfg = EditableConfig::load_from_path(&path).unwrap();
+        cfg.set_web_enabled(true);
+        cfg.set_web_token("0123456789abcdef0123456789abcdef");
+        cfg.save().unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "config holding a token must be 0600, was {mode:o}");
+
+        // A second save (file already exists) must keep it 0600.
+        cfg.set_web_port(7891);
+        cfg.save().unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "rewrite must preserve 0600, was {mode:o}");
     }
 
     #[test]

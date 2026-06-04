@@ -204,11 +204,15 @@ y = "confirm_paste"
 escape = "dismiss_paste_confirm"
 n = "dismiss_paste_confirm"
 
-# Browser-facing WebSocket gateway. Disabled by default. When enabled, the
-# daemon accepts WS upgrades alongside the existing Unix/TCP listeners.
-# The gateway speaks plain ws:// — terminate TLS upstream (caddy/nginx) if
-# you point `bind` at a non-loopback address. Token must be at least 16
-# bytes; generate one with `openssl rand -hex 16`.
+# Browser-facing web gateway. Disabled by default. When enabled, the
+# daemon serves the browser terminal SPA over plain HTTP and upgrades
+# `/ws` to the binary protocol — both on `port`, alongside the existing
+# Unix/TCP listeners. The easiest way to turn this on is `ciritty web`,
+# which enables it, mints a token, prints the URL, and runs the server.
+# The gateway speaks plain http:// + ws:// — terminate TLS upstream
+# (caddy/nginx) or use a tunnel if you point `bind` at a non-loopback
+# address. Token must be at least 16 bytes; generate with `openssl rand
+# -hex 16`.
 [web]
 enabled = false
 # Empty string is the loopback placeholder — the daemon substitutes
@@ -233,3 +237,9 @@ token = ""
 # Examples: "http://localhost:5173", "https://terminal.example.com",
 # or the literal "null" for file:// / sandboxed origins.
 allowed_origins = []
+# Directory the SPA is served from. Empty = `<server-exe-dir>/web` (next
+# to the ciritty-server binary). Populate it with a built web bundle:
+# `node web/scripts/install-assets.mjs`. These files are served WITHOUT
+# the token (only `/ws` is authenticated), so put ONLY the public web
+# bundle here — never secrets.
+static_dir = ""

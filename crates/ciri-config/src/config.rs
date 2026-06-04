@@ -14,6 +14,32 @@ impl CiriConfig {
         config.validate()?;
         Ok(config)
     }
+
+    /// Load the config WITHOUT schema validation — TOML parse and theme
+    /// preset resolution only. `ciritty web` uses this so it can still read
+    /// and then REPAIR a config whose `[web]` is currently schema-invalid
+    /// (e.g. `enabled = true` with an unusable/placeholder token) — the very
+    /// state this command exists to fix; `load()` would reject it first,
+    /// leaving no path to recover except hand-editing. A genuine TOML
+    /// syntax/type error still errors (that can't be safely auto-repaired).
+    /// The caller re-validates the effective settings before persisting, so
+    /// skipping validation here doesn't let an invalid config reach runtime.
+    pub fn load_lenient() -> Result<Self> {
+        let mut config = load_from_path(&config_path())?;
+        config.theme.resolve_preset();
+        Ok(config)
+    }
+
+    /// Run schema validation on an in-memory config. For callers that
+    /// build or mutate a config outside `load()` — e.g. the server's
+    /// `--web-*` flag overrides — so the same invariants enforced on a
+    /// TOML load (port != 0, token floor, placeholder-token rejection,
+    /// non-loopback Origin policy, …) still apply. Re-exports `garde`
+    /// validation so callers don't need that dependency themselves.
+    pub fn validate_schema(&self) -> Result<()> {
+        self.validate()?;
+        Ok(())
+    }
 }
 
 fn load_from_path(path: &PathBuf) -> Result<CiriConfig> {
@@ -152,6 +178,21 @@ mod tests {
         assert!(
             config.validate().is_err(),
             "validation should reject {label}"
+        );
+    }
+
+    /// `load_lenient` (and thus `ciritty web`) must tolerate an `[web]`
+    /// section that schema validation rejects — e.g. `enabled = true` with a
+    /// too-short token — so the command can read and then repair it. The
+    /// deserialize path itself must succeed; only `validate()` should object.
+    #[test]
+    fn lenient_parse_tolerates_schema_invalid_web() {
+        let toml = "[web]\nenabled = true\ntoken = \"short\"\n";
+        let cfg: CiriConfig =
+            toml::from_str(toml).expect("schema-invalid [web] must still deserialize");
+        assert!(
+            cfg.validate_schema().is_err(),
+            "a too-short enabled-web token must fail schema validation",
         );
     }
 

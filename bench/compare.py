@@ -53,14 +53,14 @@ def fmt_winner(a, b, lower_is_better=True):
 
 def main():
     if len(sys.argv) != 3:
-        print(f"Usage: {sys.argv[0]} <ciri_results> <ghostty_results>")
+        print(f"Usage: {sys.argv[0]} <loom_results> <ghostty_results>")
         sys.exit(1)
 
-    ciri = parse_results(sys.argv[1])
+    loom = parse_results(sys.argv[1])
     ghostty = parse_results(sys.argv[2])
 
     print("=" * 72)
-    print(f"{'Benchmark':<30} {'ciri':>15} {'ghostty':>15}  {'diff':>8}")
+    print(f"{'Benchmark':<30} {'loom':>15} {'ghostty':>15}  {'diff':>8}")
     print("=" * 72)
 
     # Throughput tests
@@ -68,10 +68,10 @@ def main():
                 "throughput_cjk_unicode", "throughput_scroll_200k",
                 "throughput_mixed_stress"]:
         label = key.replace("throughput_", "")
-        if key in ciri and key in ghostty:
-            c_tp = ciri[key]["throughput"]
+        if key in loom and key in ghostty:
+            c_tp = loom[key]["throughput"]
             g_tp = ghostty[key]["throughput"]
-            c_ms = ciri[key]["avg_ms"]
+            c_ms = loom[key]["avg_ms"]
             g_ms = ghostty[key]["avg_ms"]
             diff = ((g_ms - c_ms) / g_ms * 100) if g_ms > 0 else 0
             sign = "+" if diff > 0 else ""
@@ -81,24 +81,24 @@ def main():
     print("-" * 72)
 
     # CPU
-    if "idle_cpu" in ciri and "idle_cpu" in ghostty:
-        c, g = ciri["idle_cpu"], ghostty["idle_cpu"]
+    if "idle_cpu" in loom and "idle_cpu" in ghostty:
+        c, g = loom["idle_cpu"], ghostty["idle_cpu"]
         print(f"  {'Idle CPU (%)':<28} {c:>12.1f}   {g:>12.1f}")
 
     for key in ["cpu_plain_text", "cpu_sgr_colored", "cpu_cjk"]:
         label = key.replace("cpu_", "CPU: ")
-        if key in ciri and key in ghostty:
-            c, g = ciri[key], ghostty[key]
+        if key in loom and key in ghostty:
+            c, g = loom[key], ghostty[key]
             print(f"  {label + ' (%)':<28} {c:>12.1f}   {g:>12.1f}")
 
     print("-" * 72)
 
     # Memory
-    if "rss_kb" in ciri and "rss_kb" in ghostty:
-        c, g = ciri["rss_kb"] / 1024, ghostty["rss_kb"] / 1024
+    if "rss_kb" in loom and "rss_kb" in ghostty:
+        c, g = loom["rss_kb"] / 1024, ghostty["rss_kb"] / 1024
         print(f"  {'RSS (MB)':<28} {c:>12.1f}   {g:>12.1f}")
-    if "mem_total_kb" in ciri and "mem_total_kb" in ghostty:
-        c, g = ciri["mem_total_kb"] / 1024, ghostty["mem_total_kb"] / 1024
+    if "mem_total_kb" in loom and "mem_total_kb" in ghostty:
+        c, g = loom["mem_total_kb"] / 1024, ghostty["mem_total_kb"] / 1024
         print(f"  {'RSS+Swap (MB)':<28} {c:>12.1f}   {g:>12.1f}")
 
     print("=" * 72)

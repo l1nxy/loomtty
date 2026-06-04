@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run vtebench (Alacritty's standard terminal benchmark) inside the current
-# terminal. Must be invoked from a ciritty (or comparison) window — it writes
+# terminal. Must be invoked from a loomtty (or comparison) window — it writes
 # benchmark data to stdout and measures wall-clock to consume it.
 #
 # Usage:

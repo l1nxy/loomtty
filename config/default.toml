@@ -1,5 +1,5 @@
-# Ciri default configuration
-# Copy to ~/.config/ciri/config.toml and customize for ciritty.
+# Loom default configuration
+# Copy to ~/.config/loom/config.toml and customize for loomtty.
 
 [font]
 family = "Google Sans Code NF"
@@ -57,7 +57,7 @@ focus_transition_speed = 15.0
 [window]
 width = 1024.0
 height = 768.0
-title = "ciritty"
+title = "loomtty"
 
 [terminal]
 default_cols = 80
@@ -96,9 +96,9 @@ backend = "auto"
 alpha_blending = "linear-corrected"
 
 [theme]
-# Available presets: "ciri_dark", "one_dark", "one_half_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark", "ghostty"
+# Available presets: "loom_dark", "one_dark", "one_half_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark", "ghostty"
 # Set preset, then override individual colors below if needed.
-preset = "ciri_dark"
+preset = "loom_dark"
 
 [keys]
 leader = "ctrl+w"
@@ -207,7 +207,7 @@ n = "dismiss_paste_confirm"
 # Browser-facing web gateway. Disabled by default. When enabled, the
 # daemon serves the browser terminal SPA over plain HTTP and upgrades
 # `/ws` to the binary protocol — both on `port`, alongside the existing
-# Unix/TCP listeners. The easiest way to turn this on is `ciritty web`,
+# Unix/TCP listeners. The easiest way to turn this on is `loomtty web`,
 # which enables it, mints a token, prints the URL, and runs the server.
 # The gateway speaks plain http:// + ws:// — terminate TLS upstream
 # (caddy/nginx) or use a tunnel if you point `bind` at a non-loopback
@@ -238,7 +238,7 @@ token = ""
 # or the literal "null" for file:// / sandboxed origins.
 allowed_origins = []
 # Directory the SPA is served from. Empty = `<server-exe-dir>/web` (next
-# to the ciritty-server binary). Populate it with a built web bundle:
+# to the loomtty-server binary). Populate it with a built web bundle:
 # `node web/scripts/install-assets.mjs`. These files are served WITHOUT
 # the token (only `/ws` is authenticated), so put ONLY the public web
 # bundle here — never secrets.

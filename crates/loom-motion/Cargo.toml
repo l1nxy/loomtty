@@ -1,0 +1,8 @@
+[package]
+name = "loom-motion"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+loom-anim = { workspace = true }
+log = { workspace = true }

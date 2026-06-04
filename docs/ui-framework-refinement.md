@@ -1,9 +1,9 @@
 # UI Framework Refinement Plan
 
-This document records the audit of the `ciri` bin crate and `ciri-ui` library
+This document records the audit of the `loom` bin crate and `loom-ui` library
 performed against GPUI as a reference, and lays out the refactor sequence.
 
-Sources are cited as `path/to/file.rs:LINE` for ciri (this repo) and
+Sources are cited as `path/to/file.rs:LINE` for loom (this repo) and
 `zed/crates/gpui/src/file.rs:LINE` for GPUI (cloned at `/home/linxy/repo/zed/`).
 This is not aspirational — every claim was checked at least once.
 
@@ -11,7 +11,7 @@ This is not aspirational — every claim was checked at least once.
 
 `docs/ui-layer-plan.md` covers the migration from hand-written hit rectangles
 to a single Taffy + LayoutSnapshot pass. That migration is done — chrome,
-modals, and tab bars all build `ciri-ui` element trees and dispatch through
+modals, and tab bars all build `loom-ui` element trees and dispatch through
 `ui_hit_id`. This document picks up *after* that work and is concerned with
 the framework's structural shape, not the painting pipeline integration.
 
@@ -22,7 +22,7 @@ the framework's structural shape, not the painting pipeline integration.
 ### 1.1 What turned out to be **fine** (corrected from the initial impression)
 
 - The `app/X.rs` ↔ `app/ui/X.rs` parallel files are not "mechanical MVC".
-  Model state lives in `ciri-app::AppModel`, the view in `app/ui/X`, and the
+  Model state lives in `loom-app::AppModel`, the view in `app/ui/X`, and the
   bin-crate `app/X` carries IO-bearing side effects (clipboard, network,
   `self.send`). The split is clean. Verified for palette, context_menu,
   paste_dialog.
@@ -30,7 +30,7 @@ the framework's structural shape, not the painting pipeline integration.
   is intentional: a coarse hit zone tree separate from the visual tree gives
   click-friendlier UX. Not duplicate work.
 - Render-cache invalidation is centralized at
-  `crates/ciri/src/app/mod.rs:1274` (`invalidate_pane_cache`) and `:1280`
+  `crates/loom/src/app/mod.rs:1274` (`invalidate_pane_cache`) and `:1280`
   (`clear_render_caches`). All call sites use the helpers.
 - `app/ui/top_bar/` (mode/session_label/workspace/pane_tabs/mod) and
   `app/key_encode/` (kitty/legacy/mod) are textbook decomposition.
@@ -61,7 +61,7 @@ the framework's structural shape, not the painting pipeline integration.
 ### 1.3 Allocation profile (verified)
 
 The render path itself uses pooled buffers correctly: `RenderBuffers`
-(`crates/ciri/src/app/mod.rs:88`) is taken/refilled/put-back via `mem::take`
+(`crates/loom/src/app/mod.rs:88`) is taken/refilled/put-back via `mem::take`
 preserving capacity (`app/render.rs:2227-2234, 2417-2423`). Idle frames hit
 `last_render_snapshot` early-return and allocate nothing.
 
@@ -79,7 +79,7 @@ painting path:
    (`SharedString` newtype over `SmolStr` with `new_static` const ctor).
 5. ~~`cached_ui_scene.sdf_rects.clone()` per frame~~ — fixed in 0f.
 6. ~~`taffy::Style` rebuilt per node per frame~~ — investigated in
-   Step 36 with `crates/ciri-ui/benches/chrome_paint.rs`. The full
+   Step 36 with `crates/loom-ui/benches/chrome_paint.rs`. The full
    `taffy_style()` translation across a 30-row palette tree costs
    **3.6 µs**, against **80 µs** for the entire `paint_tree_into_retained`
    pass — about 4.5% of paint time. With element trees rebuilt every
@@ -96,18 +96,18 @@ shipping on its own.
 
 ---
 
-## 2. ciri-ui vs GPUI: structural gap
+## 2. loom-ui vs GPUI: structural gap
 
-ciri-ui has the right skeleton — `Element` trait, Taffy-driven layout, a
+loom-ui has the right skeleton — `Element` trait, Taffy-driven layout, a
 `Scene` IR, `Layer` z-ordering, a Tailwind-shaped builder — but the
 ergonomics and the state model are missing critical pieces. The gap is
-not "ciri-ui is bad", it is "ciri-ui is the 30% of GPUI that is enough
+not "loom-ui is bad", it is "loom-ui is the 30% of GPUI that is enough
 to draw chrome and not yet enough to host stateful interactive widgets
 without leaking state into `AppModel`".
 
 ### 2.1 Trait surface
 
-| Concern | GPUI | ciri-ui |
+| Concern | GPUI | loom-ui |
 |---|---|---|
 | Low-level renderable | `Element` w/ `request_layout`/`prepaint`/`paint` + `RequestLayoutState`/`PrepaintState` (`element.rs:51-104`) | `Element::paint` only (`element.rs:225`) |
 | Auto-coercion to element | `IntoElement` (`element.rs:113`); `impl Element for &'static str / SharedString / String → SharedString` (`elements/text.rs:21,79,95`) | none — children must be `impl Element` |
@@ -122,7 +122,7 @@ producing a per-frame snapshot where GPUI puts the same fields on a
 
 ### 2.2 Style + state
 
-| Concern | GPUI | ciri-ui |
+| Concern | GPUI | loom-ui |
 |---|---|---|
 | Sparse override type | `#[derive(Refineable)]` auto-generates `StyleRefinement` (`refineable/src/refineable.rs:30`); `Style::refine(&StyleRefinement)` overlays only set fields | `Style` itself is all-`Option<T>` and serves both roles ambiguously (`style.rs:109`) |
 | Conditional state styles | `.hover(\|s\| s.bg(...))` / `.active(...)` / `.focus(...)` / `.in_focus(...)` / `.focus_visible(...)` produce a `StyleRefinement`, applied at paint when state matches (`elements/div.rs:752, 1148, 1158, 1229, 2799`) | `on_hover(\|over\| ...)` callback only (`style.rs:99`); caller must store hover bool and rebuild |
@@ -134,18 +134,18 @@ The hover-via-callback model is why `palette.hovered_idx`, `top_bar.hovered_tab`
 
 ### 2.3 Identity + persistent state
 
-| Concern | GPUI | ciri-ui |
+| Concern | GPUI | loom-ui |
 |---|---|---|
 | Per-element identity | `GlobalElementId(Arc<[ElementId]>)`, path-stack maintained by walker (`window.rs:2266-2269`) | `ElementId(u64)`, flat (`element.rs:21`) |
 | Cross-frame state map | `element_states: HashMap<(GlobalElementId, TypeId), ElementStateBox>` (`window.rs:777`); `Frame::finish` migrates accessed entries from `prev_frame` to `next_frame`, drops the rest (`window.rs:917-924`) — auto GC | none |
 | Frame lifecycle | `next_frame` / `rendered_frame` swap (`window.rs:2495`); element tree allocates into per-window arena, cleared at frame end | `cached_ui_scene` keyed by global hash; full chrome rebuild on any state change |
 
-Ciri's `App.cached_*` HashMaps and per-widget hover state are filling
+Loom's `App.cached_*` HashMaps and per-widget hover state are filling
 the gap that `element_states` would fill.
 
 ### 2.4 Element library
 
-| Need | GPUI | ciri-ui |
+| Need | GPUI | loom-ui |
 |---|---|---|
 | Fixed-height virtual list | `uniform_list(id, count, render_range)` (`elements/uniform_list.rs:24`) | manual: palette only renders visible rows but allocates all entries |
 | Variable-height virtual list | `list(state)` with intrusive `ListState` (`elements/list.rs`) | none |
@@ -157,14 +157,14 @@ the gap that `element_states` would fill.
 
 ### 2.5 Hitboxes + focus + key dispatch
 
-| Concern | GPUI | ciri-ui |
+| Concern | GPUI | loom-ui |
 |---|---|---|
 | Hitbox registration | `Window::insert_hitbox(bounds, behavior)` during prepaint (`window.rs:3945`); `Hitbox::is_hovered(window)` queryable in paint | external `hit_test(&self, x, y, bounds)` re-walks the tree |
 | Occlusion | `HitboxBehavior::BlockMouse` / `.occlude_mouse()` / `.block_mouse_except_scroll()` (`elements/div.rs:651, 665`) | none — manual `HIT_PANEL` / `HIT_CLOSE` ID convention per widget |
 | Focus | `FocusHandle`, `.track_focus(handle)` (`elements/div.rs:696`); `is_focused`/`within_focused` | none |
-| Key dispatch | `DispatchTree` (`key_dispatch.rs:71`), per-node `KeyContext`, `Action` registry, `.on_action::<T>(\|e, win, cx\| ...)` | global `BindingMode` switch on `command_palette.is_some()` etc. (`crates/ciri/src/app/keyboard.rs:301`) |
+| Key dispatch | `DispatchTree` (`key_dispatch.rs:71`), per-node `KeyContext`, `Action` registry, `.on_action::<T>(\|e, win, cx\| ...)` | global `BindingMode` switch on `command_palette.is_some()` etc. (`crates/loom/src/app/keyboard.rs:301`) |
 
-Ciri's modal binding-mode switch is fine for the current modal set
+Loom's modal binding-mode switch is fine for the current modal set
 (palette / search / overview / paste-confirm). It will not scale to
 in-pane focusable widgets (think: multi-cursor, inline rename) without
 turning into a chain of `if`s.
@@ -182,7 +182,7 @@ respected.
 These are bugfixes / small refactors found during the audit. None
 require any framework change.
 
-- **0a.** [DONE] Use the retained TaffyTree variant. ciri-ui already has
+- **0a.** [DONE] Use the retained TaffyTree variant. loom-ui already has
   `paint_tree_into_with` (`layout.rs:194`); promoted internal
   `paint_tree_into_with_snapshot` to public `paint_tree_into_retained`
   for the hit-test path. Adapter holds `RefCell<TaffyTree<NodeContext>>`
@@ -190,7 +190,7 @@ require any framework change.
 - **0b.** [DONE] Dedupe `tile_paint_config`. `build_tiles` now calls
   `self.tile_paint_config()`; the duplicated 18-line literal is gone.
 - **0c.** [DONE] `SectionHeader` skip lives on
-  `CommandPaletteState::move_selection(delta, wrap)` in ciri-app.
+  `CommandPaletteState::move_selection(delta, wrap)` in loom-app.
   Keyboard nav passes `wrap=true`, mouse-wheel passes `wrap=false`.
   Three duplicated loops collapsed.
 - **0d.** [DONE] Per-pane image-atlas eviction split into its own
@@ -255,14 +255,14 @@ per palette hit-test call.
 
 Shipped:
 
-- `SharedString` newtype over `SmolStr` (`crates/ciri-ui/src/shared_string.rs`).
+- `SharedString` newtype over `SmolStr` (`crates/loom-ui/src/shared_string.rs`).
   Inlines short strings (≤22 bytes), `Arc<str>`-shares longer ones.
   `new_static(&'static str)` is `const` for zero-alloc literals.
 - `Text::content` and `NodeContext::Text { content }` switched from
   `String` to `SharedString`. The per-frame `taffy_context()` clone is
   no longer a `String::clone()` — it is now a SmolStr ref-count bump
   (or stack memcpy for inline strings).
-- `IntoElement` trait in `ciri-ui::element`. Identity impls for `Div`
+- `IntoElement` trait in `loom-ui::element`. Identity impls for `Div`
   and `Text`. String coercions: `&str`, `String`, `SharedString` all
   convert to `Text`.
 - `Div::child(impl IntoElement)` replaces `Div::child<E: Element>`.
@@ -270,7 +270,7 @@ Shipped:
 
 Diverged from the original sketch:
 
-- `impl Element for &'static str` was not added. ciri-ui's `Element`
+- `impl Element for &'static str` was not added. loom-ui's `Element`
   trait carries fields specific to chrome text (color override, font
   size override, layer-aware paint inheritance) that don't make sense
   on a bare `&'static str`. Going through `Text` keeps the trait small
@@ -436,7 +436,7 @@ can live on `ElementStates` per Phase 4 or on a parent struct). The
 helper builds the `Div` column with the right height for the visible
 slice and invokes the `render` closure exactly once.
 
-Skipped GPUI's full Element-based `uniform_list` because ciri's
+Skipped GPUI's full Element-based `uniform_list` because loom's
 chrome already pre-computes visible row data during model rebuild
 (palette filtering is the prime example). A pure helper drops in to
 that flow without forcing a prepaint integration.
@@ -447,7 +447,7 @@ on Phase 4's `ElementStates` and a real `prepaint` phase.
 
 ### Phase 7 — arena element allocator  [DONE]
 
-Shipped in `crates/ciri-ui/src/arena.rs`. Chunked bump allocator
+Shipped in `crates/loom-ui/src/arena.rs`. Chunked bump allocator
 (`Arena` / `ArenaBox`) ported from GPUI; `AnyElement` is now
 `ArenaBox<dyn Element>` and constructed via the active arena published
 by an `ElementArenaScope` RAII guard. `App` owns one `RefCell<Arena>`
@@ -485,7 +485,7 @@ Shipped in four steps (29 → 32):
   (panel/underline/cursor) each got their own `deferred()`; the
   stable sort with equal priority preserves capture order.
 - **Step 32.** Retired the `Layer` enum:
-  - `ciri_ui::Layer` removed; `Element::layer()`,
+  - `loom_ui::Layer` removed; `Element::layer()`,
     `PaintCtx::layer`, `Div::in_layer()` / `Div::layer_override`
     deleted along with the walker's `inherited_layer` thread.
   - `Scene` now stores three flat ordered streams (`Vec<SdfRect>`,
@@ -502,7 +502,7 @@ non-deferred elements; deferred subtrees drain in ascending priority
 after the main walk. Cross-widget ordering remains determined by the
 host's `UiFrame::paint` call sequence, same as before.
 
-What was *not* ported: `anchored`. ciri's chrome popovers
+What was *not* ported: `anchored`. loom's chrome popovers
 (context_menu, palette, paste_dialog) all position themselves
 absolutely from already-clamped `(x, y)` coordinates computed at
 capture time, which doesn't need the smart edge-flipping `anchored`
@@ -514,12 +514,12 @@ capture time is enough.
 ### AppModel UI-ephemera cleanup pass  [DONE]
 
 A separate sweep through `AppModel` (the platform-agnostic core in
-`ciri-app`) removed every UI-only field that had crept into the
+`loom-app`) removed every UI-only field that had crept into the
 model layer. The motivating observation: `AppModel` was carrying
 hover indices, drag bookkeeping, gesture accumulators, frame
 timestamps, scroll offsets, and cursor blink state — none of which
 have any meaning outside the bin-crate UI shell. They were all
-read and written exclusively by `crates/ciri/src/app/`.
+read and written exclusively by `crates/loom/src/app/`.
 
 Two relocation patterns:
 
@@ -570,7 +570,7 @@ model state (config, workspaces, pane grids, selection, paste
 content, connection state, search state, multi-click counters that
 feed selection mode, link hover that feeds URL-open). The
 last-mile candidates (`last_left_click`, `hovered_link`,
-`workspace_last_pane_ids`) all have `ciri-app` consumers that read
+`workspace_last_pane_ids`) all have `loom-app` consumers that read
 them, so they stay on the model.
 
 ### Top-bar sub-widgets — declarative hover  [DONE]
@@ -600,13 +600,13 @@ them.
 
 ### Out of scope (explicit non-goals)
 
-- **GPUI's `Action` + `KeyContext` system** in full. Ciri already has
-  `ciri-input::action::Action` + leader/key_table; the modal
+- **GPUI's `Action` + `KeyContext` system** in full. Loom already has
+  `loom-input::action::Action` + leader/key_table; the modal
   `BindingMode` works. Adopting `FocusHandle` + `track_focus` is
   enough for the hypothetical future where chrome widgets need their
   own keys.
 - **`list.rs` (variable-height virtualization)**. 2060 lines, complex
-  intrusive state model. ciri's lists are uniform-height. `uniform_list`
+  intrusive state model. loom's lists are uniform-height. `uniform_list`
   alone is sufficient.
 - **`image_cache` / `Asset` framework**. Chrome doesn't load remote
   assets.
@@ -625,15 +625,15 @@ hotspot per frame.
 
 Plan:
 
-1. In `crates/ciri-ui/src/layout.rs`, add a public function that takes
+1. In `crates/loom-ui/src/layout.rs`, add a public function that takes
    both an external `TaffyTree<NodeContext>` and writes into an external
    `LayoutSnapshot`. Internal `paint_tree_into_with_snapshot` already
    does this — promote it or wrap it.
-2. In `crates/ciri/src/app/ciri_ui_adapter.rs`, hold a
+2. In `crates/loom/src/app/loom_ui_adapter.rs`, hold a
    `RefCell<TaffyTree<NodeContext>>` (placed on `App` or a new
    `UiResources` struct). Have `paint_element_tree` borrow it and call
    `paint_tree_into_with` (the no-snapshot variant).
-3. In `crates/ciri/src/app/ui/types.rs`, change `ui_hit_id` and
+3. In `crates/loom/src/app/ui/types.rs`, change `ui_hit_id` and
    `ui_hit_bounds` to use the new with-tree-and-snapshot variant,
    borrowing the same `TaffyTree`.
 4. Verify with the existing `app/ui/palette.rs:417, 471` tests and

@@ -1,0 +1,35 @@
+{
+  "name": "@loom/app",
+  "version": "0.1.0",
+  "description": "Browser app for loomtty: orchestrates @loom/client + @loom/dom into a workspace/column/tile layout with keyboard, mouse, and resize wiring.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./chrome.css": "./src/chrome.css"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@loom/client": "*",
+    "@loom/codec": "*",
+    "@loom/dom": "*"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

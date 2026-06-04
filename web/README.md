@@ -1,21 +1,21 @@
-# ciri-web — browser client for ciritty
+# loom-web — browser client for loomtty
 
 Packages:
 
 | package         | role                                                            |
 | --------------- | --------------------------------------------------------------- |
-| `@ciri/codec`   | ciri-protocol frame encode/decode, shared with the Rust client. |
-| `@ciri/client`  | WebSocket transport + typed message dispatch.                   |
-| `@ciri/dom`     | Pane grid model + DOM renderer (rows, SGR runs, cursor, …).     |
-| `@ciri/app`     | Orchestrator: layout, keyboard, mouse, IME, clipboard, resize.  |
-| `@ciri/web`     | **Production** SPA: same-origin connect + token login screen.    |
-| `@ciri/bridge`  | Dev-time WebSocket ↔ TCP bridge to ciri-server.                 |
-| `@ciri/demo`    | Dev-time HTML + vite page that mounts `CiriApp`.                |
+| `@loom/codec`   | loom-protocol frame encode/decode, shared with the Rust client. |
+| `@loom/client`  | WebSocket transport + typed message dispatch.                   |
+| `@loom/dom`     | Pane grid model + DOM renderer (rows, SGR runs, cursor, …).     |
+| `@loom/app`     | Orchestrator: layout, keyboard, mouse, IME, clipboard, resize.  |
+| `@loom/web`     | **Production** SPA: same-origin connect + token login screen.    |
+| `@loom/bridge`  | Dev-time WebSocket ↔ TCP bridge to loom-server.                 |
+| `@loom/demo`    | Dev-time HTML + vite page that mounts `LoomApp`.                |
 
-## Production: serve the web UI from ciri-server
+## Production: serve the web UI from loom-server
 
-In production there is **no bridge and no separate web host**. `ciri-server`
-itself serves the built `@ciri/web` SPA over plain HTTP and upgrades `/ws`
+In production there is **no bridge and no separate web host**. `loom-server`
+itself serves the built `@loom/web` SPA over plain HTTP and upgrades `/ws`
 to the binary protocol — both on the one `[web]` port. The browser connects
 same-origin and authenticates through a token login screen (the token lives
 in `sessionStorage`, never in the URL).
@@ -29,17 +29,17 @@ node scripts/install-assets.mjs        # → <repo>/target/debug/web
 # release build: node scripts/install-assets.mjs path/to/target/release/web
 ```
 
-`ciri-server` serves `web.static_dir` (empty → `<server-exe-dir>/web`). The
-install script builds `@ciri/web` and copies the bundle there.
+`loom-server` serves `web.static_dir` (empty → `<server-exe-dir>/web`). The
+install script builds `@loom/web` and copies the bundle there.
 
 **Run it:**
 
 ```bash
-ciritty web                 # enables [web], mints+saves a token, prints the
+loomtty web                 # enables [web], mints+saves a token, prints the
                             # URL, runs the server in the foreground
 ```
 
-`ciritty web` prints something like:
+`loomtty web` prints something like:
 
 ```
     URL:    http://127.0.0.1:7891/
@@ -48,7 +48,7 @@ ciritty web                 # enables [web], mints+saves a token, prints the
 
 Open the URL, paste the token, and you're in. Flags: `--port`, `--bind`,
 `--token`, `--static-dir`, `--open`. The token is saved to your config, so
-the desktop app and later `ciritty web` runs share it.
+the desktop app and later `loomtty web` runs share it.
 
 Equivalent manual path (the server reads `[web]` from your config):
 
@@ -61,7 +61,7 @@ token = "…32+ hex chars…"   # openssl rand -hex 16
 ```
 
 ```bash
-ciritty-server --headless          # or just run the desktop app
+loomtty-server --headless          # or just run the desktop app
 ```
 
 **Exposing beyond loopback.** The gateway speaks plain `http://` + `ws://`.
@@ -73,14 +73,14 @@ token-gated), so keep `static_dir` to the web bundle alone — no secrets.
 ## Development (demo + bridge)
 
 The rest of this file describes the **dev-only** demo, which talks to
-`ciri-server` through the `@ciri/bridge` WebSocket↔TCP shim instead of the
+`loom-server` through the `@loom/bridge` WebSocket↔TCP shim instead of the
 production gateway. It has no auth and no TLS — never expose it.
 
 Three pieces have to be up at the same time:
 
-1. **`ciri-server`** — your normal ciritty backend, configured to expose its TCP listener.
+1. **`loom-server`** — your normal loomtty backend, configured to expose its TCP listener.
 
-   Add to your config (`~/.config/ciritty/config.toml` on Linux/macOS, `%APPDATA%\ciritty\config.toml` on Windows):
+   Add to your config (`~/.config/loomtty/config.toml` on Linux/macOS, `%APPDATA%\loomtty\config.toml` on Windows):
 
    ```toml
    [remote]
@@ -88,13 +88,13 @@ Three pieces have to be up at the same time:
    port = 7899     # see port note below
    ```
 
-   Start `ciri-server` as you normally would. The log line `ciritty-server TCP listener on 127.0.0.1:7899 (remote enabled)` confirms it's listening.
+   Start `loom-server` as you normally would. The log line `loomtty-server TCP listener on 127.0.0.1:7899 (remote enabled)` confirms it's listening.
 
-   > **Port note.** `ciri-server`'s schema-level default is **7890**, but on Windows that collides with Clash / Clash Verge / clash-meta, which claim 7890 for their mixed proxy and silently swallow any non-HTTP bytes (the connection establishes but the server never sees them, so the browser sits at "connecting…" forever). The dev bridge therefore defaults to **7899** — pick the same number in your `[remote] port` (or pass `--tcp-port` to `npm run dev:bridge`).
+   > **Port note.** `loom-server`'s schema-level default is **7890**, but on Windows that collides with Clash / Clash Verge / clash-meta, which claim 7890 for their mixed proxy and silently swallow any non-HTTP bytes (the connection establishes but the server never sees them, so the browser sits at "connecting…" forever). The dev bridge therefore defaults to **7899** — pick the same number in your `[remote] port` (or pass `--tcp-port` to `npm run dev:bridge`).
 
-2. **`@ciri/bridge`** — WebSocket gateway. The browser can't speak raw TCP, so this script forwards `ws://localhost:8090` to `tcp://127.0.0.1:7899`. Forwards bytes unmodified in both directions; in dev it also peeks at the first inbound message and logs the decoded `ClientHello` (session name + viewport + cell metrics) to make handshake mismatches easy to spot.
+2. **`@loom/bridge`** — WebSocket gateway. The browser can't speak raw TCP, so this script forwards `ws://localhost:8090` to `tcp://127.0.0.1:7899`. Forwards bytes unmodified in both directions; in dev it also peeks at the first inbound message and logs the decoded `ClientHello` (session name + viewport + cell metrics) to make handshake mismatches easy to spot.
 
-3. **`@ciri/demo`** — vite dev server. Hosts `index.html` + `src/main.ts` at `http://localhost:5173`.
+3. **`@loom/demo`** — vite dev server. Hosts `index.html` + `src/main.ts` at `http://localhost:5173`.
 
 One command starts (2) and (3) together (after a prebuild of the libraries):
 
@@ -113,7 +113,7 @@ The demo page accepts a few `?key=value` overrides:
 | param   | default                  | purpose                                |
 | ------- | ------------------------ | -------------------------------------- |
 | `ws`    | `ws://localhost:8090`    | Override the bridge URL.               |
-| `session` | *(auto-attach)*        | Session name to attach to. When omitted, the client sends the `__auto__` sentinel and the server attaches to the most-recently-used session (or creates a fresh one) — same as bare `ciritty`. The resolved name is then written back into the URL (`history.replaceState`) so a reload/share reattaches to that exact session. |
+| `session` | *(auto-attach)*        | Session name to attach to. When omitted, the client sends the `__auto__` sentinel and the server attaches to the most-recently-used session (or creates a fresh one) — same as bare `loomtty`. The resolved name is then written back into the URL (`history.replaceState`) so a reload/share reattaches to that exact session. |
 | `token` | (none)                   | Auth token forwarded to the transport. |
 
 Example: `http://localhost:5173/?session=work&ws=ws://192.168.1.10:8090`.
@@ -128,12 +128,12 @@ Example: `http://localhost:5173/?session=work&ws=ws://192.168.1.10:8090`.
 
 ### Troubleshooting
 
-- **Status stuck on "connecting"**: the bridge or ciri-server isn't up. Check the bridge log for `tcp connected` lines; if you see `tcp error: ECONNREFUSED`, ciri-server isn't listening on the configured TCP port.
-- **Status flips to "connected" but the pane stays blank, no echo, no output**: bridge is forwarding to *something*, but it isn't ciri-server. On Windows this is almost always Clash on port 7890 — confirm with `netstat -ano | findstr 7890` and `Get-Process -Id <pid>`. Move `ciri-server`'s `[remote] port` (and the bridge's `--tcp-port`) off any port a proxy owns.
-- **`ciri-server` log says "remote disabled"**: the config change didn't take effect. Confirm the config path it loaded (usually printed near the top of its log) and re-check `[remote] enabled = true`.
-- **Mismatched cell metrics on first paint**: the page re-measures once the web font finishes loading; if it doesn't settle, force a `Resize` via `window.__ciri.remeasureCells()` from the devtools console.
-- **No bytes go anywhere**: open the devtools console — the demo exposes the live app as `window.__ciri`. `__ciri.paneCount` should be ≥1 after the first `FullPaneSync`.
+- **Status stuck on "connecting"**: the bridge or loom-server isn't up. Check the bridge log for `tcp connected` lines; if you see `tcp error: ECONNREFUSED`, loom-server isn't listening on the configured TCP port.
+- **Status flips to "connected" but the pane stays blank, no echo, no output**: bridge is forwarding to *something*, but it isn't loom-server. On Windows this is almost always Clash on port 7890 — confirm with `netstat -ano | findstr 7890` and `Get-Process -Id <pid>`. Move `loom-server`'s `[remote] port` (and the bridge's `--tcp-port`) off any port a proxy owns.
+- **`loom-server` log says "remote disabled"**: the config change didn't take effect. Confirm the config path it loaded (usually printed near the top of its log) and re-check `[remote] enabled = true`.
+- **Mismatched cell metrics on first paint**: the page re-measures once the web font finishes loading; if it doesn't settle, force a `Resize` via `window.__loom.remeasureCells()` from the devtools console.
+- **No bytes go anywhere**: open the devtools console — the demo exposes the live app as `window.__loom`. `__loom.paneCount` should be ≥1 after the first `FullPaneSync`.
 
 ### Security note
 
-The bridge has **no authentication** and the demo page has **no transport encryption**. Both bind to `127.0.0.1` by default. Don't expose either to a network you don't trust. Production deployments should put `wss://` + auth in front of `ciri-server`'s TCP listener via a real reverse proxy — that's out of scope for this dev tooling.
+The bridge has **no authentication** and the demo page has **no transport encryption**. Both bind to `127.0.0.1` by default. Don't expose either to a network you don't trust. Production deployments should put `wss://` + auth in front of `loom-server`'s TCP listener via a real reverse proxy — that's out of scope for this dev tooling.

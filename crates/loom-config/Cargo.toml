@@ -1,0 +1,13 @@
+[package]
+name = "loom-config"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+toml = { workspace = true }
+toml_edit = "0.22"
+dirs = { workspace = true }
+log = { workspace = true }
+anyhow = { workspace = true }
+garde = { version = "0.22.1", features = ["derive"] }

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.github.l1nxy.loom</id>
+  <launchable type="desktop-id">com.github.l1nxy.loom.desktop</launchable>
+  <name>Loom</name>
+  <url type="homepage">https://github.com/l1nxy/loomtty</url>
+  <url type="bugtracker">https://github.com/l1nxy/loomtty/issues</url>
+  <url type="vcs-browser">https://github.com/l1nxy/loomtty</url>
+  <summary>GPU-accelerated terminal multiplexer</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <content_rating type="oars-1.1" />
+  <developer id="com.github.l1nxy">
+    <name>l1nxy</name>
+  </developer>
+  <description>
+    <p>
+      Loom is a GPU-accelerated terminal multiplexer written in Rust.
+      It combines the session management of tmux/zellij with modern
+      GPU rendering (Vulkan/Metal/OpenGL), Kitty keyboard protocol,
+      Sixel and Kitty graphics, and shell integration.
+    </p>
+  </description>
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </recommends>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+</component>

@@ -17,7 +17,7 @@ find_terminal_pid() {
         pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
         local comm=$(ps -o comm= -p "$pid" 2>/dev/null || echo "")
         case "$comm" in
-            ciritty|ciritty-server|ghostty|alacritty|kitty|wezterm*|foot)
+            loomtty|loomtty-server|ghostty|alacritty|kitty|wezterm*|foot)
                 echo "$pid"
                 return
                 ;;

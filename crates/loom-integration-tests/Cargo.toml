@@ -1,0 +1,16 @@
+[package]
+name = "loom-integration-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Cross-crate integration tests only.
+# Per-crate tests live in each crate's own dev-dependencies.
+
+[dev-dependencies]
+loom-protocol = { path = "../loom-protocol" }
+loom-session = { path = "../loom-session" }
+
+tokio = { workspace = true }
+tempfile = "3"

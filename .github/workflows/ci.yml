@@ -88,8 +88,8 @@ jobs:
 
   # ── Web (TypeScript) ───────────────────────────────
   # Catches drift between the Rust wire codec and the TS packages: re-
-  # runs the Rust → TS code-gen (@ciri/codec constants/fixtures plus
-  # @ciri/client schema/types/fixtures derived via serde-reflection),
+  # runs the Rust → TS code-gen (@loom/codec constants/fixtures plus
+  # @loom/client schema/types/fixtures derived via serde-reflection),
   # fails if the committed copies disagree, then runs the full vitest
   # suite (codec round-trips, hello bytes, message codec, transport,
   # client lifecycle).
@@ -118,13 +118,13 @@ jobs:
         # source and must not trigger drift.
         run: |
           git -C . diff --exit-code -- \
-            web/packages/ciri-codec/src/constants.ts \
-            web/packages/ciri-codec/src/__fixtures__/sm.json \
-            web/packages/ciri-codec/src/__fixtures__/lz4.json \
-            web/packages/ciri-codec/src/__generated__/frame-fixtures.ts \
-            web/packages/ciri-client/src/__generated__/schema.ts \
-            web/packages/ciri-client/src/__generated__/types.ts \
-            web/packages/ciri-client/src/__generated__/fixtures.ts
+            web/packages/loom-codec/src/constants.ts \
+            web/packages/loom-codec/src/__fixtures__/sm.json \
+            web/packages/loom-codec/src/__fixtures__/lz4.json \
+            web/packages/loom-codec/src/__generated__/frame-fixtures.ts \
+            web/packages/loom-client/src/__generated__/schema.ts \
+            web/packages/loom-client/src/__generated__/types.ts \
+            web/packages/loom-client/src/__generated__/fixtures.ts
 
       - name: Install + test
         working-directory: web
@@ -135,7 +135,7 @@ jobs:
         # script encodes that order, so we run it (and the root
         # `typecheck` / `test` aliases, which already invoke it) here
         # instead of hand-rolling a single-package build that misses
-        # `@ciri/client` and `@ciri/dom`.
+        # `@loom/client` and `@loom/dom`.
         run: |
           npm ci
           npm run typecheck

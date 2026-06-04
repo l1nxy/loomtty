@@ -1,8 +1,0 @@
-[package]
-name = "ciri-motion"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-ciri-anim = { workspace = true }
-log = { workspace = true }

@@ -10,14 +10,14 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..");
-const codecSrc = resolve(repoRoot, "web", "packages", "ciri-codec", "src");
+const codecSrc = resolve(repoRoot, "web", "packages", "loom-codec", "src");
 const fixturesDir = resolve(codecSrc, "__fixtures__");
 const codecGen = resolve(codecSrc, "__generated__");
 const clientGen = resolve(
   repoRoot,
   "web",
   "packages",
-  "ciri-client",
+  "loom-client",
   "src",
   "__generated__",
 );
@@ -72,7 +72,7 @@ const MAX_STDOUT = 64 * 1024 * 1024;
 for (const { example, args = [], out } of tasks) {
   const label = args.length > 0 ? `${example} ${args.join(" ")}` : example;
   process.stdout.write(`running cargo example: ${label} → ${out}\n`);
-  const cargoArgs = ["run", "--quiet", "-p", "ciri-protocol", "--example", example];
+  const cargoArgs = ["run", "--quiet", "-p", "loom-protocol", "--example", example];
   if (args.length > 0) {
     // `--` separates cargo's args from the example binary's args. Only
     // emit it when there are forwarded args; an empty trailing `--`

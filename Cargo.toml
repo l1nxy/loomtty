@@ -1,23 +1,23 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/ciri",
-    "crates/ciri-app",
-    "crates/ciri-server",
-    "crates/ciri-protocol",
-    "crates/ciri-layout",
-    "crates/ciri-anim",
-    "crates/ciri-motion",
-    "crates/ciri-ui",
-    "crates/ciri-render",
-    "crates/ciri-gpu",
-    "crates/ciri-term",
-    "crates/ciri-input",
-    "crates/ciri-config",
-    "crates/ciri-session",
-    "crates/ciri-procinfo",
-    "crates/ciri-plugin",
-    "crates/ciri-integration-tests",
+    "crates/loom",
+    "crates/loom-app",
+    "crates/loom-server",
+    "crates/loom-protocol",
+    "crates/loom-layout",
+    "crates/loom-anim",
+    "crates/loom-motion",
+    "crates/loom-ui",
+    "crates/loom-render",
+    "crates/loom-gpu",
+    "crates/loom-term",
+    "crates/loom-input",
+    "crates/loom-config",
+    "crates/loom-session",
+    "crates/loom-procinfo",
+    "crates/loom-plugin",
+    "crates/loom-integration-tests",
 ]
 
 [workspace.package]
@@ -27,20 +27,20 @@ license = "MIT"
 
 [workspace.dependencies]
 # Internal crates
-ciri-app = { path = "crates/ciri-app" }
-ciri-render = { path = "crates/ciri-render" }
-ciri-gpu = { path = "crates/ciri-gpu" }
-ciri-term = { path = "crates/ciri-term" }
-ciri-layout = { path = "crates/ciri-layout" }
-ciri-anim = { path = "crates/ciri-anim" }
-ciri-motion = { path = "crates/ciri-motion" }
-ciri-ui = { path = "crates/ciri-ui" }
-ciri-protocol = { path = "crates/ciri-protocol" }
-ciri-input = { path = "crates/ciri-input" }
-ciri-config = { path = "crates/ciri-config" }
-ciri-session = { path = "crates/ciri-session" }
-ciri-procinfo = { path = "crates/ciri-procinfo" }
-ciri-plugin = { path = "crates/ciri-plugin" }
+loom-app = { path = "crates/loom-app" }
+loom-render = { path = "crates/loom-render" }
+loom-gpu = { path = "crates/loom-gpu" }
+loom-term = { path = "crates/loom-term" }
+loom-layout = { path = "crates/loom-layout" }
+loom-anim = { path = "crates/loom-anim" }
+loom-motion = { path = "crates/loom-motion" }
+loom-ui = { path = "crates/loom-ui" }
+loom-protocol = { path = "crates/loom-protocol" }
+loom-input = { path = "crates/loom-input" }
+loom-config = { path = "crates/loom-config" }
+loom-session = { path = "crates/loom-session" }
+loom-procinfo = { path = "crates/loom-procinfo" }
+loom-plugin = { path = "crates/loom-plugin" }
 
 # External
 arboard = { version = "3", features = ["wayland-data-control"] }
@@ -76,7 +76,7 @@ freetype-rs = "0.36"
 nix = { version = "0.29", features = ["term", "process", "fs", "signal"] }
 libc = "0.2"
 notify-rust = "4"
-# TLS is intentionally NOT enabled here. The WS gateway in ciri-server
+# TLS is intentionally NOT enabled here. The WS gateway in loom-server
 # expects an upstream reverse proxy (caddy/nginx) to terminate TLS when
 # bind != loopback. Enabling `native-tls` or `rustls-tls-*` here would
 # add a server-side TLS code path that the gateway does not implement —
@@ -90,14 +90,14 @@ subtle = { version = "2", default-features = false }
 # `alloc` feature enables Zeroize for String/Vec.
 zeroize = { version = "1", default-features = false, features = ["alloc"] }
 
-# Patched forks (l1nxy/*, branch: ciri-patches)
+# Patched forks (l1nxy/*, branch: loom-patches)
 # winit: Windows 11 multi-monitor DPI fix + Wayland DnD (https://github.com/rust-windowing/winit/issues/4041)
-# alacritty_terminal: ciri terminal integration patches
+# alacritty_terminal: loom terminal integration patches
 # vte: additional ANSI escape sequence support
 [patch.crates-io]
-winit = { git = "https://github.com/l1nxy/winit.git", branch = "ciri-patches" }
-alacritty_terminal = { git = "https://github.com/l1nxy/alacritty.git", branch = "ciri-patches" }
-vte = { git = "https://github.com/l1nxy/vte.git", branch = "ciri-patches" }
+winit = { git = "https://github.com/l1nxy/winit.git", branch = "loom-patches" }
+alacritty_terminal = { git = "https://github.com/l1nxy/alacritty.git", branch = "loom-patches" }
+vte = { git = "https://github.com/l1nxy/vte.git", branch = "loom-patches" }
 
 # Optimize deps even in dev mode for usable performance
 [profile.dev.package."*"]

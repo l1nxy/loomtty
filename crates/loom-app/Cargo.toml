@@ -1,0 +1,15 @@
+[package]
+name = "loom-app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+loom-protocol = { path = "../loom-protocol" }
+loom-config = { path = "../loom-config" }
+loom-layout = { path = "../loom-layout" }
+loom-anim = { path = "../loom-anim" }
+loom-input = { path = "../loom-input" }
+crossbeam-channel = { workspace = true }
+unicode-width = "0.2"
+log = { workspace = true }
+serde = { workspace = true }

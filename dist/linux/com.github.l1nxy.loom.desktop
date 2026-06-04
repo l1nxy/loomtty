@@ -1,0 +1,17 @@
+[Desktop Entry]
+Version=1.0
+Name=Loom
+Type=Application
+Comment=GPU-accelerated terminal multiplexer
+TryExec=loom
+Exec=loom
+Icon=com.github.l1nxy.loom
+Categories=System;TerminalEmulator;
+Keywords=terminal;tty;pty;multiplexer;
+StartupNotify=true
+Terminal=false
+Actions=new-session;
+
+[Desktop Action new-session]
+Name=New Session
+Exec=loom new

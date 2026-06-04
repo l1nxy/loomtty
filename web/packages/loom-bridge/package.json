@@ -1,0 +1,21 @@
+{
+  "name": "@loom/bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dev-time WebSocket↔TCP bridge so the browser can talk to loom-server (which speaks loom-protocol over raw TCP / Unix socket / Named Pipe). Not for production use — no auth, no TLS.",
+  "type": "module",
+  "bin": {
+    "loom-bridge": "./src/index.mjs"
+  },
+  "scripts": {
+    "//start": "Pre-build @loom/codec + @loom/client before launching so the bridge's `decodeClientHello` import resolves on a fresh checkout (both packages' `dist/` is gitignored). The root `dev` script runs `prebuild-chain` earlier so this is a no-op in that path; the redundant build is cheap because tsc is fully incremental.",
+    "prestart": "npm -w @loom/codec run build && npm -w @loom/client run build",
+    "start": "node src/index.mjs",
+    "preprobe": "npm -w @loom/codec run build && npm -w @loom/client run build",
+    "probe": "node src/probe.mjs"
+  },
+  "dependencies": {
+    "@loom/client": "*",
+    "ws": "^8.18.0"
+  }
+}

@@ -1,8 +1,8 @@
 {
-  "name": "ciri-web",
+  "name": "loom-web",
   "private": true,
   "version": "0.1.0",
-  "description": "Browser-facing renderer + codec for ciritty",
+  "description": "Browser-facing renderer + codec for loomtty",
   "type": "module",
   "workspaces": [
     "packages/*"
@@ -10,19 +10,19 @@
   "scripts": {
     "gen": "node scripts/gen.mjs",
     "//order": "Inter-package imports resolve via `exports`/`types` that point at the gitignored `./dist/index.*` outputs. npm runs `-ws` scripts in path order, which does NOT match the dependency graph — without an explicit chain the downstream packages' tsc/vitest fail with TS2307 in a fresh checkout. Pre-build the chain: codec → client + dom → app.",
-    "prebuild-chain": "npm -w @ciri/codec run build && npm -w @ciri/client run build && npm -w @ciri/dom run build && npm -w @ciri/app run build",
+    "prebuild-chain": "npm -w @loom/codec run build && npm -w @loom/client run build && npm -w @loom/dom run build && npm -w @loom/app run build",
     "test": "npm run prebuild-chain && npm -ws --if-present run test",
     "build": "npm run prebuild-chain && npm -ws --if-present run build",
     "typecheck": "npm run prebuild-chain && npm -ws --if-present run typecheck",
     "lint": "npm -ws --if-present run lint",
-    "//dev": "Starts the dev bridge (ws ↔ ciri-server TCP), the vite demo server, AND a `tsc --watch` per upstream package so source edits in `@ciri/codec` / `client` / `dom` / `app` rebuild their `dist/` automatically; without those watchers, vite serves the stale dist forever — symptom is 'my code change is in source but the browser shows the old behavior' (every time). `prebuild-chain` runs once up front so the very first dev server start has fresh dist before vite resolves it. Requires `ciri-server` to be running separately with `[remote] enabled = true`. Bridge defaults to TCP 7899 (not ciri-server's protocol default 7890, which collides with Clash on Windows); set your ciri config's [remote] port to match or pass `--tcp-port` to dev:bridge. See README.md.",
+    "//dev": "Starts the dev bridge (ws ↔ loom-server TCP), the vite demo server, AND a `tsc --watch` per upstream package so source edits in `@loom/codec` / `client` / `dom` / `app` rebuild their `dist/` automatically; without those watchers, vite serves the stale dist forever — symptom is 'my code change is in source but the browser shows the old behavior' (every time). `prebuild-chain` runs once up front so the very first dev server start has fresh dist before vite resolves it. Requires `loom-server` to be running separately with `[remote] enabled = true`. Bridge defaults to TCP 7899 (not loom-server's protocol default 7890, which collides with Clash on Windows); set your loom config's [remote] port to match or pass `--tcp-port` to dev:bridge. See README.md.",
     "//dev:watch-flags": "`--preserveWatchOutput` keeps each watcher's banner around in the concurrent log instead of clearing it. `--pretty false` strips colors so concurrently's per-process prefix isn't mangled.",
-    "dev": "npm run prebuild-chain && concurrently --kill-others-on-fail --names codec,client,dom,app,bridge,demo --prefix-colors gray,cyan,magenta,yellow,blue,green \"npm -w @ciri/codec exec -- tsc -p tsconfig.json --watch --preserveWatchOutput --pretty false\" \"npm -w @ciri/client exec -- tsc -p tsconfig.json --watch --preserveWatchOutput --pretty false\" \"npm -w @ciri/dom exec -- tsc -p tsconfig.json --watch --preserveWatchOutput --pretty false\" \"npm -w @ciri/app exec -- tsc -p tsconfig.json --watch --preserveWatchOutput --pretty false\" \"npm -w @ciri/bridge run start\" \"npm -w @ciri/demo run dev\"",
-    "//dev:bridge": "Direct `node` (not nested `npm -w … run start`) so `npm run dev:bridge -- --tcp-port 7900` actually forwards the flag — npm consumes args after `--` for the directly-invoked script, but a wrapping `npm run start` swallows them as npm config instead of passing them on. Pre-builds the upstream packages first because bridge imports `decodeClientHello` from `@ciri/client`, which resolves through its gitignored `dist/`.",
-    "prebuild-bridge": "npm -w @ciri/codec run build && npm -w @ciri/client run build",
-    "dev:bridge": "npm run prebuild-bridge && node packages/ciri-bridge/src/index.mjs",
-    "dev:demo": "npm -w @ciri/demo run dev",
-    "//install-assets": "Build the production @ciri/web bundle and copy it into the directory ciri-server serves the SPA from (default `<repo>/target/debug/web`, the dev server's default static_dir). Pass a path for release/installed binaries. After this, `ciritty web` serves the UI.",
+    "dev": "npm run prebuild-chain && concurrently --kill-others-on-fail --names codec,client,dom,app,bridge,demo --prefix-colors gray,cyan,magenta,yellow,blue,green \"npm -w @loom/codec exec -- tsc -p tsconfig.json --watch --preserveWatchOutput --pretty false\" \"npm -w @loom/client exec -- tsc -p tsconfig.json --watch --preserveWatchOutput --pretty false\" \"npm -w @loom/dom exec -- tsc -p tsconfig.json --watch --preserveWatchOutput --pretty false\" \"npm -w @loom/app exec -- tsc -p tsconfig.json --watch --preserveWatchOutput --pretty false\" \"npm -w @loom/bridge run start\" \"npm -w @loom/demo run dev\"",
+    "//dev:bridge": "Direct `node` (not nested `npm -w … run start`) so `npm run dev:bridge -- --tcp-port 7900` actually forwards the flag — npm consumes args after `--` for the directly-invoked script, but a wrapping `npm run start` swallows them as npm config instead of passing them on. Pre-builds the upstream packages first because bridge imports `decodeClientHello` from `@loom/client`, which resolves through its gitignored `dist/`.",
+    "prebuild-bridge": "npm -w @loom/codec run build && npm -w @loom/client run build",
+    "dev:bridge": "npm run prebuild-bridge && node packages/loom-bridge/src/index.mjs",
+    "dev:demo": "npm -w @loom/demo run dev",
+    "//install-assets": "Build the production @loom/web bundle and copy it into the directory loom-server serves the SPA from (default `<repo>/target/debug/web`, the dev server's default static_dir). Pass a path for release/installed binaries. After this, `loomtty web` serves the UI.",
     "install-assets": "node scripts/install-assets.mjs"
   },
   "devDependencies": {

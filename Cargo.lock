@@ -49,7 +49,7 @@ dependencies = [
 [[package]]
 name = "alacritty_terminal"
 version = "0.25.1"
-source = "git+https://github.com/l1nxy/alacritty.git?branch=ciri-patches#867784628f619fc2f58c55d271ad5f6014d722c6"
+source = "git+https://github.com/l1nxy/alacritty.git?branch=loom-patches#867784628f619fc2f58c55d271ad5f6014d722c6"
 dependencies = [
  "base64",
  "bitflags 2.11.0",
@@ -744,281 +744,6 @@ checksum = "57663b653d948a338bfb3eeba9bb2fd5fcfaecb9e199e87e1eda4d9e8b240fd9"
 dependencies = [
  "ciborium-io",
  "half",
-]
-
-[[package]]
-name = "ciri-anim"
-version = "0.1.0"
-dependencies = [
- "log",
-]
-
-[[package]]
-name = "ciri-app"
-version = "0.1.0"
-dependencies = [
- "ciri-anim",
- "ciri-config",
- "ciri-input",
- "ciri-layout",
- "ciri-protocol",
- "crossbeam-channel",
- "log",
- "serde",
- "unicode-width",
-]
-
-[[package]]
-name = "ciri-config"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dirs",
- "garde",
- "log",
- "serde",
- "toml 0.8.2",
- "toml_edit 0.22.27",
-]
-
-[[package]]
-name = "ciri-gpu"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "blade-graphics",
- "blade-macros",
- "bytemuck",
- "ciri-config",
- "ciri-render",
- "fontdb",
- "glow",
- "glutin",
- "glutin-winit",
- "log",
- "naga",
- "raw-window-handle",
- "thiserror 2.0.18",
- "windows 0.58.0",
- "winit",
-]
-
-[[package]]
-name = "ciri-input"
-version = "0.1.0"
-dependencies = [
- "log",
-]
-
-[[package]]
-name = "ciri-integration-tests"
-version = "0.1.0"
-dependencies = [
- "ciri-protocol",
- "ciri-session",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "ciri-layout"
-version = "0.1.0"
-dependencies = [
- "log",
-]
-
-[[package]]
-name = "ciri-motion"
-version = "0.1.0"
-dependencies = [
- "ciri-anim",
- "log",
-]
-
-[[package]]
-name = "ciri-plugin"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dirs",
- "log",
- "mlua",
-]
-
-[[package]]
-name = "ciri-procinfo"
-version = "0.1.0"
-dependencies = [
- "libc",
- "log",
- "windows 0.58.0",
-]
-
-[[package]]
-name = "ciri-protocol"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "bytes",
- "criterion",
- "dirs",
- "libc",
- "log",
- "lz4_flex",
- "nix 0.29.0",
- "proptest",
- "rmp-serde",
- "serde",
- "serde-reflection",
- "tokio",
- "tokio-test",
- "zerocopy",
-]
-
-[[package]]
-name = "ciri-render"
-version = "0.1.0"
-dependencies = [
- "alacritty_terminal",
- "anyhow",
- "bytemuck",
- "bytemuck_derive",
- "ciri-app",
- "ciri-config",
- "ciri-protocol",
- "core-foundation 0.10.1",
- "core-graphics 0.24.0",
- "core-text",
- "crossfont",
- "fontdb",
- "freetype-rs",
- "log",
- "rustybuzz",
- "ttf-parser 0.25.1",
- "unicode-properties",
- "unicode-segmentation",
- "unicode-width",
- "windows 0.58.0",
- "windows-core 0.58.0",
- "winit",
-]
-
-[[package]]
-name = "ciri-session"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "log",
- "serde",
- "serde_json",
- "toml 0.8.2",
-]
-
-[[package]]
-name = "ciri-term"
-version = "0.1.0"
-dependencies = [
- "alacritty_terminal",
- "anyhow",
- "base64",
- "ciri-protocol",
- "colorsys",
- "gethostname",
- "libc",
- "log",
- "percent-encoding",
- "portable-pty",
- "winnow 0.7.15",
-]
-
-[[package]]
-name = "ciri-ui"
-version = "0.1.0"
-dependencies = [
- "ciri-config",
- "ciri-motion",
- "ciri-render",
- "criterion",
- "log",
- "smallvec",
- "smol_str",
- "taffy",
-]
-
-[[package]]
-name = "ciritty"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arboard",
- "ciri-anim",
- "ciri-app",
- "ciri-config",
- "ciri-gpu",
- "ciri-input",
- "ciri-layout",
- "ciri-motion",
- "ciri-protocol",
- "ciri-render",
- "ciri-session",
- "ciri-ui",
- "clap",
- "crossbeam-channel",
- "dialoguer",
- "env_logger",
- "getrandom 0.4.2",
- "image",
- "libc",
- "log",
- "notify",
- "notify-rust",
- "rmp-serde",
- "serde_json",
- "taffy",
- "tempfile",
- "tokio",
- "unicode-width",
- "winit",
- "winres",
-]
-
-[[package]]
-name = "ciritty-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "bytes",
- "ciri-config",
- "ciri-layout",
- "ciri-procinfo",
- "ciri-protocol",
- "ciri-session",
- "ciri-term",
- "dirs",
- "env_logger",
- "futures-util",
- "gtk",
- "hyper",
- "hyper-util",
- "image",
- "libc",
- "log",
- "objc2 0.6.4",
- "objc2-app-kit 0.3.2",
- "objc2-foundation 0.3.2",
- "percent-encoding",
- "rmp-serde",
- "rstest",
- "subtle",
- "tempfile",
- "tokio",
- "tower",
- "tower-http",
- "tray-icon",
- "windows-sys 0.59.0",
- "winreg 0.55.0",
- "zeroize",
 ]
 
 [[package]]
@@ -2834,6 +2559,281 @@ name = "log"
 version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
+
+[[package]]
+name = "loom-anim"
+version = "0.1.0"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "loom-app"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "log",
+ "loom-anim",
+ "loom-config",
+ "loom-input",
+ "loom-layout",
+ "loom-protocol",
+ "serde",
+ "unicode-width",
+]
+
+[[package]]
+name = "loom-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "garde",
+ "log",
+ "serde",
+ "toml 0.8.2",
+ "toml_edit 0.22.27",
+]
+
+[[package]]
+name = "loom-gpu"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blade-graphics",
+ "blade-macros",
+ "bytemuck",
+ "fontdb",
+ "glow",
+ "glutin",
+ "glutin-winit",
+ "log",
+ "loom-config",
+ "loom-render",
+ "naga",
+ "raw-window-handle",
+ "thiserror 2.0.18",
+ "windows 0.58.0",
+ "winit",
+]
+
+[[package]]
+name = "loom-input"
+version = "0.1.0"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "loom-integration-tests"
+version = "0.1.0"
+dependencies = [
+ "loom-protocol",
+ "loom-session",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "loom-layout"
+version = "0.1.0"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "loom-motion"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "loom-anim",
+]
+
+[[package]]
+name = "loom-plugin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "log",
+ "mlua",
+]
+
+[[package]]
+name = "loom-procinfo"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "log",
+ "windows 0.58.0",
+]
+
+[[package]]
+name = "loom-protocol"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "bytes",
+ "criterion",
+ "dirs",
+ "libc",
+ "log",
+ "lz4_flex",
+ "nix 0.29.0",
+ "proptest",
+ "rmp-serde",
+ "serde",
+ "serde-reflection",
+ "tokio",
+ "tokio-test",
+ "zerocopy",
+]
+
+[[package]]
+name = "loom-render"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "bytemuck",
+ "bytemuck_derive",
+ "core-foundation 0.10.1",
+ "core-graphics 0.24.0",
+ "core-text",
+ "crossfont",
+ "fontdb",
+ "freetype-rs",
+ "log",
+ "loom-app",
+ "loom-config",
+ "loom-protocol",
+ "rustybuzz",
+ "ttf-parser 0.25.1",
+ "unicode-properties",
+ "unicode-segmentation",
+ "unicode-width",
+ "windows 0.58.0",
+ "windows-core 0.58.0",
+ "winit",
+]
+
+[[package]]
+name = "loom-session"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "serde",
+ "serde_json",
+ "toml 0.8.2",
+]
+
+[[package]]
+name = "loom-term"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "base64",
+ "colorsys",
+ "gethostname",
+ "libc",
+ "log",
+ "loom-protocol",
+ "percent-encoding",
+ "portable-pty",
+ "winnow 0.7.15",
+]
+
+[[package]]
+name = "loom-ui"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "log",
+ "loom-config",
+ "loom-motion",
+ "loom-render",
+ "smallvec",
+ "smol_str",
+ "taffy",
+]
+
+[[package]]
+name = "loomtty"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "clap",
+ "crossbeam-channel",
+ "dialoguer",
+ "env_logger",
+ "getrandom 0.4.2",
+ "image",
+ "libc",
+ "log",
+ "loom-anim",
+ "loom-app",
+ "loom-config",
+ "loom-gpu",
+ "loom-input",
+ "loom-layout",
+ "loom-motion",
+ "loom-protocol",
+ "loom-render",
+ "loom-session",
+ "loom-ui",
+ "notify",
+ "notify-rust",
+ "rmp-serde",
+ "serde_json",
+ "taffy",
+ "tempfile",
+ "tokio",
+ "unicode-width",
+ "winit",
+ "winres",
+]
+
+[[package]]
+name = "loomtty-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "bytes",
+ "dirs",
+ "env_logger",
+ "futures-util",
+ "gtk",
+ "hyper",
+ "hyper-util",
+ "image",
+ "libc",
+ "log",
+ "loom-config",
+ "loom-layout",
+ "loom-procinfo",
+ "loom-protocol",
+ "loom-session",
+ "loom-term",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "percent-encoding",
+ "rmp-serde",
+ "rstest",
+ "subtle",
+ "tempfile",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tray-icon",
+ "windows-sys 0.59.0",
+ "winreg 0.55.0",
+ "zeroize",
+]
 
 [[package]]
 name = "lua-src"
@@ -5395,7 +5395,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vte"
 version = "0.15.0"
-source = "git+https://github.com/l1nxy/vte.git?branch=ciri-patches#fdfbd92d37e1269745147e436198ccaa1bee0ad5"
+source = "git+https://github.com/l1nxy/vte.git?branch=loom-patches#fdfbd92d37e1269745147e436198ccaa1bee0ad5"
 dependencies = [
  "arrayvec",
  "bitflags 2.11.0",
@@ -6136,7 +6136,7 @@ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 [[package]]
 name = "winit"
 version = "0.30.13"
-source = "git+https://github.com/l1nxy/winit.git?branch=ciri-patches#3f290e453173246d5adf815b89bee5116cd567d8"
+source = "git+https://github.com/l1nxy/winit.git?branch=loom-patches#3f290e453173246d5adf815b89bee5116cd567d8"
 dependencies = [
  "ahash",
  "android-activity",

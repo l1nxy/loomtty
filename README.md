@@ -1,4 +1,4 @@
-# ciritty
+# loomtty
 
 GPU-accelerated terminal multiplexer with column-based layouts, workspaces, and remote support.
 
@@ -6,16 +6,16 @@ GPU-accelerated terminal multiplexer with column-based layouts, workspaces, and 
 
 ```bash
 # Launch (auto-attach to last session or create new)
-ciritty
+loomtty
 
 # Named session
-ciritty my-project
+loomtty my-project
 
 # List sessions
-ciritty ls
+loomtty ls
 
 # Attach to existing session
-ciritty a my-project
+loomtty a my-project
 ```
 
 ## Keybindings
@@ -93,29 +93,29 @@ Resize mode (`Leader` `r`):
 
 ```bash
 # Session management
-ciritty new                        # New session
-ciritty ls [-a]                    # List sessions (--all includes saved)
-ciritty a SESSION                  # Attach to session
-ciritty kill SESSION               # Kill session
-ciritty kill-server                # Kill server daemon
-ciritty rm SESSION                 # Delete saved session state
+loomtty new                        # New session
+loomtty ls [-a]                    # List sessions (--all includes saved)
+loomtty a SESSION                  # Attach to session
+loomtty kill SESSION               # Kill session
+loomtty kill-server                # Kill server daemon
+loomtty rm SESSION                 # Delete saved session state
 
 # Remote
-ciritty remote HOST [SESSION] [--port PORT] [--ssh-port SSH_PORT]
+loomtty remote HOST [SESSION] [--port PORT] [--ssh-port SSH_PORT]
 
 # Web UI (browser terminal) — serve the SPA + WS gateway, print the URL+token
-ciritty web [--port PORT] [--bind ADDR] [--token TOK] [--static-dir DIR] [--open]
+loomtty web [--port PORT] [--bind ADDR] [--token TOK] [--static-dir DIR] [--open]
 
 # IPC scripting
-ciritty msg send-keys SESSION PANE_ID KEYS
-ciritty msg list-panes SESSION [--json]
-ciritty msg run-command SESSION COMMAND
-ciritty msg info SESSION
-ciritty msg focus-pane SESSION PANE_ID
-ciritty msg close-pane SESSION PANE_ID
-ciritty msg create-pane SESSION
-ciritty msg get-layout SESSION
-ciritty msg capture-pane SESSION PANE_ID            # active grid to stdout
+loomtty msg send-keys SESSION PANE_ID KEYS
+loomtty msg list-panes SESSION [--json]
+loomtty msg run-command SESSION COMMAND
+loomtty msg info SESSION
+loomtty msg focus-pane SESSION PANE_ID
+loomtty msg close-pane SESSION PANE_ID
+loomtty msg create-pane SESSION
+loomtty msg get-layout SESSION
+loomtty msg capture-pane SESSION PANE_ID            # active grid to stdout
   [--scrollback-rows N]                             #   include N rows of scrollback (clamped server-side)
   [--join-wrapped]                                  #   merge soft-wrapped rows (drops the \n between them)
   [--preserve-trailing-spaces]                      #   keep trailing ASCII spaces on each row
@@ -125,7 +125,7 @@ ciritty msg capture-pane SESSION PANE_ID            # active grid to stdout
 #   no effect (the primary buffer's history is unreachable).
 # • Output is capped at ~900 KiB to fit a single control frame; very
 #   wide panes with deep scrollback get fewer rows than requested.
-ciritty msg list-prompts SESSION PANE_ID [--json]   # OSC 133 shell-integration history
+loomtty msg list-prompts SESSION PANE_ID [--json]   # OSC 133 shell-integration history
 # • One entry per command boundary: prompt_line, output_line, done_line
 #   (absolute-line numbers; monotonic), exit_code, duration_ms.
 # • Empty when the pane hasn't observed OSC 133 — i.e. shell integration
@@ -134,16 +134,16 @@ ciritty msg list-prompts SESSION PANE_ID [--json]   # OSC 133 shell-integration 
 #   array suitable for jq / scripting.
 
 # Templates
-ciritty tpl ls                     # List templates
-ciritty tpl save NAME SESSION      # Save layout as template
-ciritty tpl apply NAME [SESSION]   # Apply template
+loomtty tpl ls                     # List templates
+loomtty tpl save NAME SESSION      # Save layout as template
+loomtty tpl apply NAME [SESSION]   # Apply template
 ```
 
 ## Configuration
 
-Config file: `~/.config/ciri/config.toml`
+Config file: `~/.config/loom/config.toml`
 
-Run `ciritty init` for interactive setup.
+Run `loomtty init` for interactive setup.
 
 ```toml
 [font]
@@ -151,8 +151,8 @@ family = "JetBrains Mono"
 size = 12.0
 
 [theme]
-preset = "ciri_dark"
-# Available: ciri_dark, one_dark, one_half_dark, catppuccin_mocha,
+preset = "loom_dark"
+# Available: loom_dark, one_dark, one_half_dark, catppuccin_mocha,
 #            tokyo_night, dracula, nord, gruvbox_dark, ghostty
 
 [terminal]
@@ -212,7 +212,7 @@ static_dir = ""               # empty = <server-exe-dir>/web
 
 ### Web UI
 
-`ciritty web` turns the desktop multiplexer into a browser terminal: it
+`loomtty web` turns the desktop multiplexer into a browser terminal: it
 enables `[web]`, mints and saves a token, prints the access URL, and runs
 the server. Build the SPA into the server's static dir once with
 `node web/scripts/install-assets.mjs`, then open the printed URL and log in

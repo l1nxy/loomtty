@@ -1,0 +1,41 @@
+[package]
+name = "loom-render"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+fontdb = { workspace = true }
+winit = { workspace = true }
+alacritty_terminal = { workspace = true }
+loom-protocol = { workspace = true }
+log = { workspace = true }
+anyhow = { workspace = true }
+bytemuck = { version = "1", features = ["derive"] }
+bytemuck_derive = "1"
+loom-config = { path = "../loom-config" }
+rustybuzz = { workspace = true }
+unicode-segmentation = { workspace = true }
+unicode-width = "0.2"
+unicode-properties = "0.1"
+ttf-parser = "0.25"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+crossfont = { workspace = true }
+freetype-rs = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-text = "21"
+core-graphics = "0.24"
+core-foundation = "0.10"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Foundation",
+    "implement",
+] }
+windows-core = "0.58"
+
+[dev-dependencies]
+loom-app = { workspace = true }

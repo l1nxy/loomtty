@@ -1,4 +1,5 @@
-use super::frame::{UiFrame, UiFrameHover};
+use super::frame::{UiFrame, UiFrameHover, chrome_rects};
+use super::tab_bar::TabBarComponent;
 use super::types::{UiAction, UiHoverOutcome};
 use crate::app::App;
 use loom_app::app::{ContextMenuParent, ModalKind};
@@ -433,6 +434,59 @@ impl App {
                 cursor: CursorIcon::Default,
                 needs_redraw: false,
             },
+        }
+    }
+
+    /// Which side tab-bar tab (`TabBarPosition::Left` / `::Right`) the
+    /// cursor is over, derived at hash time from `last_mouse_pos` + the
+    /// chrome layout the vertical strip would compute. Returns `None` in
+    /// integrated mode (no side strip) or when the cursor is outside the
+    /// bar.
+    ///
+    /// This is the vertical-strip analogue of `current_pane_tab_hover`,
+    /// and like it MUST be folded into BOTH `ui_scene_hash` (the chrome
+    /// cache key) and `render_snapshot_hash` (the damage-skip gate). The
+    /// `SideTab` arm of `dispatch_ui_hover` schedules a redraw on every
+    /// hover change, but neither hash used to capture which side tab is
+    /// hovered — so the redraw computed an unchanged snapshot,
+    /// `damage_skip` dropped the frame, and the cached chrome was reused.
+    /// The highlight then only landed on the next *unrelated* repaint
+    /// (cursor blink, up to `cursor_blink_interval_ms` ≈ a few hundred ms
+    /// later), which presented as the "side-tab hover lags badly" bug.
+    pub(crate) fn current_side_tab_hover(&self) -> Option<u64> {
+        // Derive the strip rect exactly the way `UiFrame::capture_current`
+        // does — `chrome_rects` fed `top_bar_layout.bar_height` — so the
+        // hash-time hit-test is byte-for-byte in lockstep with the painted
+        // hit_id (no reliance on `status_bar_height == bar_height`).
+        // `chrome_rects` yields `None` for the side strip in integrated
+        // mode, which doubles as the position guard.
+        //
+        // Runs from the `&self` snapshot hashes, which are computed before
+        // `build_ui` borrows `ui_taffy_tree`; `ui_context()` only takes
+        // `&RefCell`, and the `hit()` layout borrow is transient, so there
+        // is no live taffy borrow to collide with here.
+        let (mx, my) = self.last_mouse_pos?;
+        let cx = self.ui_context();
+        let top_bar_layout =
+            self.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper);
+        let rect = chrome_rects(
+            self,
+            cx.viewport_w,
+            cx.viewport_h,
+            top_bar_layout.bar_height,
+            self.hints_bar_height(),
+        )
+        .side_tab_bar?;
+        // Cheap reject before the per-tab label truncation/shaping inside
+        // `TabBarComponent::capture` — the cursor is off the strip on the
+        // overwhelming majority of frames.
+        if !rect.contains(mx, my) {
+            return None;
+        }
+        let tab_bar = TabBarComponent::capture(self, &cx, rect);
+        match tab_bar.hit(rect, mx, my, &cx) {
+            Some(UiAction::FocusPaneTab(id)) => Some(id),
+            _ => None,
         }
     }
 }

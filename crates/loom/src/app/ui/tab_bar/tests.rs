@@ -261,6 +261,86 @@ fn pane_tab_scroll_max_is_zero_in_side_bar_mode() {
     assert_eq!(app_right.pane_tab_scroll_max(), 0.0);
 }
 
+/// Regression for the side-tab hover lag: `current_side_tab_hover`
+/// must report which Left/Right strip tab the cursor is over. It is
+/// folded into both `ui_scene_hash` (chrome cache key) and
+/// `render_snapshot_hash` (damage-skip gate); before the fix it had no
+/// side-bar counterpart at all, so a hover left both hashes unchanged,
+/// `damage_skip` dropped the scheduled redraw, and the highlight only
+/// landed on the next unrelated repaint (cursor blink ≈ a few hundred
+/// ms later).
+#[test]
+fn current_side_tab_hover_tracks_cursor_over_side_strip() {
+    use crate::app::App;
+    use loom_config::config::{LoomConfig, StatusBarPosition};
+    use loom_layout::column::ColumnWidth;
+    use winit::dpi::PhysicalSize;
+
+    // Top and Bottom drive different side-strip y-origins. Running both
+    // also guards the rect lockstep: the production helper derives the
+    // rect from `chrome_rects` + `top_bar_layout.bar_height`, while the
+    // reference points below come from `side_tab_bar_rect`
+    // (`status_bar_height`); if those two ever diverged, the sampled
+    // rows would land in the wrong tab and fail here.
+    for status in [StatusBarPosition::Top, StatusBarPosition::Bottom] {
+        let label = match status {
+            StatusBarPosition::Top => "top",
+            StatusBarPosition::Bottom => "bottom",
+        };
+
+        let mut config = LoomConfig::default();
+        config.window.width = 900.0;
+        config.window.height = 700.0;
+        config.statusbar.position = status;
+        config.tabbar.position = TabBarPosition::Left;
+        config.tabbar.width = 120.0;
+        let mut app = App::new(config, "test-session");
+        app.preview_resize(PhysicalSize::new(900, 700));
+        app.core
+            .workspaces
+            .active_mut()
+            .add_column_right(1, ColumnWidth::Proportion(0.5));
+        app.core
+            .workspaces
+            .active_mut()
+            .add_column_right(2, ColumnWidth::Proportion(0.5));
+
+        // Tabs are emitted one per tile, in `pane_tab_entries` order,
+        // which is exactly the row order `TabBarComponent::capture` paints.
+        let entries = app.pane_tab_entries();
+        assert!(
+            entries.len() >= 2,
+            "[{label}] fixture should yield at least two side tabs, got {}",
+            entries.len()
+        );
+        let first_pane = entries[0].0;
+        let second_pane = entries[1].0;
+
+        let (vw, vh) = app.command_palette_viewport_size();
+        let (x, y, w, _h) = app.side_tab_bar_rect(vw, vh).expect("left side tab bar rect");
+        let mid_x = x + w * 0.5;
+        let tab_h = app.core.config.tabbar.tab_height;
+        let tab_gap = app.core.config.tabbar.tab_gap;
+
+        // Row 0 → first tab.
+        app.last_mouse_pos = Some((mid_x, y + tab_h * 0.5));
+        assert_eq!(app.current_side_tab_hover(), Some(first_pane), "[{label}] row 0");
+
+        // Row 1 (past the first tab plus the inter-tab gap) → second tab.
+        app.last_mouse_pos = Some((mid_x, y + tab_h + tab_gap + tab_h * 0.5));
+        assert_eq!(app.current_side_tab_hover(), Some(second_pane), "[{label}] row 1");
+
+        // Cursor over the terminal area (right of the strip) → no hover.
+        app.last_mouse_pos = Some((x + w + 40.0, y + tab_h * 0.5));
+        assert_eq!(app.current_side_tab_hover(), None, "[{label}] off-strip");
+
+        // Integrated mode has no dedicated strip → always None.
+        app.core.config.tabbar.position = TabBarPosition::Integrated;
+        app.last_mouse_pos = Some((mid_x, y + tab_h * 0.5));
+        assert_eq!(app.current_side_tab_hover(), None, "[{label}] integrated");
+    }
+}
+
 #[test]
 fn content_origin_x_reflects_tab_bar_position() {
     use crate::app::App;

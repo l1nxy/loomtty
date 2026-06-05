@@ -764,6 +764,11 @@ impl App {
         // `cx.is_hovered(hit_id)` at paint.
         self.current_top_bar_region_hover().hash(&mut hasher);
         self.current_pane_tab_hover().hash(&mut hasher);
+        // Side tab-bar (Left/Right) hovered tab — the vertical-strip
+        // analogue of `current_pane_tab_hover`. Folded into the chrome
+        // cache key so hovering a side tab actually rebuilds the cached
+        // chrome with its hover highlight instead of reusing a stale one.
+        self.current_side_tab_hover().hash(&mut hasher);
         // Press-state hit_id (mouse-down → mouse-up). Hashed so the
         // chrome cache invalidates on press / release; declarative
         // `.active()` reads it via `cx.is_active(hit_id)` at paint.
@@ -948,6 +953,11 @@ impl App {
         // `cx.is_hovered(hit_id)` at paint.
         self.current_top_bar_region_hover().hash(&mut hasher);
         self.current_pane_tab_hover().hash(&mut hasher);
+        // Side tab-bar (Left/Right) hovered tab — the vertical-strip
+        // analogue of `current_pane_tab_hover`. Without it a side-tab
+        // hover leaves this snapshot unchanged, so `damage_skip` drops
+        // the redraw and the highlight only lands on the next blink tick.
+        self.current_side_tab_hover().hash(&mut hasher);
         // Press-state hit_id (mouse-down → mouse-up). Hashed so the
         // chrome cache invalidates on press / release; declarative
         // `.active()` reads it via `cx.is_active(hit_id)` at paint.

@@ -3,6 +3,7 @@ pub(crate) mod connection_status;
 pub(crate) mod context_menu;
 pub(super) mod debug_panel;
 mod frame;
+mod help_overlay;
 mod hints_bar;
 pub(super) mod ime_preedit;
 pub(super) mod info_box;
@@ -167,6 +168,38 @@ mod tests {
 
     fn make_app() -> App {
         App::new(LoomConfig::default(), "test-session")
+    }
+
+    /// Toggling the help overlay MUST change the chrome-cache key,
+    /// otherwise `build_ui` returns the cached scene and the overlay
+    /// never paints on open / ghosts on close (the bug behind "Alt+/
+    /// does nothing, then keys leak to the terminal with the panel still
+    /// on screen"). Regression guard for `help_visible` being absent
+    /// from `ui_scene_hash`.
+    #[test]
+    fn help_overlay_toggle_invalidates_chrome_cache() {
+        use loom_input::action::Action;
+        let mut app = make_app();
+        let cx = app.ui_context();
+        let (vw, vh, cw, ch, lh) = (
+            cx.viewport_w,
+            cx.viewport_h,
+            cx.cell_w,
+            cx.cell_h,
+            cx.ui_line_h,
+        );
+        let before = app.ui_scene_hash(vw, vh, cw, ch, lh);
+
+        app.handle_action(Action::ToggleHelp);
+        assert!(app.core.help_visible, "toggle opens help overlay");
+        let opened = app.ui_scene_hash(vw, vh, cw, ch, lh);
+        assert_ne!(before, opened, "opening help must invalidate chrome cache");
+
+        app.handle_action(Action::ToggleHelp);
+        assert!(!app.core.help_visible, "toggle closes help overlay");
+        let closed = app.ui_scene_hash(vw, vh, cw, ch, lh);
+        assert_ne!(opened, closed, "closing help must invalidate chrome cache");
+        assert_eq!(before, closed, "closed state matches the original hash");
     }
 
     #[test]

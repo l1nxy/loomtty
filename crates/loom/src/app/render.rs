@@ -830,6 +830,13 @@ impl App {
         self.hash_context_menu(&mut hasher);
         self.hash_pending_paste(&mut hasher);
         self.hash_settings_panel(&mut hasher);
+        // Help overlay visibility. Without this the chrome cache key is
+        // unchanged when `toggle_help` flips the bool, so the overlay
+        // neither paints on open nor clears on close (it ghosts from the
+        // cached scene). Its content otherwise depends only on the live
+        // keymap + viewport, both already folded in above. Captured by
+        // `help_overlay_toggle_invalidates_chrome_cache` in ui/mod.rs.
+        self.core.help_visible.hash(&mut hasher);
 
         // Connection-status banner — hash everything its `capture` reads so
         // state transitions trigger a redraw. `server_rx.is_some()` matters
@@ -1004,6 +1011,13 @@ impl App {
         // which is cheap relative to the cache miss we'd otherwise
         // never detect.
         self.hash_settings_panel(&mut hasher);
+        // Help overlay visibility — same rationale as `hash_settings_panel`
+        // above. This hash gates `damage_skip` in `render()`; if it stays
+        // equal when `toggle_help` flips the bool, the whole frame is
+        // skipped (build_ui never runs) and the overlay only appears /
+        // disappears on the next unrelated repaint (e.g. a cursor-blink
+        // tick — the few-hundred-ms lag this guards against).
+        self.core.help_visible.hash(&mut hasher);
         self.core
             .config
             .appearance
@@ -3165,6 +3179,26 @@ mod tests {
         let mut app = App::new(config, "test-session");
         app.preview_resize(PhysicalSize::new(900, 700));
         app
+    }
+
+    /// `render_snapshot_hash` feeds `damage_skip` in `render()`. If
+    /// toggling the help overlay leaves it unchanged, the whole frame is
+    /// skipped and the overlay only appears on the next unrelated repaint
+    /// (cursor blink) — the few-hundred-ms lag. Guard that `help_visible`
+    /// is folded into this hash.
+    #[test]
+    fn help_overlay_toggle_changes_render_snapshot() {
+        let app = make_app();
+        let before = app.render_snapshot_hash(&[], 800, 600, 1.0);
+
+        let mut app = make_app();
+        app.core.help_visible = true;
+        let after = app.render_snapshot_hash(&[], 800, 600, 1.0);
+
+        assert_ne!(
+            before, after,
+            "help_visible must change render_snapshot_hash so the frame is not damage-skipped"
+        );
     }
 
     #[test]

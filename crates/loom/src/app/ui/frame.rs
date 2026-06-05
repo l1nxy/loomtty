@@ -3,6 +3,7 @@ use loom_config::config::{StatusBarPosition, TabBarPosition};
 use super::connection_status::ConnectionStatusComponent;
 use super::context_menu::ContextMenuComponent;
 use super::debug_panel::DebugPanelComponent;
+use super::help_overlay::HelpOverlayComponent;
 use super::hints_bar::HintsBarComponent;
 use super::info_box::InfoBoxComponent;
 use super::overview::{self, OverviewComponent};
@@ -39,6 +40,7 @@ pub(super) struct UiFrame {
     paste_dialog: Option<PasteDialogComponent>,
     settings_panel: Option<SettingsPanelComponent>,
     context_menu: Option<ContextMenuComponent>,
+    help_overlay: Option<HelpOverlayComponent>,
     debug_panel: Option<DebugPanelComponent>,
 }
 
@@ -122,6 +124,7 @@ impl UiFrame {
             paste_dialog: PasteDialogComponent::capture(app, cx),
             settings_panel: SettingsPanelComponent::capture(app, cx),
             context_menu: ContextMenuComponent::capture(app, cx),
+            help_overlay: HelpOverlayComponent::capture(app, cx),
             debug_panel: DebugPanelComponent::capture(app, cx),
         }
     }
@@ -183,6 +186,12 @@ impl UiFrame {
         if let Some(component) = &mut self.context_menu {
             component.paint(cx, scene);
         }
+        // Help overlay is a peer of the other modals (kept_set closes
+        // them when it opens), so its order vs palette/context_menu is
+        // moot — it paints alone whenever present.
+        if let Some(component) = &mut self.help_overlay {
+            component.paint(cx, scene);
+        }
         // Debug panel paints last so it sits above every other overlay
         // — it's a developer affordance, not part of the visual chrome.
         if let Some(component) = &mut self.debug_panel {
@@ -205,6 +214,12 @@ impl UiFrame {
         // the palette and either close it or move its selection.
         // `context_menu` stays first (theme-dropdown / right-click
         // menu can't coexist with paste_dialog per kept_set).
+        // Help overlay: any click anywhere dismisses it. It can't coexist
+        // with the other modals (peers cleared on open), so checking it
+        // first is safe.
+        if self.help_overlay.is_some() {
+            return (Some(UiAction::CloseHelp), true);
+        }
         if let Some(c) = &self.context_menu {
             return (c.click(mx, my, cx), true);
         }
@@ -262,6 +277,7 @@ impl UiFrame {
             || self.paste_dialog.is_some()
             || self.palette.is_some()
             || self.settings_panel.is_some()
+            || self.help_overlay.is_some()
         {
             return (None, true);
         }
@@ -292,6 +308,13 @@ impl UiFrame {
         // palette so the layered `PendingPaste(CommandPalette/Search)`
         // case routes hover styling to the topmost dialog rather than
         // the palette underneath.
+        // Help overlay owns the surface while visible — no interactive
+        // elements, so just report "no hover" (default cursor) and stop
+        // before the bars/overview underneath get hit-tested.
+        if self.help_overlay.is_some() {
+            return UiFrameHover::None;
+        }
+
         if let Some(component) = &self.context_menu {
             let hovered = match component.hit_test(mx, my, cx) {
                 UiContextMenuHit::Entry(idx) => Some(idx),
@@ -411,7 +434,7 @@ impl UiFrame {
         // base-layer element renders a phantom `.active()` tint until
         // mouse-up clears it. Overlay-tier widgets manage their own
         // press affordances internally; we don't expose hit_ids here.
-        if self.context_menu.is_some() || self.palette.is_some() {
+        if self.context_menu.is_some() || self.palette.is_some() || self.help_overlay.is_some() {
             return None;
         }
         // Settings panel opacity steppers — the only press-friendly

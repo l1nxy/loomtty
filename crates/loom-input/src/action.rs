@@ -76,6 +76,8 @@ pub enum Action {
     ToggleLock,
     /// Toggle the settings panel overlay.
     ToggleSettings,
+    /// Toggle the keybindings help overlay (read-only cheat-sheet).
+    ToggleHelp,
     /// Switch to the next connection (cycles through slots, restoring each
     /// slot's last-active session). For within-slot session switching use the
     /// session palette.
@@ -222,6 +224,7 @@ impl Action {
             (Action::ToggleSessionPalette, "Toggle Session Palette"),
             (Action::ToggleLock, "Toggle Lock"),
             (Action::ToggleSettings, "Settings\u{2026}"),
+            (Action::ToggleHelp, "Keybindings Help"),
             (Action::NextSession, "Next Session"),
             (Action::PrevSession, "Previous Session"),
             (Action::NewSession, "New Session"),
@@ -277,6 +280,7 @@ fn parse_named_action(name: &str) -> Option<Action> {
         "toggle_session_palette" => Some(Action::ToggleSessionPalette),
         "toggle_lock" => Some(Action::ToggleLock),
         "toggle_settings" | "settings" => Some(Action::ToggleSettings),
+        "toggle_help" | "help" => Some(Action::ToggleHelp),
         "next_session" => Some(Action::NextSession),
         "prev_session" | "previous_session" => Some(Action::PrevSession),
         "new_session" => Some(Action::NewSession),

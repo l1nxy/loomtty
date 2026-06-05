@@ -66,6 +66,11 @@ pub struct AppModel {
     /// to `Appearance` on first open and persists across open/close so
     /// reopening the panel returns to the user's last view.
     pub settings_category: SettingsCategory,
+    /// Keybindings help overlay visibility. Read-only cheat-sheet that
+    /// lists the live keymap; toggled by `Action::ToggleHelp` and
+    /// dismissed by any key / click. Simple bool — it owns no internal
+    /// state (no scroll, no selection).
+    pub help_visible: bool,
     pub ime: ImeState,
 
     pub selection: Option<Selection>,
@@ -179,6 +184,7 @@ impl AppModel {
             context_menu_scroll_offset: 0,
             settings_panel_visible: false,
             settings_category: SettingsCategory::default(),
+            help_visible: false,
             ime: ImeState {
                 preedit_active: false,
                 preedit_text: String::new(),

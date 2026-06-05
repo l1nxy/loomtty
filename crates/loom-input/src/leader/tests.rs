@@ -296,6 +296,46 @@ fn alt_leader_enters_awaiting() {
     assert!(h.is_awaiting_action());
 }
 
+/// Sticky + bare-modifier (`alt`) leader promotes every leader binding
+/// to an `alt+<key>` *direct* chord (`reload_bindings` →
+/// `promote_leader_bindings_to_direct`). Verifies the real config path:
+/// `Alt+/` fires `ToggleHelp` in a single press with no prior Alt tap,
+/// and Alt alone does NOT arm a leader session (the leader is disabled).
+#[test]
+fn sticky_alt_leader_promotes_slash_to_direct_toggle_help() {
+    use std::collections::HashMap;
+
+    let mut h = InputHandler::new(Duration::from_millis(1000), Duration::from_millis(300));
+    let mut bindings = HashMap::new();
+    bindings.insert("/".to_string(), "toggle_help".to_string());
+    bindings.insert("n".to_string(), "new_column_right".to_string());
+    let modes: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let direct: HashMap<String, String> = HashMap::new();
+    h.reload_bindings("alt", "sticky", &bindings, &modes, &direct);
+
+    let empty: HashMap<String, String> = HashMap::new();
+    let set = BindingSet::from_legacy(
+        &h.keybinds,
+        &h.direct_keybinds,
+        &h.mode_keybinds,
+        &crate::keybind::KeybindMap::from_overview_config(&empty),
+        &empty,
+        &empty,
+        &empty,
+    );
+    h.set_binding_set(set);
+
+    // Alt alone must NOT enter a leader session — promotion disables the
+    // leader key, so the bare modifier is a no-op (passes through).
+    let r = h.process_key("Alt", false, false, true, false);
+    assert!(matches!(r, InputResult::PassThrough));
+    assert!(!h.is_awaiting_action());
+
+    // Alt+/ in a single press dispatches ToggleHelp directly.
+    let r = h.process_key("/", false, false, true, false);
+    assert!(matches!(r, InputResult::Action(Action::ToggleHelp)));
+}
+
 #[test]
 fn alt_held_strips_modifier() {
     let mut h = prefix_handler();

@@ -27,7 +27,7 @@ pub fn run_init() -> Result<()> {
             "Prefix  (tmux-style: leader + key, one action per press)",
             "Sticky  (zellij-style: leader enters mode, chain actions, Esc to exit)",
         ])
-        .default(0)
+        .default(1)
         .interact()?;
     let mode = if mode_idx == 0 { "prefix" } else { "sticky" };
 
@@ -35,7 +35,7 @@ pub fn run_init() -> Result<()> {
     let leader_idx = Select::with_theme(&ColorfulTheme::default())
         .with_prompt("Leader key")
         .items(&["Ctrl+W", "Ctrl+A", "Alt", "Custom"])
-        .default(0)
+        .default(2)
         .interact()?;
     let leader = match leader_idx {
         0 => "ctrl+w".to_string(),
@@ -210,7 +210,7 @@ size = 10.0
 
 [appearance]
 padding = 4.0
-column_gap = 8.0
+column_gap = 4.0
 border_width = 2.0
 
 [terminal]

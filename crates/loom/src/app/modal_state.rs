@@ -78,6 +78,7 @@ mod tests {
             ModalKind::CommandPalette,
             ModalKind::SessionPalette,
             ModalKind::Settings,
+            ModalKind::Help,
             ModalKind::PendingPaste(PendingPasteTarget::Terminal),
             ModalKind::PendingPaste(PendingPasteTarget::CommandPalette),
             ModalKind::PendingPaste(PendingPasteTarget::Search),

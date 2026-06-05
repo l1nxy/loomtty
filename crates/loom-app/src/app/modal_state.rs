@@ -27,6 +27,8 @@ pub enum ModalKind {
     CommandPalette,
     SessionPalette,
     Settings,
+    /// Read-only keybindings help overlay.
+    Help,
     PendingPaste(PendingPasteTarget),
     ContextMenu(ContextMenuParent),
     Search,
@@ -50,6 +52,7 @@ pub enum ContextMenuParent {
 pub enum ModalField {
     Palette,
     Settings,
+    Help,
     PendingPaste,
     ContextMenu,
     Search,
@@ -68,6 +71,7 @@ pub fn kept_set(keep: ModalKind) -> &'static [ModalField] {
         ModalKind::None => &[],
         ModalKind::CommandPalette | ModalKind::SessionPalette => &[F::Palette],
         ModalKind::Settings => &[F::Settings],
+        ModalKind::Help => &[F::Help],
         ModalKind::PendingPaste(T::Terminal) => &[F::PendingPaste],
         ModalKind::PendingPaste(T::CommandPalette) => &[F::PendingPaste, F::Palette],
         ModalKind::PendingPaste(T::Search) => &[F::PendingPaste, F::Search],
@@ -89,6 +93,9 @@ impl AppModel {
         }
         if !kept.contains(&ModalField::Settings) {
             self.settings_panel_visible = false;
+        }
+        if !kept.contains(&ModalField::Help) {
+            self.help_visible = false;
         }
         if !kept.contains(&ModalField::PendingPaste) {
             self.pending_paste = None;
@@ -119,6 +126,7 @@ mod tests {
             remote_input_mode: false,
         });
         m.settings_panel_visible = true;
+        m.help_visible = true;
         m.context_menu = ContextMenu {
             visible: true,
             x: 0.0,
@@ -157,6 +165,7 @@ mod tests {
             ModalKind::CommandPalette,
             ModalKind::SessionPalette,
             ModalKind::Settings,
+            ModalKind::Help,
             ModalKind::PendingPaste(PendingPasteTarget::Terminal),
             ModalKind::PendingPaste(PendingPasteTarget::CommandPalette),
             ModalKind::PendingPaste(PendingPasteTarget::Search),
@@ -178,6 +187,11 @@ mod tests {
                 m.settings_panel_visible,
                 kept.contains(&ModalField::Settings),
                 "{keep:?}: settings_panel_visible",
+            );
+            assert_eq!(
+                m.help_visible,
+                kept.contains(&ModalField::Help),
+                "{keep:?}: help_visible",
             );
             assert_eq!(
                 m.context_menu.visible,

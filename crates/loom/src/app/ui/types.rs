@@ -297,6 +297,8 @@ pub(crate) enum UiAction {
     StartOverviewDrag,
     /// Close the settings panel (Esc / outside click / × button).
     CloseSettings,
+    /// Dismiss the keybindings help overlay (any click anywhere).
+    CloseHelp,
     /// Click landed on a settings panel chrome region that should
     /// absorb without dismissing (e.g. empty body, row gutter).
     /// Distinguished from `CloseSettings` so the dispatcher can no-op.

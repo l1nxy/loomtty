@@ -182,6 +182,9 @@ impl App {
                 // panel — no per-child cleanup list to maintain.
                 self.enter_modal_close_peers(ModalKind::None);
             }
+            UiAction::CloseHelp => {
+                self.enter_modal_close_peers(ModalKind::None);
+            }
             UiAction::OpenSettingsDropdown(field) => {
                 self.open_settings_enum_dropdown(field);
             }

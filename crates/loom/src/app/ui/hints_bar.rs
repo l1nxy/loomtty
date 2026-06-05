@@ -131,7 +131,7 @@ impl HintsBarComponent {
             hints.push(h(&app.core.config.keys.leader, "leader"));
         }
         let direct = &app.core.input.direct_keybinds;
-        for (action, label) in [("toggle_help", "help"), ("toggle_lock", "lock")] {
+        for (action, label) in [("toggle_lock", "lock")] {
             if let Some(key_display) = direct.find_key_for_action(action) {
                 hints.push(h(&key_display, label));
             }

@@ -53,6 +53,8 @@ pub(super) fn action_short_label(action: &str) -> &str {
         "exit_overview" => "exit",
         "toggle_command_palette" => "palette",
         "toggle_lock" => "lock",
+        "toggle_help" => "help",
+        "toggle_settings" | "settings" => "settings",
         "detach" => "detach",
         "scroll_line_up" => "line \u{2191}",
         "scroll_line_down" => "line \u{2193}",
@@ -73,7 +75,7 @@ pub(super) fn action_short_label(action: &str) -> &str {
     }
 }
 
-fn build_infobox_rows(
+pub(super) fn build_infobox_rows(
     bindings: &std::collections::HashMap<String, String>,
 ) -> Vec<(String, String)> {
     use std::collections::HashMap;
@@ -120,6 +122,7 @@ impl InfoBoxComponent {
             || app.core.pending_paste.is_some()
             || app.core.context_menu.visible
             || app.core.settings_panel_visible
+            || app.core.help_visible
         {
             return None;
         }

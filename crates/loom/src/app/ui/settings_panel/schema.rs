@@ -850,6 +850,9 @@ mod tests {
     #[test]
     fn set_enum_drives_input_mode_and_status_bar() {
         let mut cfg = LoomConfig::default();
+        // Start from a known non-default state so the transition is a
+        // real change regardless of what the default input mode is.
+        cfg.input.mode = InputMode::Prefix;
         assert!(set_enum(SettingsField::InputMode, &mut cfg, "sticky"));
         assert_eq!(cfg.input.mode, InputMode::Sticky);
         assert!(set_enum(

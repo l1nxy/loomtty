@@ -7,7 +7,7 @@ size = 10.0
 
 [appearance]
 padding = 4.0
-column_gap = 8.0
+column_gap = 4.0
 border_width = 2.0
 active_border_color = "#528BFF"
 inactive_border_color = "#3E4452"
@@ -74,7 +74,7 @@ text_baseline = 0.8
 [input]
 # "prefix" = tmux-style (leader → one action → back to normal)
 # "sticky" = zellij-style (leader → stay in mode until Esc)
-mode = "prefix"
+mode = "sticky"
 leader_timeout_ms = 1000
 double_tap_window_ms = 300
 scroll_multiplier = 50.0
@@ -101,7 +101,7 @@ alpha_blending = "linear-corrected"
 preset = "loom_dark"
 
 [keys]
-leader = "ctrl+w"
+leader = "alt"
 
 # Direct bindings: work without leader key (e.g. Ctrl+key to enter modes directly)
 [keys.bindings]
@@ -135,6 +135,7 @@ i = "next_session"
 "shift+i" = "prev_session"
 "shift+n" = "new_session"
 g = "toggle_lock"
+"/" = "toggle_help"
 
 [keys.modes.resize]
 h = "column_width_decrease"

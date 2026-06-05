@@ -266,6 +266,14 @@ impl App {
                     self.core.settings_panel_visible = true;
                 }
             }
+            Action::ToggleHelp => {
+                if self.core.help_visible {
+                    self.enter_modal_close_peers(ModalKind::None);
+                } else {
+                    self.enter_modal_close_peers(ModalKind::Help);
+                    self.core.help_visible = true;
+                }
+            }
             Action::NextSession => {
                 self.cycle_session(1);
             }

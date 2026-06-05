@@ -135,10 +135,7 @@ impl Default for KeybindConfig {
         paste_confirm_bindings.insert("escape".to_string(), "dismiss_paste_confirm".to_string());
         paste_confirm_bindings.insert("n".to_string(), "dismiss_paste_confirm".to_string());
 
-        #[cfg(target_os = "macos")]
-        let leader = "ctrl+b".to_string();
-        #[cfg(not(target_os = "macos"))]
-        let leader = "ctrl+w".to_string();
+        let leader = "alt".to_string();
 
         KeybindConfig {
             leader,

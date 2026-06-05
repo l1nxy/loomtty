@@ -317,6 +317,26 @@ impl App {
             return;
         }
 
+        // Help overlay is a read-only cheat-sheet — any *real* key
+        // dismisses it (consumed, so it doesn't also trigger a binding
+        // or leak to the terminal). Same placement as the settings
+        // block: before `clear_selection_on_typing` so dismissing it
+        // doesn't clear a terminal selection underneath.
+        //
+        // Bare modifier presses (Alt/Control/Super) must NOT dismiss:
+        // the toggle binding is `<leader-modifier>+key` (default Alt+/),
+        // so the modifier goes down *before* the key. Dismissing on the
+        // modifier would close the overlay, then the key that follows
+        // would re-run `toggle_help` and reopen it — making it appear
+        // impossible to close. Consume the modifier silently instead.
+        if self.core.help_visible {
+            if !matches!(key_name, "Alt" | "Control" | "Super") {
+                self.enter_modal_close_peers(ModalKind::None);
+            }
+            self.request_redraw();
+            return;
+        }
+
         self.clear_selection_on_typing(event);
 
         // ── Unified pipeline: compute mode → process key → handle action ──
@@ -376,6 +396,7 @@ impl App {
     pub(crate) fn modal_captures_keyboard(&self) -> bool {
         self.core.context_menu.visible
             || self.core.settings_panel_visible
+            || self.core.help_visible
             || self.top_overlay_binding_mode() != BindingMode::EMPTY
     }
 

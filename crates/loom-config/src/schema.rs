@@ -337,7 +337,7 @@ impl Default for AppearanceConfig {
     fn default() -> Self {
         AppearanceConfig {
             padding: 4.0,
-            column_gap: 8.0,
+            column_gap: 4.0,
             border_width: 2.0,
             active_border_color: String::new(),
             inactive_border_color: String::new(),
@@ -587,7 +587,7 @@ impl Default for InputConfig {
             leader_timeout_ms: 1000,
             double_tap_window_ms: 300,
             scroll_multiplier: 50.0,
-            mode: InputMode::Prefix,
+            mode: InputMode::Sticky,
             focus_follows_mouse: false,
         }
     }

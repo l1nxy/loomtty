@@ -81,21 +81,30 @@ impl App {
             | SettingsField::FontWeight
             | SettingsField::FontLineHeight
             | SettingsField::UiFontFamily
-            | SettingsField::UiFontSize => {
+            | SettingsField::UiFontSize
+            | SettingsField::FontCellWidth
+            | SettingsField::FontDisableLigatures => {
                 // Any of these changes the cell metrics or the active
-                // face — `apply_font_config_change` re-runs font
-                // discovery and rasterisation, which is the only path
-                // that picks up a new family/weight/line-height (and
-                // it also rebuilds the UI shaper).
+                // face / shaping — `apply_font_config_change` re-runs
+                // font discovery and rasterisation, which is the only
+                // path that picks up a new family/weight/line-height/
+                // cell-width/ligature policy (and it also rebuilds the
+                // UI shaper). Underline / strikethrough adjustments are
+                // render-time decorations, so those fall through to the
+                // default cache-clear arm instead.
                 self.apply_font_config_change();
                 self.schedule_redraw();
             }
-            SettingsField::InputMode => {
+            SettingsField::InputMode
+            | SettingsField::InputLeaderTimeout
+            | SettingsField::InputDoubleTapWindow => {
                 self.reload_input_config();
                 self.clear_render_caches();
                 self.schedule_redraw();
             }
-            SettingsField::PredictionMode => {
+            SettingsField::PredictionMode
+            | SettingsField::PredictionThreshold
+            | SettingsField::PredictionShowUnderline => {
                 self.update_prediction_config();
                 self.clear_render_caches();
                 self.schedule_redraw();
@@ -147,6 +156,10 @@ impl App {
             return;
         }
         self.core.settings_category = cat;
+        // Each category is its own scroll context — start the new view
+        // at the top rather than inheriting the previous category's
+        // offset (which could be past the end of a shorter list).
+        self.core.settings_scroll_offset = 0;
         self.schedule_redraw();
     }
 }

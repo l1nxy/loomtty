@@ -62,6 +62,19 @@ pub(crate) struct SettingsPanelComponent {
     /// take `&LoomConfig`, and the panel needs a frozen view across
     /// the multiple build_tree() calls (capture / hit_test / paint).
     config_snapshot: LoomConfig,
+    /// Topmost visible field-row index in the active category — the body
+    /// windows its rows the same way the context menu does, so a
+    /// category with more fields than fit the panel height stays
+    /// scrollable instead of overflowing past the footer.
+    scroll_offset: usize,
+    /// Field rows that fit in the body at the current panel height.
+    visible_rows: usize,
+    /// Total field rows in the active category (independent of scroll).
+    total_rows: usize,
+    /// Per-row vertical stride (uniform row height + the hairline
+    /// divider that follows it). Drives both row windowing and the
+    /// scrollbar track geometry.
+    item_stride: f32,
 }
 
 impl SettingsPanelComponent {
@@ -73,14 +86,72 @@ impl SettingsPanelComponent {
         let panel_h = (cx.viewport_h * 0.82).clamp(560.0, 900.0);
         let dx = ((cx.viewport_w - panel_w) / 2.0).max(0.0);
         let dy = ((cx.viewport_h - panel_h) / 2.0).max(0.0);
+
+        let active_category = app.core.settings_category;
+        let total_rows = FIELDS
+            .iter()
+            .filter(|m| m.category == active_category)
+            .count();
+        let item_stride = Self::row_stride(cx);
+        let rows_region_h = Self::rows_region_height(cx, panel_h);
+        let mut visible_rows = (rows_region_h / item_stride).floor() as usize;
+        visible_rows = visible_rows.max(1).min(total_rows.max(1));
+        let max_offset = total_rows.saturating_sub(visible_rows);
+        let scroll_offset = app.core.settings_scroll_offset.min(max_offset);
+
         Some(Self {
             dx,
             dy,
             panel_w,
             panel_h,
-            active_category: app.core.settings_category,
+            active_category,
             config_snapshot: app.core.config.clone(),
+            scroll_offset,
+            visible_rows,
+            total_rows,
+            item_stride,
         })
+    }
+
+    /// Vertical stride of one field row including the hairline divider
+    /// that follows it. Field rows are uniform height: a two-line label
+    /// column (label over description) sitting beside a fixed-height
+    /// control, with `SPACE_3` of padding top and bottom. Computed from
+    /// the same constants `field_row` lays out with so the windowing
+    /// math matches what actually paints.
+    fn row_stride(cx: &UiContext<'_>) -> f32 {
+        let label_col_h = 2.0 * cx.ui_line_h + tokens::SPACE_1;
+        let content_h = label_col_h.max(CONTROL_ROW_H);
+        content_h + tokens::SPACE_3 * 2.0 + tokens::BORDER_THIN
+    }
+
+    /// Height available to the scrollable field-row list: the panel
+    /// height minus the fixed chrome above and below it (title bar,
+    /// banner, section header, footer, plus the dividers and padding
+    /// between them). `border()` is paint-only in this layout engine —
+    /// it adds no box height — so only explicit divider divs and
+    /// padding count; a `SPACE_2` safety margin keeps the last visible
+    /// row clear of the footer divider even if a line metric rounds up.
+    fn rows_region_height(cx: &UiContext<'_>, panel_h: f32) -> f32 {
+        let line = cx.ui_line_h;
+        let bw = tokens::BORDER_THIN;
+        let title_h = line + tokens::SPACE_3;
+        let footer_h = line + tokens::SPACE_3;
+        let banner_h = line + tokens::SPACE_2 * 2.0;
+        let header_h = (line + tokens::SPACE_1) + tokens::SPACE_1 + bw;
+        let chrome = title_h + bw            // title bar + divider
+            + footer_h + bw                  // footer + divider
+            + tokens::SPACE_3 * 2.0          // body_wrapper vertical padding
+            + banner_h + tokens::SPACE_3     // banner + gap down to the split
+            + header_h                       // section-header block
+            + tokens::SPACE_2; // safety margin
+        (panel_h - chrome).max(0.0)
+    }
+
+    /// Highest legal scroll offset for the active category — `0` when
+    /// the whole category fits. Used by the wheel handler to clamp.
+    pub(crate) fn max_scroll_offset(&self) -> usize {
+        self.total_rows.saturating_sub(self.visible_rows)
     }
 
     pub(super) fn hit_test(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<SettingsHit> {
@@ -198,11 +269,21 @@ impl SettingsPanelComponent {
     }
 
     fn build_sidebar(&self, cx: &UiContext<'_>) -> Div {
+        let theme = cx.theme;
+        // Lift the category column with `surface_elevated` (a tier above
+        // the body's `surface`) so the navigation rail reads as raised
+        // over the options content — the intuitive direction for a side
+        // nav, rather than recessing it darker. The hairline in
+        // `build_tree`'s split row still draws the crisp seam on top of
+        // the tonal step. `flex-row`'s default `align-items: stretch`
+        // makes this column fill the full split height, so the tint runs
+        // banner-to-footer, not just behind the rows.
         let mut col = div()
             .w(SIDEBAR_W)
             .flex_col()
             .gap(tokens::SPACE_1)
-            .pr(tokens::SPACE_2);
+            .pr(tokens::SPACE_2)
+            .bg(theme.surface_elevated);
         for cat in SettingsCategory::ALL {
             col = col.child(self.sidebar_row(cx, *cat));
         }
@@ -244,7 +325,7 @@ impl SettingsPanelComponent {
         let theme = cx.theme;
         let bw = tokens::BORDER_THIN;
         let body_w = self.panel_w - tokens::SPACE_4 * 2.0 - SIDEBAR_W - bw;
-        let mut col = div()
+        let col = div()
             .flex_col()
             .flex_1()
             .pl(tokens::SPACE_3)
@@ -269,19 +350,79 @@ impl SettingsPanelComponent {
             );
         // Rows + interstitial hairline dividers. Body has no gap so the
         // divider sits directly between rows; each row carries its own
-        // vertical padding for breathing room.
+        // vertical padding for breathing room. Only the windowed slice
+        // `[scroll_offset, scroll_offset + visible_rows)` is built —
+        // there's no GPU clip in the chrome paint path, so rendering the
+        // whole category would spill past the panel footer (the bug this
+        // fixes). Absolute indices don't matter for paint; hit-ids are
+        // encoded per `SettingsField`, so click routing is scroll-safe.
         let rows: Vec<&FieldMeta> = FIELDS
             .iter()
             .filter(|m| m.category == self.active_category)
             .collect();
-        let last_idx = rows.len().saturating_sub(1);
-        for (i, meta) in rows.iter().enumerate() {
-            col = col.child(self.field_row(cx, meta, body_w));
+        let scrollable = rows.len() > self.visible_rows;
+        // Reserve a slim gutter for the scrollbar so the thumb doesn't
+        // overlap the control column on the right edge of each row.
+        let scrollbar_col_w = if scrollable { tokens::SPACE_2 } else { 0.0 };
+        let row_w = (body_w - scrollbar_col_w).max(0.0);
+
+        let start = self.scroll_offset;
+        let end = (start + self.visible_rows).min(rows.len());
+        let window = &rows[start..end];
+        let last_idx = window.len().saturating_sub(1);
+        let mut rows_col = div().flex_col();
+        for (i, meta) in window.iter().enumerate() {
+            rows_col = rows_col.child(self.field_row(cx, meta, row_w));
             if i != last_idx {
-                col = col.child(div().w(body_w).h(bw).bg(theme.border));
+                rows_col = rows_col.child(div().w(row_w).h(bw).bg(theme.border));
             }
         }
-        col
+
+        let mut content_row = div().flex_row().flex_1().child(rows_col);
+        if scrollable {
+            content_row = content_row.child(self.build_scrollbar(cx, scrollbar_col_w));
+        }
+        col.child(content_row)
+    }
+
+    /// Vertical scrollbar for the body — drawn only when the active
+    /// category overflows. Track height matches the visible window;
+    /// thumb height is proportional to `visible / total`, floored at
+    /// half a row so it stays visible on long categories. Same shape as
+    /// the context menu's scrollbar, minus the drag hit-ids (the body
+    /// scrolls by wheel). Mirrors `build_body`'s row windowing so the
+    /// thumb tracks the rendered slice.
+    fn build_scrollbar(&self, cx: &UiContext<'_>, col_w: f32) -> Div {
+        let theme = cx.theme;
+        let track_w = tokens::SPACE_1;
+        let track_h = self.visible_rows as f32 * self.item_stride;
+        let total = self.total_rows.max(1) as f32;
+        let thumb_h =
+            (track_h * (self.visible_rows as f32 / total)).max(self.item_stride * 0.5);
+        let max_offset = self.max_scroll_offset().max(1);
+        let thumb_top =
+            (track_h - thumb_h).max(0.0) * (self.scroll_offset as f32 / max_offset as f32);
+        div()
+            .w(col_w)
+            .h(track_h)
+            .flex_row()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .w(track_w)
+                    .h(track_h)
+                    .rounded(theme.radius.sm)
+                    .bg(tokens::tint(theme.border, tokens::ALPHA_SCROLL_TRACK))
+                    .child(
+                        div()
+                            .w(track_w)
+                            .h(thumb_h)
+                            .translate(0.0, thumb_top)
+                            .rounded(theme.radius.sm)
+                            .bg(tokens::tint(theme.accent, tokens::ALPHA_SCROLL_THUMB)),
+                    ),
+            )
     }
 
     fn field_row(&self, cx: &UiContext<'_>, meta: &FieldMeta, content_w: f32) -> Div {

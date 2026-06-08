@@ -14,7 +14,7 @@ use super::hit::{ButtonRole, ChromeOp, SettingsHit, decode, encode_chrome, encod
 use super::schema::SettingsField;
 use super::{SettingsActionPayload, SettingsPanelComponent, action_for};
 use crate::app::App;
-use crate::app::ui::types::UiAction;
+use crate::app::ui::types::{UiAction, test_ui_context};
 use loom_app::app::SettingsCategory;
 use loom_config::config::LoomConfig;
 
@@ -219,4 +219,71 @@ fn close_button_hit_id_dismisses_panel() {
     }
     let (mx, my) = hit.expect("close button not hittable");
     assert_eq!(comp.click(mx, my, &cx), Some(UiAction::CloseSettings));
+}
+
+// ── Body row windowing / scroll ──────────────────────────────────────
+
+/// A category with more fields than fit the panel height must window
+/// its rows (render a slice, not the whole list) and report room to
+/// scroll. Terminal is the densest category, and the 560 px panel-
+/// height floor can't fit all of it, so this is a stable overflow.
+#[test]
+fn tall_category_windows_rows_and_can_scroll() {
+    let mut app = make_app();
+    app.core.settings_panel_visible = true;
+    app.core.settings_category = SettingsCategory::Terminal;
+    let theme = loom_ui::ResolvedTheme::default();
+    // 0.82 * 600 = 492 < 560, so panel_h clamps to its 560 floor —
+    // the smallest the panel ever gets, maximising the overflow.
+    let cx = test_ui_context(&app.core.config, &theme, 1400.0, 600.0);
+    let comp = SettingsPanelComponent::capture(&app, &cx).expect("panel visible");
+    assert!(comp.visible_rows >= 1, "at least one row must show");
+    assert!(
+        comp.visible_rows < comp.total_rows,
+        "dense category must overflow ({} of {})",
+        comp.visible_rows,
+        comp.total_rows,
+    );
+    assert!(comp.max_scroll_offset() > 0, "overflowing body must scroll");
+}
+
+/// A stale offset left over from a taller category (or a model that's
+/// a frame behind) is clamped to the active category's valid range at
+/// capture time, never windowing past the end of the list.
+#[test]
+fn capture_clamps_out_of_range_scroll_offset() {
+    let mut app = make_app();
+    app.core.settings_panel_visible = true;
+    app.core.settings_category = SettingsCategory::Terminal;
+    app.core.settings_scroll_offset = 9_999;
+    let theme = loom_ui::ResolvedTheme::default();
+    let cx = test_ui_context(&app.core.config, &theme, 1400.0, 600.0);
+    let comp = SettingsPanelComponent::capture(&app, &cx).expect("panel visible");
+    assert_eq!(comp.scroll_offset, comp.max_scroll_offset());
+}
+
+/// A category that fits entirely reports no scroll room — the body
+/// then omits the scrollbar gutter.
+#[test]
+fn short_category_does_not_scroll() {
+    let mut app = make_app();
+    app.core.settings_panel_visible = true;
+    app.core.settings_category = SettingsCategory::Layout; // single field
+    let theme = loom_ui::ResolvedTheme::default();
+    let cx = test_ui_context(&app.core.config, &theme, 1400.0, 900.0);
+    let comp = SettingsPanelComponent::capture(&app, &cx).expect("panel visible");
+    assert_eq!(comp.max_scroll_offset(), 0);
+    assert_eq!(comp.scroll_offset, 0);
+}
+
+/// Switching categories starts the new view at the top — the offset
+/// must not leak across a category change.
+#[test]
+fn category_change_resets_scroll_offset() {
+    let mut app = make_app();
+    app.core.settings_panel_visible = true;
+    app.core.settings_category = SettingsCategory::Terminal;
+    app.core.settings_scroll_offset = 4;
+    app.select_settings_category(SettingsCategory::Font);
+    assert_eq!(app.core.settings_scroll_offset, 0);
 }

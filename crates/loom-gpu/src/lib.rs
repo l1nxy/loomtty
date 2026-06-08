@@ -651,6 +651,9 @@ mod tests {
             chrome_base_sdf_end: 0,
             chrome_base_alpha_glyph_end: 0,
             chrome_base_color_glyph_end: 0,
+            chrome_overlay_sdf_end: 0,
+            chrome_overlay_alpha_glyph_end: 0,
+            chrome_overlay_color_glyph_end: 0,
         };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = renderer.draw_frame(&mut atlas, &mut cache, scene);

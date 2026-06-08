@@ -108,14 +108,19 @@ impl App {
                 sdf_rects: &mut cached_ui.sdf_rects,
             };
 
-            // Two-phase paint to materialise the Base / Overlay
-            // z-layers as contiguous ranges in each primitive Vec.
-            // After the base pass returns, the current Vec lengths
-            // are the layer split points; the overlay pass appends
-            // onto the same Vecs so the final layout is
-            // `[base | overlay]` per stream — the renderer draws the
-            // base half (rects then glyphs) before issuing the overlay
-            // half so popup rects can occlude base glyphs.
+            // Three-phase paint to materialise the Base / Overlay / Top
+            // z-layers as contiguous ranges in each primitive Vec. After
+            // each pass returns, the current Vec lengths are that layer's
+            // split point; the next pass appends onto the same Vecs so the
+            // final layout is `[base | overlay | top]` per stream. The
+            // renderer draws each layer as a (rects → glyphs) pair in
+            // order, so a later layer's rects occlude an earlier layer's
+            // glyphs:
+            //   - Base: tab bar / top bar / status chrome.
+            //   - Overlay: full-screen modals (settings panel, palette,
+            //     paste, help) — their surfaces cover Base glyphs.
+            //   - Top: always-on-top popups (context menu, debug panel) —
+            //     a settings dropdown covers the panel's own labels.
             frame.paint_base(&cx, &mut scene);
             cached_ui.base_glyph_end = cached_ui.glyphs.len();
             cached_ui.base_color_glyph_end = cached_ui.color_glyphs.len();
@@ -128,6 +133,17 @@ impl App {
                 sdf_rects: &mut cached_ui.sdf_rects,
             };
             frame.paint_overlay(&cx, &mut scene);
+            cached_ui.overlay_glyph_end = cached_ui.glyphs.len();
+            cached_ui.overlay_color_glyph_end = cached_ui.color_glyphs.len();
+            cached_ui.overlay_sdf_end = cached_ui.sdf_rects.len();
+
+            let mut scene = UiScene {
+                atlas: self.glyph_cache.as_mut().unwrap(),
+                glyphs: &mut cached_ui.glyphs,
+                color_glyphs: &mut cached_ui.color_glyphs,
+                sdf_rects: &mut cached_ui.sdf_rects,
+            };
+            frame.paint_top(&cx, &mut scene);
         }
 
         glyphs.extend_from_slice(&self.cached_ui_scene.glyphs);

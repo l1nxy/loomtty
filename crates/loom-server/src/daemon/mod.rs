@@ -7,7 +7,6 @@ mod tick;
 mod web;
 
 use anyhow::{Context, Result};
-use loom_layout::column::ColumnWidth;
 use loom_protocol::transport;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -179,13 +178,10 @@ pub async fn prepare_daemon_with(
         cursor: parse(&theme.foreground),
     };
     let mut server = Server::new(&shell, config.appearance.column_gap, terminal_colors);
-    if let Some(ref pw) = config.layout.default_column_width {
-        use loom_config::config::PresetWidth;
-        server.default_column_width = match pw {
-            PresetWidth::Proportion { proportion } => ColumnWidth::Proportion(*proportion),
-            PresetWidth::Fixed { fixed } => ColumnWidth::Fixed(*fixed),
-        };
-    }
+    // Resolve the new-pane sizing policy (explicit `default_column_width`
+    // override, or the Fixed/Dynamic half-vs-full choice). Dynamic mode is
+    // applied per-pane against the live viewport inside the session.
+    server.column_sizing = config.layout.column_sizing();
     server.pane_inset = (config.appearance.padding + config.appearance.border_width) * 2.0;
     server.idle_timeout = std::time::Duration::from_secs(config.server.idle_timeout_secs);
     server.session_config = config.session.clone();

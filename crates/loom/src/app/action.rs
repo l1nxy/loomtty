@@ -264,6 +264,10 @@ impl App {
                 } else {
                     self.enter_modal_close_peers(ModalKind::Settings);
                     self.core.settings_panel_visible = true;
+                    // Open at the top of the active category — a stale
+                    // offset from a previous, taller category would
+                    // otherwise scroll a short category off-screen.
+                    self.core.settings_scroll_offset = 0;
                 }
             }
             Action::ToggleHelp => {

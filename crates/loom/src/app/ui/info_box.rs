@@ -25,54 +25,85 @@ pub(crate) struct InfoBoxComponent {
     cell_h: f32,
 }
 
-pub(super) fn action_short_label(action: &str) -> &str {
-    match action {
-        "focus_left" => "left",
-        "focus_right" => "right",
-        "focus_up" => "up",
-        "focus_down" => "down",
-        "move_pane_left" => "move \u{2190}",
-        "move_pane_right" => "move \u{2192}",
-        "new_column_right" => "new pane",
-        "new_row_below" | "new_workspace_below" | "split_down" => "split \u{2193}",
-        "new_tile_below" | "stack_pane" => "stack \u{2193}",
-        "close_pane" => "close",
-        "column_width_decrease" => "shrink",
-        "column_width_increase" => "grow",
-        "column_width_full" => "full",
-        "column_width_one_third" => "1/3",
-        "column_width_half" => "1/2",
-        "column_width_two_thirds" => "2/3",
-        "cycle_preset_width" => "next width",
-        "cycle_preset_width_reverse" => "prev width",
-        "equalize_adjacent_columns" => "equalize",
-        "consume_into_column" => "stack",
-        "expel_from_column" => "unstack",
-        "toggle_broadcast" => "broadcast",
-        "toggle_overview" => "overview",
-        "exit_overview" => "exit",
-        "toggle_command_palette" => "palette",
-        "toggle_lock" => "lock",
-        "toggle_help" => "help",
-        "toggle_settings" | "settings" => "settings",
-        "detach" => "detach",
-        "scroll_line_up" => "line \u{2191}",
-        "scroll_line_down" => "line \u{2193}",
-        "scroll_half_page_up" => "half \u{2191}",
-        "scroll_half_page_down" => "half \u{2193}",
-        "scroll_page_up" => "page \u{2191}",
-        "scroll_page_down" => "page \u{2193}",
-        "scroll_top" => "top",
-        "scroll_bottom" => "bottom",
-        s if s.starts_with("enter_mode:workspace") => "workspace",
-        s if s.starts_with("enter_mode:session") => "session",
-        s if s.starts_with("enter_mode:resize") => "resize",
-        s if s.starts_with("enter_mode:move") => "move",
-        s if s.starts_with("enter_mode:scroll") => "scroll",
-        s if s.starts_with("enter_mode:") => s.strip_prefix("enter_mode:").unwrap_or(s),
-        s if s.starts_with("switch_workspace_") => s.strip_prefix("switch_workspace_").unwrap_or(s),
-        other => other,
+/// Short, human-readable label for an action name (the config-format
+/// `snake_case` string). Used by the hints bar and the keybindings help
+/// overlay. Hand-tuned for the common actions; anything unmapped —
+/// including `enter_mode:<name>` / `switch_workspace_<n>` and any custom
+/// or future action — is humanized (`snake_case` → "snake case") so a
+/// binding NEVER renders a raw underscored action id.
+pub(super) fn action_short_label(action: &str) -> String {
+    let mapped: Option<&str> = match action {
+        "focus_left" => Some("left"),
+        "focus_right" => Some("right"),
+        "focus_up" => Some("up"),
+        "focus_down" => Some("down"),
+        "move_pane_left" => Some("move \u{2190}"),
+        "move_pane_right" => Some("move \u{2192}"),
+        "new_column_right" => Some("new pane"),
+        "new_row_below" | "new_workspace_below" | "split_down" => Some("split \u{2193}"),
+        "new_tile_below" | "stack_pane" => Some("stack \u{2193}"),
+        "close_pane" => Some("close"),
+        "column_width_decrease" => Some("shrink"),
+        "column_width_increase" => Some("grow"),
+        "column_width_full" => Some("full"),
+        "column_width_one_third" => Some("1/3"),
+        "column_width_half" => Some("1/2"),
+        "column_width_two_thirds" => Some("2/3"),
+        "cycle_preset_width" => Some("next width"),
+        "cycle_preset_width_reverse" => Some("prev width"),
+        "equalize_adjacent_columns" => Some("equalize"),
+        "consume_into_column" => Some("stack"),
+        "expel_from_column" => Some("unstack"),
+        "tile_height_increase" => Some("taller"),
+        "tile_height_decrease" => Some("shorter"),
+        "toggle_broadcast" => Some("broadcast"),
+        "toggle_overview" => Some("overview"),
+        "exit_overview" => Some("exit"),
+        "toggle_command_palette" => Some("palette"),
+        "toggle_session_palette" => Some("sessions"),
+        "toggle_lock" => Some("lock"),
+        "toggle_help" => Some("help"),
+        "toggle_settings" | "settings" => Some("settings"),
+        "next_session" => Some("next session"),
+        "prev_session" | "previous_session" => Some("prev session"),
+        "new_session" => Some("new session"),
+        "detach" => Some("detach"),
+        "open_search" => Some("search"),
+        "close_search" => Some("close search"),
+        "search_next_match" => Some("next match"),
+        "search_prev_match" => Some("prev match"),
+        "clipboard_copy" => Some("copy"),
+        "clipboard_paste" => Some("paste"),
+        "send_leader_key" => Some("send leader"),
+        "scroll_line_up" => Some("line \u{2191}"),
+        "scroll_line_down" => Some("line \u{2193}"),
+        "scroll_half_page_up" => Some("half \u{2191}"),
+        "scroll_half_page_down" => Some("half \u{2193}"),
+        "scroll_page_up" => Some("page \u{2191}"),
+        "scroll_page_down" => Some("page \u{2193}"),
+        "scroll_top" => Some("top"),
+        "scroll_bottom" => Some("bottom"),
+        "prev_prompt" | "previous_prompt" => Some("prev prompt"),
+        "next_prompt" => Some("next prompt"),
+        _ => None,
+    };
+    if let Some(label) = mapped {
+        return label.to_string();
     }
+    // Prefixed dynamic actions: label by their argument.
+    if let Some(rest) = action.strip_prefix("enter_mode:") {
+        return humanize(rest);
+    }
+    if let Some(rest) = action.strip_prefix("switch_workspace_") {
+        return humanize(rest);
+    }
+    // Last resort: humanize so no raw `snake_case` ever reaches the UI.
+    humanize(action)
+}
+
+/// Turn a `snake_case` action id into a space-separated label.
+fn humanize(s: &str) -> String {
+    s.replace('_', " ")
 }
 
 pub(super) fn build_infobox_rows(
@@ -105,7 +136,7 @@ pub(super) fn build_infobox_rows(
             } else {
                 keys[..2].join("/")
             };
-            (key_display, action_short_label(action).to_string())
+            (key_display, action_short_label(action))
         })
         .collect()
 }
@@ -288,5 +319,48 @@ impl InfoBoxComponent {
 impl Render for InfoBoxComponent {
     fn render(&mut self, cx: &RenderCtx<'_>) -> impl IntoElement {
         self.build_tree(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::action_short_label;
+    use loom_config::config::LoomConfig;
+
+    /// Every action reachable from the shipped default keymap must render
+    /// a clean label — no raw `snake_case` ids leaking into the hints bar
+    /// or the help overlay. Guards the `action_short_label` table + its
+    /// humanizing fallback against drift when new default bindings land.
+    #[test]
+    fn default_keymap_labels_have_no_underscores() {
+        let keys = LoomConfig::default().keys;
+        let mut actions: Vec<&str> = Vec::new();
+        actions.extend(keys.bindings.values().map(String::as_str));
+        actions.extend(keys.overview_bindings.values().map(String::as_str));
+        actions.extend(keys.direct_bindings.values().map(String::as_str));
+        for table in keys.modes.values() {
+            actions.extend(table.values().map(String::as_str));
+        }
+
+        for action in actions {
+            let label = action_short_label(action);
+            assert!(
+                !label.is_empty(),
+                "action {action:?} produced an empty label",
+            );
+            assert!(
+                !label.contains('_'),
+                "action {action:?} -> label {label:?} still shows underscores",
+            );
+        }
+    }
+
+    /// The fallback humanizes any unmapped / custom / future action id so
+    /// it never reaches the UI as raw `snake_case`.
+    #[test]
+    fn unknown_action_is_humanized() {
+        assert_eq!(action_short_label("some_future_action"), "some future action");
+        assert_eq!(action_short_label("enter_mode:my_custom"), "my custom");
+        assert_eq!(action_short_label("switch_workspace_3"), "3");
     }
 }

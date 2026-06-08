@@ -103,7 +103,7 @@ impl HintsBarComponent {
                 let mut entries: Vec<_> = mode_bindings.iter().collect();
                 entries.sort_by_key(|(k, _)| k.len());
                 for (key, action) in entries.into_iter().take(3) {
-                    hints.push(h(key, action_short_label(action)));
+                    hints.push(h(key, &action_short_label(action)));
                 }
             }
             hints.push(h("esc", "exit"));

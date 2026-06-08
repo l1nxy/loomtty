@@ -2223,6 +2223,17 @@ impl Renderer {
             let color_total = scene.color_glyphs.len();
             let base_alpha_end = scene.chrome_base_alpha_glyph_end.min(alpha_total);
             let base_color_end = scene.chrome_base_color_glyph_end.min(color_total);
+            // Overlay/Top split. Clamp into `[base_end, total]` so a scene
+            // that records no Top layer collapses the Overlay pass to
+            // empty and routes everything into the Top pass — identical
+            // output to the old two-pass renderer (safe degradation).
+            let overlay_sdf_end = scene.chrome_overlay_sdf_end.clamp(base_sdf_end, total_sdf);
+            let overlay_alpha_end = scene
+                .chrome_overlay_alpha_glyph_end
+                .clamp(base_alpha_end, alpha_total);
+            let overlay_color_end = scene
+                .chrome_overlay_color_glyph_end
+                .clamp(base_color_end, color_total);
 
             if total_sdf > 0 {
                 self.ctx.RSSetScissorRects(Some(&[full_rect]));
@@ -2253,22 +2264,40 @@ impl Renderer {
                 &[make_glyph_range(scene.pane_color_glyph_end, base_color_end)],
             );
 
-            // ── Overlay + transient pass ─────────────────────────────
-            if base_sdf_end < total_sdf {
+            // ── Overlay pass (full-screen modals) ────────────────────
+            if base_sdf_end < overlay_sdf_end {
                 self.sdf
-                    .draw_range(&self.ctx, base_sdf_end, total_sdf - base_sdf_end);
+                    .draw_range(&self.ctx, base_sdf_end, overlay_sdf_end - base_sdf_end);
             }
             atlas_gpu.alpha.draw_batches(
                 &self.ctx,
                 alpha_count,
                 &vp,
-                &[make_glyph_range(base_alpha_end, alpha_total)],
+                &[make_glyph_range(base_alpha_end, overlay_alpha_end)],
             );
             atlas_gpu.color.draw_batches(
                 &self.ctx,
                 color_count,
                 &vp,
-                &[make_glyph_range(base_color_end, color_total)],
+                &[make_glyph_range(base_color_end, overlay_color_end)],
+            );
+
+            // ── Top + transient pass (always-on-top popups) ──────────
+            if overlay_sdf_end < total_sdf {
+                self.sdf
+                    .draw_range(&self.ctx, overlay_sdf_end, total_sdf - overlay_sdf_end);
+            }
+            atlas_gpu.alpha.draw_batches(
+                &self.ctx,
+                alpha_count,
+                &vp,
+                &[make_glyph_range(overlay_alpha_end, alpha_total)],
+            );
+            atlas_gpu.color.draw_batches(
+                &self.ctx,
+                color_count,
+                &vp,
+                &[make_glyph_range(overlay_color_end, color_total)],
             );
             if let Some(profiler) = profiler.as_mut() {
                 profiler.record_draw(draw_start);

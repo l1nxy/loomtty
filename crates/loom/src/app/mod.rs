@@ -131,6 +131,17 @@ pub(crate) struct CachedUiScene {
     pub base_glyph_end: usize,
     pub base_color_glyph_end: usize,
     pub base_sdf_end: usize,
+    /// Index into `glyphs` where the Top layer begins (and the Overlay
+    /// layer ends). Set after the overlay pass. The Top layer holds
+    /// always-on-top popups (context menus, debug panel) that must
+    /// occlude even Overlay-layer modals — e.g. the settings panel's
+    /// enum-picker dropdown, which has to cover the panel's own row
+    /// labels. Without a third tier, those labels (Overlay glyphs) would
+    /// paint over the dropdown's background (an Overlay rect), since the
+    /// GPU draws all of a layer's rects before any of its glyphs.
+    pub overlay_glyph_end: usize,
+    pub overlay_color_glyph_end: usize,
+    pub overlay_sdf_end: usize,
 }
 
 impl CachedUiScene {
@@ -142,6 +153,9 @@ impl CachedUiScene {
         self.base_glyph_end = 0;
         self.base_color_glyph_end = 0;
         self.base_sdf_end = 0;
+        self.overlay_glyph_end = 0;
+        self.overlay_color_glyph_end = 0;
+        self.overlay_sdf_end = 0;
     }
 }
 

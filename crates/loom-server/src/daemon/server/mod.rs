@@ -5,7 +5,7 @@ mod restore;
 mod session_mgmt;
 mod template;
 
-use loom_layout::column::ColumnWidth;
+use loom_config::schema::{ColumnSizing, PresetWidth};
 use loom_protocol::message::*;
 use loom_term::pane::Pane;
 use loom_term::pane::TerminalColors;
@@ -22,7 +22,9 @@ pub(crate) struct Server {
     pub(crate) next_client_id: u64,
     pub(crate) next_pane_id: u64,
     pub(crate) default_shell: String,
-    pub(crate) default_column_width: ColumnWidth,
+    /// New-pane sizing policy, resolved from `layout.*` config and copied
+    /// into each session it spawns.
+    pub(crate) column_sizing: ColumnSizing,
     pub(crate) column_gap: f32,
     pub(crate) pane_inset: f32,
     /// True once server has had at least one session. Prevents premature
@@ -69,7 +71,7 @@ impl Server {
             next_client_id: 1,
             next_pane_id: 1,
             default_shell: shell.to_string(),
-            default_column_width: ColumnWidth::Proportion(0.5),
+            column_sizing: ColumnSizing::Fixed(PresetWidth::Proportion { proportion: 0.5 }),
             column_gap,
             pane_inset: 12.0,
             had_session: false,

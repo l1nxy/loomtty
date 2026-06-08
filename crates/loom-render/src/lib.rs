@@ -65,4 +65,16 @@ pub struct FrameScene<'a> {
     /// transient text (drawn after the Overlay SDF rects).
     pub chrome_base_alpha_glyph_end: usize,
     pub chrome_base_color_glyph_end: usize,
+    /// Index in `sdf_rects` where the Overlay chrome layer ends and the
+    /// Top layer (context menus, debug panel, transient widgets) begins.
+    /// The layered renderer issues a third (SDF → glyphs) pass from here
+    /// to the end so Top popups occlude Overlay-modal glyphs — e.g. the
+    /// settings panel's enum dropdown over the panel's own row labels.
+    /// Backends that issue a single combined draw can ignore this.
+    pub chrome_overlay_sdf_end: usize,
+    /// Indices in `glyphs` / `color_glyphs` where the Overlay chrome layer
+    /// ends and the Top layer begins. The slice from these to the end is
+    /// drawn after the Top SDF rects.
+    pub chrome_overlay_alpha_glyph_end: usize,
+    pub chrome_overlay_color_glyph_end: usize,
 }

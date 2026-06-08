@@ -141,10 +141,10 @@ impl UiFrame {
         Self::capture(app, cx, top_bar_layout, top_bar_h, app.hints_bar_height())
     }
 
-    /// Paint Base-layer chrome. Runs first; rects + glyphs from these
-    /// components occupy the lower z-tier and are drawn fully (rects,
-    /// then glyphs) before Overlay primitives. Caller records the per-
-    /// stream lengths after this returns to know the layer split.
+    /// Paint Base-layer chrome (tab bar, top bar, status chrome, infobox,
+    /// transient notifications). Runs first; rects + glyphs occupy the
+    /// lowest chrome z-tier. Caller records the per-stream lengths after
+    /// this returns to know the Base/Overlay split.
     pub(super) fn paint_base(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         self.top_bar.paint(self.chrome.top_bar, cx, scene);
         self.hints_bar.paint(cx, scene);
@@ -161,39 +161,49 @@ impl UiFrame {
         if let Some(component) = &mut self.connection_status {
             component.paint(cx, scene);
         }
+    }
+
+    /// Paint Overlay-layer chrome on top of Base: full-screen modals. The
+    /// renderer draws Overlay rects after Base glyphs, so a modal's
+    /// (translucent) backdrop dims the Base chrome while its opaque
+    /// surface fully occludes Base glyphs — the tab bar shows through the
+    /// dimmed backdrop but never bleeds over the panel itself.
+    ///
+    /// Multiple components can coexist under the layered `ModalKind`
+    /// invariant: `PendingPaste(CommandPalette/Search)` keeps both palette
+    /// and paste_dialog alive — paste_dialog paints AFTER palette so the
+    /// confirmation covers it, matching the click-priority order in
+    /// `click` / `hover`. The settings panel and help overlay are peers
+    /// of these (kept_set closes the others when one opens).
+    pub(super) fn paint_overlay(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         if let Some(component) = &self.settings_panel {
             component.paint(cx, scene);
         }
-    }
-
-    /// Paint Overlay-layer chrome on top of Base. Multiple components
-    /// can coexist here under the layered `ModalKind` invariant:
-    /// `PendingPaste(CommandPalette/Search)` keeps both palette and
-    /// paste_dialog alive — paste_dialog must paint AFTER palette so
-    /// the confirmation visually covers the palette beneath, matching
-    /// the click-priority order in `click` / `hover`. context_menu
-    /// can't coexist with paste_dialog per `kept_set`, so its order
-    /// vs paste_dialog is moot. The renderer draws Overlay rects
-    /// after Base glyphs, so these popups cover everything underneath
-    /// including labels.
-    pub(super) fn paint_overlay(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         if let Some(component) = &mut self.palette {
             component.paint(cx, scene);
         }
         if let Some(component) = &self.paste_dialog {
             component.paint(cx, scene);
         }
-        if let Some(component) = &mut self.context_menu {
-            component.paint(cx, scene);
-        }
-        // Help overlay is a peer of the other modals (kept_set closes
-        // them when it opens), so its order vs palette/context_menu is
-        // moot — it paints alone whenever present.
         if let Some(component) = &mut self.help_overlay {
             component.paint(cx, scene);
         }
-        // Debug panel paints last so it sits above every other overlay
-        // — it's a developer affordance, not part of the visual chrome.
+    }
+
+    /// Paint Top-layer chrome: always-on-top popups that must occlude even
+    /// Overlay-layer modals. The context menu is the settings panel's own
+    /// enum-picker dropdown — it has to cover the panel's row labels, and
+    /// the panel is itself an Overlay modal, so the dropdown needs a tier
+    /// above Overlay (within a single layer, all rects draw before all
+    /// glyphs, so the dropdown's background couldn't otherwise sit over
+    /// the panel's text). The debug panel rides here too so it stays above
+    /// everything else.
+    pub(super) fn paint_top(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        if let Some(component) = &mut self.context_menu {
+            component.paint(cx, scene);
+        }
+        // Debug panel paints last so it sits above every other popup —
+        // it's a developer affordance, not part of the visual chrome.
         if let Some(component) = &mut self.debug_panel {
             component.paint(cx, scene);
         }

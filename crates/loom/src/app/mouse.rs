@@ -533,20 +533,26 @@ impl App {
             return;
         }
 
-        // Settings panel / pending paste / search bar are
-        // viewport-owning modals; their backdrop / strip must
-        // consume wheel events so nothing below scrolls —
-        // including the palette in the layered
+        // Settings panel owns the viewport while open — the wheel
+        // scrolls its (possibly overflowing) body rather than anything
+        // beneath the backdrop. Categories can list more fields than
+        // fit the panel height, so this is the only way to reach the
+        // rows below the fold.
+        if self.core.settings_panel_visible {
+            self.handle_settings_wheel(delta);
+            return;
+        }
+
+        // Pending paste / search bar are viewport-owning modals; their
+        // backdrop / strip must consume wheel events so nothing below
+        // scrolls — including the palette in the layered
         // `PendingPaste(CommandPalette/Search)` case where both are
         // alive. Search needs the same gate because scrolling the
         // pane while the search bar is open shifts the buffer view
         // out from under the active match highlight, breaking
         // search continuity. `handle_focus_follows_mouse` already
-        // gates on the same triple — keep them in lockstep.
-        if self.core.settings_panel_visible
-            || self.core.pending_paste.is_some()
-            || self.core.search_state.is_some()
-        {
+        // gates on the same set — keep them in lockstep.
+        if self.core.pending_paste.is_some() || self.core.search_state.is_some() {
             return;
         }
 
@@ -1028,6 +1034,32 @@ impl App {
         let next = (self.core.context_menu_scroll_offset as i32 + steps).clamp(0, max_offset);
         self.core.context_menu_scroll_offset = next as usize;
         true
+    }
+
+    /// Scroll the open settings-panel body by one wheel notch. The
+    /// active category windows its rows, so this just nudges the
+    /// shared `settings_scroll_offset` within `[0, max_offset]`.
+    /// Capture-then-mutate avoids overlapping borrows of `self`
+    /// between the geometry peek and the offset write.
+    fn handle_settings_wheel(&mut self, delta: MouseScrollDelta) {
+        let max_offset = {
+            let cx = self.ui_context();
+            match crate::app::ui::settings_panel::SettingsPanelComponent::capture(self, &cx) {
+                Some(panel) => panel.max_scroll_offset(),
+                None => return,
+            }
+        };
+        if max_offset == 0 {
+            return;
+        }
+        let steps = wheel_steps_from_delta(delta);
+        if steps == 0 {
+            return;
+        }
+        let next =
+            (self.core.settings_scroll_offset as i32 + steps).clamp(0, max_offset as i32);
+        self.core.settings_scroll_offset = next as usize;
+        self.request_mouse_redraw();
     }
 
     fn handle_palette_wheel(&mut self, delta: MouseScrollDelta) -> bool {

@@ -1738,7 +1738,19 @@ impl Renderer {
             let color_total = scene.color_glyphs.len();
             let base_alpha_end = scene.chrome_base_alpha_glyph_end.min(alpha_total);
             let base_color_end = scene.chrome_base_color_glyph_end.min(color_total);
-            // Single upload covers both Base and Overlay slices —
+            // Overlay/Top split. Clamp into `[base_end, total]`: a scene
+            // that didn't record a Top layer leaves these at/below the
+            // base split, which collapses the Overlay pass to empty and
+            // routes everything into the Top pass — identical output to
+            // the old two-pass renderer, so unset values degrade safely.
+            let overlay_sdf_end = scene.chrome_overlay_sdf_end.clamp(base_sdf_end, total_sdf);
+            let overlay_alpha_end = scene
+                .chrome_overlay_alpha_glyph_end
+                .clamp(base_alpha_end, alpha_total);
+            let overlay_color_end = scene
+                .chrome_overlay_color_glyph_end
+                .clamp(base_color_end, color_total);
+            // Single upload covers all three layers' slices —
             // `draw_range` issues the contiguous sub-draws.
             if total_sdf > 0 {
                 self.sdf.upload(scene.sdf_rects, vw_f, vh_f);
@@ -1779,15 +1791,15 @@ impl Renderer {
                 &mut color_uniform_slot,
             );
 
-            // ── Overlay + transient pass ─────────────────────────────
-            if base_sdf_end < total_sdf {
+            // ── Overlay pass (full-screen modals) ────────────────────
+            if base_sdf_end < overlay_sdf_end {
                 self.sdf
-                    .draw_range(&mut pass, base_sdf_end, total_sdf - base_sdf_end);
+                    .draw_range(&mut pass, base_sdf_end, overlay_sdf_end - base_sdf_end);
             }
             atlas_gpu.draw_alpha_batches(
                 &mut pass,
                 alpha_count,
-                &[make_glyph_range(base_alpha_end, alpha_total)],
+                &[make_glyph_range(base_alpha_end, overlay_alpha_end)],
                 vw_f,
                 vh_f,
                 &mut alpha_uniform_slot,
@@ -1795,7 +1807,29 @@ impl Renderer {
             atlas_gpu.draw_color_batches(
                 &mut pass,
                 color_count,
-                &[make_glyph_range(base_color_end, color_total)],
+                &[make_glyph_range(base_color_end, overlay_color_end)],
+                vw_f,
+                vh_f,
+                &mut color_uniform_slot,
+            );
+
+            // ── Top + transient pass (always-on-top popups) ──────────
+            if overlay_sdf_end < total_sdf {
+                self.sdf
+                    .draw_range(&mut pass, overlay_sdf_end, total_sdf - overlay_sdf_end);
+            }
+            atlas_gpu.draw_alpha_batches(
+                &mut pass,
+                alpha_count,
+                &[make_glyph_range(overlay_alpha_end, alpha_total)],
+                vw_f,
+                vh_f,
+                &mut alpha_uniform_slot,
+            );
+            atlas_gpu.draw_color_batches(
+                &mut pass,
+                color_count,
+                &[make_glyph_range(overlay_color_end, color_total)],
                 vw_f,
                 vh_f,
                 &mut color_uniform_slot,

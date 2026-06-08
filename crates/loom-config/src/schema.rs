@@ -695,11 +695,63 @@ impl Default for RenderConfig {
 }
 
 /// A single width preset: either a proportion of viewport or fixed pixels.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PresetWidth {
     Proportion { proportion: f64 },
     Fixed { fixed: f64 },
+}
+
+/// Whether a newly opened pane is sized to a constant fraction, or
+/// adapts to the window size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NewPaneSizing {
+    /// Always `new_pane_width` (half or full), regardless of window size.
+    Fixed,
+    /// Full width when the window is narrower than
+    /// `dynamic_fullscreen_max_width`, otherwise half width.
+    Dynamic,
+}
+
+/// Fixed-mode width choice for a newly opened pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NewPaneWidth {
+    /// Half the viewport width (proportion 0.5).
+    Half,
+    /// The full viewport width (proportion 1.0).
+    Full,
+}
+
+/// Resolved new-pane sizing policy. Distilled from [`LayoutConfig`] once
+/// (via [`LayoutConfig::column_sizing`]) so the server can carry a small
+/// `Copy` value and consult it at pane-creation time against the live
+/// viewport width, rather than holding the whole config.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ColumnSizing {
+    /// Constant width — an explicit `default_column_width` override, or
+    /// the Fixed half/full choice.
+    Fixed(PresetWidth),
+    /// Full viewport width below `threshold` px, half width at or above.
+    Dynamic { threshold: f64 },
+}
+
+impl ColumnSizing {
+    /// Width a new pane should take given the current viewport pixel
+    /// width.
+    pub fn width_at(self, viewport_w: f64) -> PresetWidth {
+        match self {
+            ColumnSizing::Fixed(w) => w,
+            ColumnSizing::Dynamic { threshold } => {
+                if viewport_w < threshold {
+                    PresetWidth::Proportion { proportion: 1.0 }
+                } else {
+                    PresetWidth::Proportion { proportion: 0.5 }
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -713,6 +765,38 @@ pub struct LayoutConfig {
     ///   from don't fit on-screen together (PaperWM-style)
     /// "always" = always center the focused column
     pub center_focused_column: CenterStrategy,
+    /// Whether a newly opened pane uses a fixed width or adapts to the
+    /// window size. See [`NewPaneSizing`].
+    pub new_pane_sizing: NewPaneSizing,
+    /// In `Fixed` mode, whether a new pane is half- or full-width.
+    pub new_pane_width: NewPaneWidth,
+    /// In `Dynamic` mode, the window pixel width below which a new pane
+    /// opens full-width (at or above it, half-width).
+    pub dynamic_fullscreen_max_width: f64,
+}
+
+impl LayoutConfig {
+    /// Resolve the new-pane sizing policy. An explicit
+    /// `default_column_width` wins (a power-user override kept for
+    /// back-compat); otherwise the Fixed/Dynamic policy decides between
+    /// half and full width.
+    pub fn column_sizing(&self) -> ColumnSizing {
+        if let Some(explicit) = self.default_column_width {
+            return ColumnSizing::Fixed(explicit);
+        }
+        match self.new_pane_sizing {
+            NewPaneSizing::Fixed => {
+                let w = match self.new_pane_width {
+                    NewPaneWidth::Half => PresetWidth::Proportion { proportion: 0.5 },
+                    NewPaneWidth::Full => PresetWidth::Proportion { proportion: 1.0 },
+                };
+                ColumnSizing::Fixed(w)
+            }
+            NewPaneSizing::Dynamic => ColumnSizing::Dynamic {
+                threshold: self.dynamic_fullscreen_max_width,
+            },
+        }
+    }
 }
 
 /// Strategy for centering the focused column in the viewport.
@@ -729,6 +813,12 @@ impl Default for LayoutConfig {
         LayoutConfig {
             default_column_width: None,
             center_focused_column: CenterStrategy::Never,
+            // Defaults preserve the historic behaviour: no explicit
+            // override → Fixed + Half → Proportion(0.5), exactly the old
+            // `default_column_width` fallback.
+            new_pane_sizing: NewPaneSizing::Fixed,
+            new_pane_width: NewPaneWidth::Half,
+            dynamic_fullscreen_max_width: 1000.0,
             preset_widths: vec![
                 PresetWidth::Proportion {
                     proportion: 1.0 / 3.0,

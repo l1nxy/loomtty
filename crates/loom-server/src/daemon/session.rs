@@ -1,4 +1,5 @@
 use anyhow::Result;
+use loom_config::schema::{ColumnSizing, PresetWidth};
 use loom_layout::column::ColumnWidth;
 use loom_layout::geometry::ViewSize;
 use loom_layout::workspace_set::WorkspaceSet;
@@ -22,7 +23,9 @@ pub(crate) struct Session {
     pub(crate) session_name: String,
     pub(crate) generation: HashMap<u64, u64>, // per pane_id
     pub(crate) default_shell: String,
-    pub(crate) default_column_width: ColumnWidth,
+    /// New-pane sizing policy (resolved from `layout.*` config). Consulted
+    /// against the live viewport width when a pane is created.
+    pub(crate) column_sizing: ColumnSizing,
     /// Total inset per pane: (padding + border_width) * 2, subtracted from pane pixel size
     /// before computing grid cols/rows.
     pub(crate) pane_inset: f32,
@@ -70,7 +73,7 @@ impl Session {
             session_name: session_name.to_string(),
             generation: HashMap::new(),
             default_shell: shell.to_string(),
-            default_column_width: ColumnWidth::Proportion(0.5),
+            column_sizing: ColumnSizing::Fixed(PresetWidth::Proportion { proportion: 0.5 }),
             pane_inset: 12.0, // (4.0 padding + 2.0 border) * 2 = 12.0 default
             terminal_colors,
             session_dirty: false,
@@ -129,6 +132,19 @@ impl Session {
         self.create_pane_with_opts(next_pane_id, clients, None, None)
     }
 
+    /// Initial column width for a newly opened pane, applying the
+    /// configured sizing policy against the current viewport width.
+    /// Dynamic mode resolves to full/half here based on the live width,
+    /// so the same session adapts as the window is resized between pane
+    /// creations.
+    pub(crate) fn resolved_column_width(&self) -> ColumnWidth {
+        let vw = self.workspaces.view_size.width as f64;
+        match self.column_sizing.width_at(vw) {
+            PresetWidth::Proportion { proportion } => ColumnWidth::Proportion(proportion),
+            PresetWidth::Fixed { fixed } => ColumnWidth::Fixed(fixed),
+        }
+    }
+
     /// Create a new pane with an optional command and/or working directory.
     pub(crate) fn create_pane_with_opts(
         &mut self,
@@ -142,7 +158,7 @@ impl Session {
         // Compute initial size from the column's actual width (not full viewport)
         let vw = self.workspaces.view_size.width;
         let vh = self.workspaces.view_size.height;
-        let col_width = self.default_column_width;
+        let col_width = self.resolved_column_width();
         let col_px = match col_width {
             ColumnWidth::Proportion(p) => (vw as f64 * p) as f32,
             ColumnWidth::Fixed(px) => px as f32,
@@ -179,9 +195,8 @@ impl Session {
         pane.init_colors(&self.terminal_colors);
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
-        self.workspaces
-            .active_mut()
-            .add_column_right(id, self.default_column_width);
+        let col_w = self.resolved_column_width();
+        self.workspaces.active_mut().add_column_right(id, col_w);
         Self::mark_full_damage(clients, &self.session_name, id);
         Ok(id)
     }
@@ -230,10 +245,11 @@ impl Session {
         pane.init_colors(&self.terminal_colors);
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
+        let col_w = self.resolved_column_width();
         let stacked = self
             .workspaces
             .active_mut()
-            .add_tile_to_active_column(id, self.default_column_width);
+            .add_tile_to_active_column(id, col_w);
         if !stacked {
             // Reachable when the active workspace is empty (e.g. user pressed
             // Shift+D after `switch_to` landed on a blank). The pane lands in

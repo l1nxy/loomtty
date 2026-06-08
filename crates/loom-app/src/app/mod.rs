@@ -66,6 +66,12 @@ pub struct AppModel {
     /// to `Appearance` on first open and persists across open/close so
     /// reopening the panel returns to the user's last view.
     pub settings_category: SettingsCategory,
+    /// Vertical scroll offset (in rows) for the settings-panel body.
+    /// A category can list more fields than fit the panel height; the
+    /// body windows its rows the same way the context menu does. Reset
+    /// to 0 whenever the panel opens or the active category changes so
+    /// each view starts at the top.
+    pub settings_scroll_offset: usize,
     /// Keybindings help overlay visibility. Read-only cheat-sheet that
     /// lists the live keymap; toggled by `Action::ToggleHelp` and
     /// dismissed by any key / click. Simple bool — it owns no internal
@@ -184,6 +190,7 @@ impl AppModel {
             context_menu_scroll_offset: 0,
             settings_panel_visible: false,
             settings_category: SettingsCategory::default(),
+            settings_scroll_offset: 0,
             help_visible: false,
             ime: ImeState {
                 preedit_active: false,

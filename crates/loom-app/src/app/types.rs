@@ -59,10 +59,14 @@ pub enum SettingsCategory {
     Font,
     Terminal,
     Layout,
+    TabBar,
+    StatusBar,
     Animation,
     Input,
-    StatusBar,
+    Gesture,
+    Render,
     Prediction,
+    Session,
 }
 
 impl SettingsCategory {
@@ -72,10 +76,14 @@ impl SettingsCategory {
         Self::Font,
         Self::Terminal,
         Self::Layout,
+        Self::TabBar,
+        Self::StatusBar,
         Self::Animation,
         Self::Input,
-        Self::StatusBar,
+        Self::Gesture,
+        Self::Render,
         Self::Prediction,
+        Self::Session,
     ];
 
     pub fn label(self) -> &'static str {
@@ -84,10 +92,14 @@ impl SettingsCategory {
             Self::Font => "Font",
             Self::Terminal => "Terminal",
             Self::Layout => "Layout",
+            Self::TabBar => "Tab Bar",
+            Self::StatusBar => "Status Bar",
             Self::Animation => "Animation",
             Self::Input => "Input",
-            Self::StatusBar => "Status Bar",
+            Self::Gesture => "Gesture",
+            Self::Render => "Render",
             Self::Prediction => "Prediction",
+            Self::Session => "Session",
         }
     }
 }

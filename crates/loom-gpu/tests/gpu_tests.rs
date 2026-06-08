@@ -413,6 +413,9 @@ fn frame_scene_construction() {
         chrome_base_sdf_end: 0,
         chrome_base_alpha_glyph_end: 0,
         chrome_base_color_glyph_end: 0,
+        chrome_overlay_sdf_end: 0,
+        chrome_overlay_alpha_glyph_end: 0,
+        chrome_overlay_color_glyph_end: 0,
     };
     assert_eq!(scene.bg_rects.len(), 1);
     assert_eq!(scene.clear_color[0], 0.1);

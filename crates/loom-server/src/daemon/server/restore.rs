@@ -18,7 +18,7 @@ impl Server {
                 self.column_gap,
                 self.terminal_colors.clone(),
             );
-            session.default_column_width = self.default_column_width;
+            session.column_sizing = self.column_sizing;
             session.pane_inset = self.pane_inset;
             session.pty_notify = self.pty_notify.clone();
 

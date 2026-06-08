@@ -54,6 +54,15 @@ struct AssembledScene {
     chrome_base_sdf_end: usize,
     chrome_base_alpha_glyph_end: usize,
     chrome_base_color_glyph_end: usize,
+    /// Absolute indices where the Overlay layer ends and the Top layer
+    /// (context menus / debug panel / transient chrome) begins — the
+    /// second split point in the `[base | overlay | top]` layout. The
+    /// renderer issues a third (SDF → glyphs) pass from here to the end
+    /// so Top popups occlude Overlay-modal glyphs (a settings dropdown
+    /// over the settings panel's own labels).
+    chrome_overlay_sdf_end: usize,
+    chrome_overlay_alpha_glyph_end: usize,
+    chrome_overlay_color_glyph_end: usize,
     /// Index in `bg_rects` where active-tile backgrounds begin.
     active_bg_start: usize,
     /// Index in `glyphs`/`color_glyphs` where pane glyphs end and
@@ -695,6 +704,10 @@ impl App {
             // category's body until some other invalidator (motion
             // ticker tick, hover hit_id change) happens to fire.
             self.core.settings_category.hash(hasher);
+            // Body scroll offset — the windowed row slice changes with
+            // it, so a wheel scroll must invalidate the cached chrome
+            // scene the same way a category switch does.
+            self.core.settings_scroll_offset.hash(hasher);
             // The displayed Theme dropdown label and Pane Opacity
             // value are snapshotted at capture time — hash both so
             // live edits invalidate the chrome cache and the panel
@@ -2747,8 +2760,17 @@ impl App {
         let chrome_base_alpha_glyph_end = pane_glyph_end + self.cached_ui_scene.base_glyph_end;
         let chrome_base_color_glyph_end =
             pane_color_glyph_end + self.cached_ui_scene.base_color_glyph_end;
+        // Overlay/Top split. Transient chrome (search bar, ime, bell) is
+        // appended after the cached scene below, so it falls past
+        // `overlay_*_end` and rides the Top pass — which is correct, those
+        // widgets should sit above modals too.
+        let chrome_overlay_alpha_glyph_end =
+            pane_glyph_end + self.cached_ui_scene.overlay_glyph_end;
+        let chrome_overlay_color_glyph_end =
+            pane_color_glyph_end + self.cached_ui_scene.overlay_color_glyph_end;
         let pane_sdf_len = ui_sdf_rects.len();
         let chrome_base_sdf_end = pane_sdf_len + self.cached_ui_scene.base_sdf_end;
+        let chrome_overlay_sdf_end = pane_sdf_len + self.cached_ui_scene.overlay_sdf_end;
         // Cached chrome must draw after pane focus rings but before
         // transient overlays that should sit above everything else.
         // Copy from the cache (don't move) so `cached_ui_scene.sdf_rects`
@@ -2784,6 +2806,9 @@ impl App {
             chrome_base_sdf_end,
             chrome_base_alpha_glyph_end,
             chrome_base_color_glyph_end,
+            chrome_overlay_sdf_end,
+            chrome_overlay_alpha_glyph_end,
+            chrome_overlay_color_glyph_end,
             active_bg_start,
             pane_glyph_end,
             pane_color_glyph_end,
@@ -2820,6 +2845,9 @@ impl App {
             chrome_base_sdf_end,
             chrome_base_alpha_glyph_end,
             chrome_base_color_glyph_end,
+            chrome_overlay_sdf_end,
+            chrome_overlay_alpha_glyph_end,
+            chrome_overlay_color_glyph_end,
             active_bg_start,
             pane_glyph_end,
             pane_color_glyph_end,
@@ -2870,6 +2898,9 @@ impl App {
                 chrome_base_sdf_end,
                 chrome_base_alpha_glyph_end,
                 chrome_base_color_glyph_end,
+                chrome_overlay_sdf_end,
+                chrome_overlay_alpha_glyph_end,
+                chrome_overlay_color_glyph_end,
             },
         ) {
             log::error!("draw_frame failed: {e}");

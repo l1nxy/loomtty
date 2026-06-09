@@ -220,6 +220,8 @@ fn main() -> Result<()> {
 
         let event_loop = EventLoop::new()?;
         let mut app = App::new(config, session_name);
+        app.ensure_plugin_engine();
+        app.ensure_usage_poller();
         app.event_loop_proxy = Some(event_loop.create_proxy());
         app.core.recent_hosts = recent_hosts::load();
         app.core.remote_config = Some(app::RemoteConnectionConfig {
@@ -256,6 +258,8 @@ fn main() -> Result<()> {
 
     let event_loop = EventLoop::new()?;
     let mut app = App::new(config, session_name);
+    app.ensure_plugin_engine();
+    app.ensure_usage_poller();
     app.event_loop_proxy = Some(event_loop.create_proxy());
     app.core.recent_hosts = recent_hosts::load();
     event_loop.run_app(&mut app)?;

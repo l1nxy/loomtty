@@ -27,6 +27,8 @@ pub struct LoomConfig {
     #[garde(dive)]
     pub statusbar: StatusBarConfig,
     #[garde(dive)]
+    pub hints_bar: HintsBarConfig,
+    #[garde(dive)]
     pub tabbar: TabBarConfig,
     #[garde(skip)]
     pub input: InputConfig,
@@ -479,6 +481,113 @@ pub struct StatusBarConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[garde(skip)]
     pub height_padding: Option<f32>,
+    /// Ordered list of segments rendered left-to-right in the status bar.
+    /// Empty (or omitted) falls back to the historical 4-slot layout —
+    /// keeps existing configs working unchanged. The fill segment
+    /// (`pane-tabs` today) takes whatever horizontal space is left after
+    /// fixed-width segments measure themselves; if you list multiple
+    /// fill segments the leftover is split equally.
+    #[garde(skip)]
+    pub segments: Vec<StatusBarSegmentKind>,
+    #[garde(dive)]
+    pub usage: UsageSegmentConfig,
+}
+
+/// Kinds of status-bar segments. Their concrete rendering lives in
+/// `crates/loom/src/app/ui/top_bar/`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StatusBarSegmentKind {
+    /// Session/host name on a solid accent block.
+    SessionLabel,
+    /// Scrollable pane-tab strip (the "fill" segment).
+    PaneTabs,
+    /// Workspace cycle indicator.
+    Workspace,
+    /// Right-most mode badge (NORMAL / LEADER / BROADCAST / OVERVIEW).
+    Mode,
+    /// Claude Code + Codex usage probe results, sourced from the
+    /// background OAuth poller. See `[statusbar.usage]`.
+    Usage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(default)]
+pub struct UsageSegmentConfig {
+    /// Master switch for the OAuth-driven probes. `false` keeps the
+    /// segment renderer alive (it'll show a placeholder) but skips the
+    /// background HTTP poller entirely.
+    #[garde(skip)]
+    pub enabled: bool,
+    #[garde(skip)]
+    pub claude: bool,
+    #[garde(skip)]
+    pub codex: bool,
+    /// Refresh interval in seconds. Below ~30s both providers start
+    /// throttling; the default 60s keeps numbers fresh-enough without
+    /// burning the rate limit.
+    #[garde(range(min = 15, max = 3600))]
+    pub refresh_secs: u64,
+}
+
+impl Default for UsageSegmentConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            claude: true,
+            codex: true,
+            refresh_secs: 60,
+        }
+    }
+}
+
+/// Hints bar segments. Just like `StatusBarSegmentKind` for the top
+/// bar — `[hints_bar].segments = [...]` reorders them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HintsBarSegmentKind {
+    /// `● 3 panes · vim README.md` — pane count + active pane title.
+    /// Acts as the row's flex zone (Fill) so the other segments keep
+    /// their natural widths.
+    PaneInfo,
+    /// Claude / Codex usage probe results. Renders only when
+    /// `[statusbar.usage] enabled = true`; otherwise the slot
+    /// collapses so neighbouring segments tile flush.
+    Usage,
+    /// Leader-key hints column on the right (e.g. `n new  x close
+    /// o overview`). Mirrors the historical right-side hints.
+    LeaderHints,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(default)]
+pub struct HintsBarConfig {
+    /// Ordered segment list. Empty = legacy default
+    /// `[pane-info, usage, leader-hints]`.
+    #[garde(skip)]
+    pub segments: Vec<HintsBarSegmentKind>,
+}
+
+impl Default for HintsBarConfig {
+    fn default() -> Self {
+        Self {
+            segments: Vec::new(),
+        }
+    }
+}
+
+impl HintsBarConfig {
+    pub fn effective_segments(&self) -> Vec<HintsBarSegmentKind> {
+        if self.segments.is_empty() {
+            vec![
+                HintsBarSegmentKind::PaneInfo,
+                HintsBarSegmentKind::Usage,
+                HintsBarSegmentKind::LeaderHints,
+            ]
+        } else {
+            self.segments.clone()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -497,6 +606,25 @@ impl Default for StatusBarConfig {
             text_baseline: 0.8,
             leader_indicator_ratio: 0.1,
             height_padding: None,
+            segments: Vec::new(),
+            usage: UsageSegmentConfig::default(),
+        }
+    }
+}
+
+impl StatusBarConfig {
+    /// Effective segment list: explicit `segments = [...]` if non-empty,
+    /// otherwise the historical 4-slot default.
+    pub fn effective_segments(&self) -> Vec<StatusBarSegmentKind> {
+        if self.segments.is_empty() {
+            vec![
+                StatusBarSegmentKind::SessionLabel,
+                StatusBarSegmentKind::PaneTabs,
+                StatusBarSegmentKind::Workspace,
+                StatusBarSegmentKind::Mode,
+            ]
+        } else {
+            self.segments.clone()
         }
     }
 }

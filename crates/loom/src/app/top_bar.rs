@@ -258,6 +258,25 @@ impl App {
         self.core.current_mode_label()
     }
 
+    /// Plain-string label for the usage segment. Pulled here so
+    /// `measure_top_bar_segment` can compute width without instantiating
+    /// the renderer. The renderer (`super::ui::top_bar::usage`)
+    /// reproduces the same logic for paint.
+    pub(crate) fn usage_segment_label(&self) -> String {
+        let snapshot = self.usage_snapshot();
+        super::ui::top_bar::usage::format_label(&snapshot)
+    }
+
+    /// Hook for the segment renderer to read the latest poll. Returns
+    /// the current snapshot if the App owns one, or an empty default
+    /// (so the segment shows `"usage --"` placeholder text).
+    pub(crate) fn usage_snapshot(&self) -> super::usage::UsageSnapshot {
+        self.usage
+            .as_ref()
+            .map(|s| s.read())
+            .unwrap_or_default()
+    }
+
     pub(crate) fn top_bar_layout(
         &self,
         vw: f32,

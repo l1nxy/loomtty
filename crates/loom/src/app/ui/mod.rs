@@ -16,7 +16,7 @@ pub(crate) mod settings_panel;
 mod tab_bar;
 mod text_layout;
 pub(crate) mod tokens;
-mod top_bar;
+pub(crate) mod top_bar;
 mod transient;
 pub(crate) mod types;
 

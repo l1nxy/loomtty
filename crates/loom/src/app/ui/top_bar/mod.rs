@@ -21,6 +21,7 @@
 mod mode;
 mod pane_tabs;
 mod session_label;
+pub(crate) mod usage;
 mod workspace;
 
 use loom_config::config::StatusBarPosition;

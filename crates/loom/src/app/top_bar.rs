@@ -97,33 +97,6 @@ pub(crate) fn cap_segments(
     widths
 }
 
-/// Compatibility shim for the historical 4-slot capper. New code goes
-/// through `cap_segments` against the configured segment list.
-pub(crate) fn cap_fixed_section_widths(
-    bar_w: f32,
-    session_w: f32,
-    workspace_w: f32,
-    mode_w: f32,
-) -> (f32, f32, f32) {
-    let segs = [
-        (
-            StatusBarSegmentKind::SessionLabel,
-            SegmentMeasure::Fixed(session_w),
-        ),
-        (StatusBarSegmentKind::PaneTabs, SegmentMeasure::Fill),
-        (
-            StatusBarSegmentKind::Workspace,
-            SegmentMeasure::Fixed(workspace_w),
-        ),
-        (
-            StatusBarSegmentKind::Mode,
-            SegmentMeasure::Fixed(mode_w),
-        ),
-    ];
-    let widths = cap_segments(bar_w, &segs);
-    (widths[0], widths[2], widths[3])
-}
-
 /// Shape-aware pixel width with a cell-grid fallback. Kept here (rather
 /// than pulling `ui::text_layout` into the non-UI `top_bar` module) so
 /// layout math stays consistent whether measured from UI components (which

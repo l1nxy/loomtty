@@ -20,7 +20,6 @@ struct TilePaintConfig {
     bg_color: [f32; 4],
     link_color: [f32; 4],
     accent: [f32; 4],
-    cache_tile_glyphs: bool,
 }
 
 /// One frame's worth of GPU draw input, assembled by
@@ -194,10 +193,6 @@ impl App {
             bg_color: ThemeConfig::parse_color(&self.core.config.theme.background),
             link_color: ThemeConfig::parse_color(&self.core.config.theme.accent),
             accent: ThemeConfig::parse_color(&self.core.config.theme.accent),
-            // Per-row tile glyph/background caching disabled — rebuild from
-            // atlas each frame (matches Ghostty / Windows Terminal approach).
-            // render_snapshot_hash still skips entire idle frames.
-            cache_tile_glyphs: false,
         }
     }
 
@@ -256,23 +251,13 @@ impl App {
         let mut color_glyphs = Vec::new();
         let mut dirty_glyph_ranges = Vec::new();
         let mut dirty_color_ranges = Vec::new();
-        let tile_key = (
-            visual.inner_x.to_bits(),
-            visual.inner_y.to_bits(),
-            zoom.to_bits(),
-            visual.dim.to_bits(),
-        );
         Self::emit_tile_glyphs(
-            &mut self.cached_tile_glyphs,
-            pane_id,
             view,
             visual.inner_x,
             visual.inner_y,
             zoom,
             visual.dim,
             paint.bg_color,
-            tile_key,
-            paint.cache_tile_glyphs,
             &mut dirty_glyph_ranges,
             &mut dirty_color_ranges,
             &mut glyphs,
@@ -304,15 +289,11 @@ impl App {
     }
 
     fn emit_tile_background_rows(
-        background_cache: &mut std::collections::HashMap<u64, super::CachedTileBackgrounds>,
-        pane_id: u64,
         view: &terminal::TerminalView,
         inner_x: f32,
         inner_y: f32,
         zoom: f32,
         tr: &GeoRect,
-        tile_key: (u32, u32, u32, u32),
-        cache_tile_backgrounds: bool,
         pane_opacity: f32,
         dirty_bg_ranges: &mut Vec<(usize, usize)>,
         bg_rects: &mut Vec<Rect>,
@@ -343,64 +324,11 @@ impl App {
             })
         };
 
-        if !cache_tile_backgrounds {
-            for row in 0..view.row_count() {
-                let row_start = bg_rects.len();
-                bg_rects.extend(view.row_bg_rects(row).iter().filter_map(make_rect));
-                let row_end = bg_rects.len();
-                if row_start < row_end {
-                    dirty_bg_ranges.push((row_start, row_end));
-                }
-            }
-            return;
-        }
-
-        let cached =
-            background_cache
-                .entry(pane_id)
-                .or_insert_with(|| super::CachedTileBackgrounds {
-                    key: tile_key,
-                    rows: Vec::new(),
-                });
-
-        if cached.key != tile_key || cached.rows.len() != view.row_count() {
-            cached.key = tile_key;
-            cached.rows = vec![super::CachedTileBackgroundRow::default(); view.row_count()];
-            for row in &mut cached.rows {
-                row.epoch = 0;
-                row.bg_rects.clear();
-            }
-        } else if view.last_scroll_shift != 0 {
-            let shift = view.last_scroll_shift;
-            let amount = shift.unsigned_abs() as usize;
-            if amount > 0 && amount < cached.rows.len() {
-                if shift > 0 {
-                    cached.rows.rotate_right(amount);
-                } else {
-                    cached.rows.rotate_left(amount);
-                }
-                let delta_y = shift as f32 * view.cell_height * zoom;
-                for row in &mut cached.rows {
-                    for rect in &mut row.bg_rects {
-                        rect.y += delta_y;
-                    }
-                }
-            }
-        }
-
         for row in 0..view.row_count() {
             let row_start = bg_rects.len();
-            let rebuilt = cached.rows[row].epoch != view.row_epoch(row);
-            if rebuilt {
-                cached.rows[row].epoch = view.row_epoch(row);
-                cached.rows[row].bg_rects.clear();
-                cached.rows[row]
-                    .bg_rects
-                    .extend(view.row_bg_rects(row).iter().filter_map(make_rect));
-            }
-            bg_rects.extend_from_slice(&cached.rows[row].bg_rects);
+            bg_rects.extend(view.row_bg_rects(row).iter().filter_map(make_rect));
             let row_end = bg_rects.len();
-            if rebuilt && row_start < row_end {
+            if row_start < row_end {
                 dirty_bg_ranges.push((row_start, row_end));
             }
         }
@@ -434,12 +362,6 @@ impl App {
         // pane_opacity. `pane_opacity = 1.0` (default) is a no-op
         // multiplication.
         let pane_opacity = self.core.config.appearance.pane_opacity;
-        let tile_key = (
-            inner_x.to_bits(),
-            inner_y.to_bits(),
-            zoom.to_bits(),
-            visual.dim.to_bits(),
-        );
 
         // Same focus-ring/inactive-border split as `build_tile`.
         let range_start: usize;
@@ -486,15 +408,11 @@ impl App {
         };
 
         Self::emit_tile_background_rows(
-            &mut self.cached_tile_backgrounds,
-            pane_id,
             view,
             inner_x,
             inner_y,
             zoom,
             &tr,
-            tile_key,
-            paint.cache_tile_glyphs,
             pane_opacity,
             &mut self.render_bufs.dirty_bg_ranges,
             bg_rects,
@@ -1506,16 +1424,12 @@ impl App {
 
     #[allow(clippy::too_many_arguments)]
     fn emit_tile_glyphs(
-        tile_cache: &mut std::collections::HashMap<u64, super::CachedTileGlyphs>,
-        pane_id: u64,
         view: &terminal::TerminalView,
         inner_x: f32,
         inner_y: f32,
         zoom: f32,
         dim: f32,
         bg_color: [f32; 4],
-        tile_key: (u32, u32, u32, u32),
-        cache_tile_glyphs: bool,
         dirty_glyph_ranges: &mut Vec<(usize, usize)>,
         dirty_color_ranges: &mut Vec<(usize, usize)>,
         glyphs: &mut Vec<GlyphInstance>,
@@ -1542,108 +1456,30 @@ impl App {
                 })
             };
 
-        if !cache_tile_glyphs {
-            for row in 0..view.row_count() {
-                let glyph_start = glyphs.len();
-                glyphs.extend(view.row_glyphs(row).iter().filter_map(|g| {
-                    let color = [
-                        g.color[0] * dim,
-                        g.color[1] * dim,
-                        g.color[2] * dim,
-                        g.color[3],
-                    ];
-                    make_instance(g, color)
-                }));
-                let glyph_end = glyphs.len();
-                if glyph_start < glyph_end {
-                    dirty_glyph_ranges.push((glyph_start, glyph_end));
-                }
-                let color_start = color_glyphs.len();
-                let emoji_color = [dim, dim, dim, 1.0];
-                color_glyphs.extend(
-                    view.row_color_glyphs(row)
-                        .iter()
-                        .filter_map(|g| make_instance(g, emoji_color)),
-                );
-                let color_end = color_glyphs.len();
-                if color_start < color_end {
-                    dirty_color_ranges.push((color_start, color_end));
-                }
-            }
-            return;
-        }
-
-        let cached = tile_cache
-            .entry(pane_id)
-            .or_insert_with(|| super::CachedTileGlyphs {
-                key: tile_key,
-                rows: Vec::new(),
-            });
-
-        if cached.key != tile_key || cached.rows.len() != view.row_count() {
-            cached.key = tile_key;
-            cached.rows = vec![super::CachedTileRow::default(); view.row_count()];
-            for row in &mut cached.rows {
-                row.epoch = 0;
-                row.glyphs.clear();
-                row.color_glyphs.clear();
-            }
-        } else if view.last_scroll_shift != 0 {
-            let shift = view.last_scroll_shift;
-            let amount = shift.unsigned_abs() as usize;
-            if amount > 0 && amount < cached.rows.len() {
-                if shift > 0 {
-                    cached.rows.rotate_right(amount);
-                } else {
-                    cached.rows.rotate_left(amount);
-                }
-                let delta_y = shift as f32 * view.cell_height * zoom;
-                for row in &mut cached.rows {
-                    for glyph in &mut row.glyphs {
-                        glyph.pos[1] += delta_y;
-                    }
-                    for glyph in &mut row.color_glyphs {
-                        glyph.pos[1] += delta_y;
-                    }
-                }
-            }
-        }
-
         for row in 0..view.row_count() {
-            let rebuilt = cached.rows[row].epoch != view.row_epoch(row);
-            if rebuilt {
-                cached.rows[row].epoch = view.row_epoch(row);
-                cached.rows[row].glyphs.clear();
-                cached.rows[row].color_glyphs.clear();
-                cached.rows[row]
-                    .glyphs
-                    .extend(view.row_glyphs(row).iter().filter_map(|g| {
-                        let color = [
-                            g.color[0] * dim,
-                            g.color[1] * dim,
-                            g.color[2] * dim,
-                            g.color[3],
-                        ];
-                        make_instance(g, color)
-                    }));
-                let emoji_color = [dim, dim, dim, 1.0];
-                cached.rows[row].color_glyphs.extend(
-                    view.row_color_glyphs(row)
-                        .iter()
-                        .filter_map(|g| make_instance(g, emoji_color)),
-                );
-            }
-
             let glyph_start = glyphs.len();
-            glyphs.extend_from_slice(&cached.rows[row].glyphs);
+            glyphs.extend(view.row_glyphs(row).iter().filter_map(|g| {
+                let color = [
+                    g.color[0] * dim,
+                    g.color[1] * dim,
+                    g.color[2] * dim,
+                    g.color[3],
+                ];
+                make_instance(g, color)
+            }));
             let glyph_end = glyphs.len();
-            if rebuilt && glyph_start < glyph_end {
+            if glyph_start < glyph_end {
                 dirty_glyph_ranges.push((glyph_start, glyph_end));
             }
             let color_start = color_glyphs.len();
-            color_glyphs.extend_from_slice(&cached.rows[row].color_glyphs);
+            let emoji_color = [dim, dim, dim, 1.0];
+            color_glyphs.extend(
+                view.row_color_glyphs(row)
+                    .iter()
+                    .filter_map(|g| make_instance(g, emoji_color)),
+            );
             let color_end = color_glyphs.len();
-            if rebuilt && color_start < color_end {
+            if color_start < color_end {
                 dirty_color_ranges.push((color_start, color_end));
             }
         }
@@ -1729,22 +1565,12 @@ impl App {
             }
             return;
         };
-        let tile_key = (
-            inner_x.to_bits(),
-            inner_y.to_bits(),
-            zoom.to_bits(),
-            visual.dim.to_bits(),
-        );
         Self::emit_tile_background_rows(
-            &mut self.cached_tile_backgrounds,
-            pane_id,
             &view,
             inner_x,
             inner_y,
             zoom,
             &tr,
-            tile_key,
-            paint.cache_tile_glyphs,
             pane_opacity,
             &mut self.render_bufs.dirty_bg_ranges,
             bg_rects,
@@ -1803,16 +1629,12 @@ impl App {
         let glyph_start = glyphs.len();
         let color_start = color_glyphs.len();
         Self::emit_tile_glyphs(
-            &mut self.cached_tile_glyphs,
-            pane_id,
             &view,
             inner_x,
             inner_y,
             zoom,
             visual.dim,
             paint.bg_color,
-            tile_key,
-            paint.cache_tile_glyphs,
             &mut self.render_bufs.dirty_glyph_ranges,
             &mut self.render_bufs.dirty_color_ranges,
             glyphs,
@@ -2375,7 +2197,7 @@ impl App {
     ///
     /// All field accesses split-borrow cleanly: `glyph_cache` and
     /// `text_shaper` are independent of `cached_views` /
-    /// `cached_tile_glyphs` / `core.pane_grids` / `core.prediction`,
+    /// `core.pane_grids` / `core.prediction`,
     /// so rust's borrow checker is happy with one `&mut self`.
     fn update_pane_views(
         &mut self,
@@ -2451,9 +2273,6 @@ impl App {
                 let view = terminal::build_view_from_grid(cache, &inputs);
                 grid.clear_dirty();
                 self.cached_views.insert(*pane_id, view);
-                // Invalidate tile glyph cache — generation counter alone is
-                // unreliable for full rebuilds (resets to 1 on insert).
-                self.cached_tile_glyphs.remove(pane_id);
             } else if has_dirty_rows || pending_scroll_delta != 0 || scroll_only {
                 // Incremental update path — only re-render dirty rows
                 if let Some(grid) = self.core.pane_grids.get_mut(pane_id) {
@@ -3586,7 +3405,6 @@ mod tests {
             bg_color: [0.0, 0.0, 0.0, 0.0],
             link_color: [0.0, 0.0, 0.0, 0.0],
             accent: [0.0, 0.0, 0.0, 0.0],
-            cache_tile_glyphs: false,
         };
         let mut sdf_rects = Vec::new();
 

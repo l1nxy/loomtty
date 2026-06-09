@@ -805,7 +805,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{AppModel, CachedTileGlyphs, ClientImagePlacement, PaletteEntryKind};
+    use crate::app::{AppModel, ClientImagePlacement, PaletteEntryKind};
     use crate::connection::ServerEvent;
     use loom_config::config::LoomConfig;
     use loom_protocol::message::{
@@ -1012,13 +1012,6 @@ mod tests {
             }],
         );
         app.write_last_session();
-        app.cached_tile_glyphs.insert(
-            stale.meta.pane_id,
-            CachedTileGlyphs {
-                key: (0, 0, 0, 0),
-                rows: Vec::new(),
-            },
-        );
 
         let new_sync = blank_full_sync(11, 2, "fresh");
         event_tx
@@ -1035,7 +1028,6 @@ mod tests {
         );
         assert!(app.core.pane_grids.contains_key(&stale.meta.pane_id));
         assert!(app.core.image_placements.contains_key(&stale.meta.pane_id));
-        assert!(app.cached_tile_glyphs.contains_key(&stale.meta.pane_id));
 
         event_tx
             .send(ServerEvent::Control(ServerMessage::StateSync {
@@ -1057,7 +1049,6 @@ mod tests {
         );
         assert!(app.core.pane_grids.contains_key(&stale.meta.pane_id));
         assert!(app.core.image_placements.contains_key(&stale.meta.pane_id));
-        assert!(app.cached_tile_glyphs.contains_key(&stale.meta.pane_id));
 
         event_tx.send(ServerEvent::FullPaneSync(new_sync)).unwrap();
 
@@ -1065,7 +1056,6 @@ mod tests {
         assert!(app.core.pane_grids.contains_key(&11));
         assert!(app.core.pane_grids.contains_key(&stale.meta.pane_id));
         assert!(app.core.image_placements.contains_key(&stale.meta.pane_id));
-        assert!(app.cached_tile_glyphs.contains_key(&stale.meta.pane_id));
     }
 
     #[test]

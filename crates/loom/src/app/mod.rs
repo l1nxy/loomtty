@@ -50,31 +50,6 @@ pub(crate) use loom_app::app::{
 };
 use loom_layout::geometry::Rect as GeoRect;
 
-/// Cached pre-transformed glyph instances for a pane tile.
-/// Avoids redundant pixel-position computation when rows/position haven't changed.
-#[derive(Clone, Default)]
-pub(crate) struct CachedTileRow {
-    pub epoch: u64,
-    pub glyphs: Vec<GlyphInstance>,
-    pub color_glyphs: Vec<GlyphInstance>,
-}
-
-pub(crate) struct CachedTileGlyphs {
-    pub key: (u32, u32, u32, u32), // (inner_x_bits, inner_y_bits, zoom_bits, dim_bits)
-    pub rows: Vec<CachedTileRow>,
-}
-
-#[derive(Clone, Default)]
-pub(crate) struct CachedTileBackgroundRow {
-    pub epoch: u64,
-    pub bg_rects: Vec<Rect>,
-}
-
-pub(crate) struct CachedTileBackgrounds {
-    pub key: (u32, u32, u32, u32),
-    pub rows: Vec<CachedTileBackgroundRow>,
-}
-
 #[derive(Clone, Copy)]
 pub(crate) struct CommandPaletteLayout {
     pub panel_x: f32,
@@ -230,9 +205,6 @@ pub(crate) struct App {
     /// Resolved theme tokens — pre-parsed once per config change so paint
     /// paths can read colors by token instead of hex-parsing every frame.
     pub cached_resolved_theme: loom_ui::ResolvedTheme,
-    /// Per-pane cached glyph instances to skip redundant transformation in build_tiles.
-    pub cached_tile_glyphs: HashMap<u64, CachedTileGlyphs>,
-    pub cached_tile_backgrounds: HashMap<u64, CachedTileBackgrounds>,
     pub image_atlas_entries: HashMap<(u64, u64), GlyphEntry>,
     pub cached_ui_scene: CachedUiScene,
     /// Hash of the last successfully rendered visual state.
@@ -632,8 +604,6 @@ impl App {
             mouse_left_passthrough: false,
             cached_color_table,
             cached_resolved_theme,
-            cached_tile_glyphs: HashMap::new(),
-            cached_tile_backgrounds: HashMap::new(),
             image_atlas_entries: HashMap::new(),
             cached_ui_scene: CachedUiScene::default(),
             last_render_snapshot: None,
@@ -1867,8 +1837,6 @@ impl App {
     /// the pane or its images are actually being torn down.
     pub fn invalidate_pane_cache(&mut self, pane_id: u64) {
         self.cached_views.remove(&pane_id);
-        self.cached_tile_glyphs.remove(&pane_id);
-        self.cached_tile_backgrounds.remove(&pane_id);
     }
 
     /// Drop atlas entries for inline images owned by `pane_id`. Called
@@ -1882,8 +1850,6 @@ impl App {
 
     pub fn clear_render_caches(&mut self) {
         self.cached_views.clear();
-        self.cached_tile_glyphs.clear();
-        self.cached_tile_backgrounds.clear();
         self.image_atlas_entries.clear();
         self.cached_ui_scene.clear();
         self.render_bufs.clear_retained_scene();

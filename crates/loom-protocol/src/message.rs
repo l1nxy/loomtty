@@ -587,6 +587,17 @@ pub enum ServerMessage {
     },
     /// Pane title changed (OSC 0 / OSC 2).
     TitleChanged { pane_id: u64, title: String },
+    /// Detected AI agent for a pane changed (server runs procinfo on a
+    /// slow timer; broadcasts when the resulting `AgentKind` flips).
+    /// `agent` is the kebab-case agent kind (`"claude-code"`, `"codex"`,
+    /// `"open-code"`, `"droid"`) or `None` when no agent is running in
+    /// the pane (idle shell, vim, etc.). Sent as a burst on client
+    /// connect so a fresh client gets the current state without
+    /// waiting for the next change.
+    PaneAgentChanged {
+        pane_id: u64,
+        agent: Option<String>,
+    },
     /// Inline image deletion/invalidation for a pane.
     ImageDeleted { pane_id: u64 },
     /// IPC response: session detail info.

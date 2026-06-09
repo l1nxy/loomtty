@@ -11,7 +11,7 @@ mod sandbox;
 mod vm;
 
 use events::EventRegistry;
-use mlua::{Lua, Table, Value};
+use mlua::{Lua, LuaSerdeExt, Table, Value};
 
 /// Agent detected by a plugin's `detect-agent` handler.
 #[derive(Debug, Clone)]
@@ -127,6 +127,30 @@ impl PluginEngine {
                 Value::String(s) => Some(s.to_str().ok()?.to_string()),
                 _ => None,
             })
+    }
+
+    /// Format the usage segment via the `format-usage` event. The
+    /// caller hands in an arbitrary JSON payload (focused pane info,
+    /// usage snapshot, mode, …); the Lua handler can inspect every
+    /// field and either return a string (rendered as the segment
+    /// label) or `nil` (segment collapses).
+    ///
+    /// `nil`-return semantics is the user-facing knob for "only show
+    /// usage when claude is the focused pane" — the handler returns
+    /// nil whenever the gate fails.
+    pub fn format_usage(&self, ctx: &serde_json::Value) -> Option<String> {
+        let lua_ctx = self.lua.to_value(ctx).ok()?;
+        let table = match lua_ctx {
+            Value::Table(t) => t,
+            _ => self.lua.create_table().ok()?,
+        };
+        match self
+            .registry
+            .dispatch_first::<Table, Value>(&self.lua, "format-usage", table)
+        {
+            Some(Value::String(s)) => s.to_str().ok().map(|s| s.to_string()),
+            _ => None,
+        }
     }
 }
 
@@ -285,6 +309,149 @@ mod tests {
 
         let result = engine.format_tab_title(1, "bash", "/home", true);
         assert_eq!(result, Some("/home > bash".to_string()));
+    }
+
+    #[test]
+    fn loom_json_decode_is_available() {
+        let engine = PluginEngine::new().unwrap();
+        // A user plugin reads in JSON, asserts a field, and writes
+        // it into a registry slot we read back.
+        engine
+            .lua
+            .load(
+                r#"
+                local parsed = loom.json.decode('{"a":1,"b":[2,3]}')
+                assert(parsed.a == 1)
+                assert(parsed.b[1] == 2)
+                assert(parsed.b[2] == 3)
+                "#,
+            )
+            .exec()
+            .unwrap();
+    }
+
+    #[test]
+    fn loom_json_encode_roundtrip() {
+        let engine = PluginEngine::new().unwrap();
+        let s: String = engine
+            .lua
+            .load(r#"return loom.json.encode({a = 1, b = "two"})"#)
+            .eval()
+            .unwrap();
+        // mlua's table key ordering isn't guaranteed; just check both keys.
+        assert!(s.contains("\"a\":1"));
+        assert!(s.contains("\"b\":\"two\""));
+    }
+
+    #[test]
+    fn builtin_usage_hides_when_no_focused_agent() {
+        let engine = PluginEngine::new().unwrap();
+        let ctx = serde_json::json!({
+            "focused_pane": { "id": 1, "title": "vim README.md", "cwd": "/repo" },
+            "usage": {
+                "claude": { "session_utilization": 0.12, "weekly_utilization": 0.41 }
+            },
+        });
+        // vim is not claude/codex → builtin:usage returns nil.
+        assert_eq!(engine.format_usage(&ctx), None);
+    }
+
+    #[test]
+    fn builtin_usage_shows_claude_for_focused_claude_pane() {
+        let engine = PluginEngine::new().unwrap();
+        let ctx = serde_json::json!({
+            "focused_pane": { "id": 1, "title": "claude", "cwd": "/repo" },
+            // Real Anthropic header values are 0..1 fractions.
+            "usage": {
+                "claude": { "session_utilization": 0.6, "weekly_utilization": 0.17 }
+            },
+        });
+        assert_eq!(
+            engine.format_usage(&ctx).as_deref(),
+            Some("claude 60%/17%")
+        );
+    }
+
+    #[test]
+    fn builtin_usage_shows_codex_for_focused_codex_pane() {
+        let engine = PluginEngine::new().unwrap();
+        let ctx = serde_json::json!({
+            "focused_pane": { "id": 1, "title": "codex resume", "cwd": "/repo" },
+            "usage": {
+                "codex": { "primary_utilization": 0.07, "secondary_utilization": 0.23 }
+            },
+        });
+        assert_eq!(
+            engine.format_usage(&ctx).as_deref(),
+            Some("codex 7%/23%")
+        );
+    }
+
+    #[test]
+    fn builtin_usage_prefers_server_agent_over_title() {
+        let engine = PluginEngine::new().unwrap();
+        // Title says "vim" (user opened vim inside a Claude Code
+        // session, doesn't matter) but server-side procinfo says the
+        // foreground process is `claude-code`. The agent string wins.
+        let ctx = serde_json::json!({
+            "focused_pane": {
+                "id": 1,
+                "title": "vim ~/.bashrc",
+                "cwd": "/home/me",
+                "agent": "claude-code",
+            },
+            "usage": {
+                "claude": { "session_utilization": 0.6, "weekly_utilization": 0.17 }
+            },
+        });
+        assert_eq!(
+            engine.format_usage(&ctx).as_deref(),
+            Some("claude 60%/17%")
+        );
+    }
+
+    #[test]
+    fn builtin_usage_hides_when_server_agent_is_unrelated() {
+        let engine = PluginEngine::new().unwrap();
+        // Title contains "claude" (a path coincidence) but the real
+        // foreground process is something else — `agent` wins, so
+        // the segment hides.
+        let ctx = serde_json::json!({
+            "focused_pane": {
+                "id": 1,
+                "title": "vim ~/projects/claude/README.md",
+                "cwd": "/home/me",
+                "agent": "unknown",
+            },
+            "usage": {
+                "claude": { "session_utilization": 0.6, "weekly_utilization": 0.17 }
+            },
+        });
+        assert_eq!(engine.format_usage(&ctx), None);
+    }
+
+    #[test]
+    fn user_format_usage_overrides_builtin() {
+        let engine = PluginEngine::new().unwrap();
+        engine
+            .lua
+            .load(
+                r#"
+                loom.on("format-usage", function(ctx)
+                    return "always-on " .. (ctx.focused_pane and ctx.focused_pane.title or "?")
+                end)
+                "#,
+            )
+            .exec()
+            .unwrap();
+        let ctx = serde_json::json!({
+            "focused_pane": { "id": 1, "title": "bash", "cwd": "/repo" },
+            "usage": {},
+        });
+        assert_eq!(
+            engine.format_usage(&ctx).as_deref(),
+            Some("always-on bash")
+        );
     }
 
     #[test]

@@ -60,6 +60,12 @@ pub struct ClientPaneGrid {
     pub hyperlink_cell_map: std::collections::HashMap<u32, u16>,
     /// Current working directory from OSC 7 (reported by the shell via server).
     pub cwd: Option<String>,
+    /// Detected AI agent kind in this pane, kebab-case
+    /// (`"claude-code"` / `"codex"` / `"open-code"` / `"droid"`), or
+    /// `None` when the foreground process is something else (idle
+    /// shell, vim, …). Pushed by the server on a 30s tick — see
+    /// `ServerMessage::PaneAgentChanged`.
+    pub agent: Option<String>,
 }
 
 impl ClientPaneGrid {
@@ -87,6 +93,7 @@ impl ClientPaneGrid {
             hyperlink_map: std::collections::HashMap::new(),
             hyperlink_cell_map: std::collections::HashMap::new(),
             cwd: None,
+            agent: None,
         }
     }
 

@@ -19,6 +19,7 @@ pub(crate) fn init_vm(registry: &EventRegistry) -> anyhow::Result<Lua> {
 
     // 1. Built-in plugins
     load_chunk(&lua, builtin::SESSION_RESTORE, "builtin:session_restore")?;
+    load_chunk(&lua, builtin::USAGE, "builtin:usage")?;
 
     // 2. User plugins directory
     let plugins_dir = user_plugins_dir();

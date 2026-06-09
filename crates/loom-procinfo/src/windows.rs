@@ -261,10 +261,17 @@ unsafe fn read_remote<T>(handle: HANDLE, addr: *const c_void) -> Option<T> {
 
 /// Read the UTF-16 payload a remote `UNICODE_STRING` points at.
 unsafe fn read_remote_wstr(handle: HANDLE, s: &UnicodeString) -> Option<String> {
-    // `length` is a byte count. Bound it so a garbage struct (e.g. a
-    // WOW64 layout mismatch) can't drive a huge allocation.
+    // `length` is a UTF-16 *byte* count. Reject the cases that would make
+    // the read unsafe or pointless:
+    //  - odd: a valid UNICODE_STRING length is always even; an odd value
+    //    (garbage from a WOW64-layout mismatch, or a target corrupting its
+    //    own parameters) would leave `byte_len / 2` u16s one byte short of
+    //    the `byte_len`-byte ReadProcessMemory below — an OOB write in *our*
+    //    address space.
+    //  - zero / null buffer: nothing to read.
+    //  - oversized: bound the allocation against a garbage length.
     let byte_len = s.length as usize;
-    if byte_len == 0 || s.buffer.is_null() || byte_len > 64 * 1024 {
+    if byte_len == 0 || byte_len % 2 != 0 || s.buffer.is_null() || byte_len > 64 * 1024 {
         return None;
     }
     let mut buf = vec![0u16; byte_len / 2];

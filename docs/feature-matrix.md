@@ -233,11 +233,11 @@
 | PTY | ✅ | ✅ | ✅ ConPTY |
 | 系统托盘 | ✅ | ✅ | ✅ |
 | 自启动 | ✅ launchd | ✅ .desktop | ✅ HKCU Run 键 |
-| 桌面通知 | ✅ notify_rust | ✅ notify_rust | ❌ stub（`notification.rs:38` 仅 log） |
-| Procinfo（前台进程） | ✅ proc_pidinfo | ✅ /proc/PID | ⚠️ 进程树可走，但 **argv/cwd 是 stub** |
-| Agent 检测（依赖 argv） | ✅ | ✅ | ❌ 受 Windows argv stub 影响 |
+| 桌面通知 | ✅ notify_rust | ✅ notify_rust | ✅ WinRT toast（notify-rust → tauri-winrt-notification） |
+| Procinfo（前台进程） | ✅ proc_pidinfo | ✅ /proc/PID | ✅ 进程树 + PEB 读 argv/cwd |
+| Agent 检测（依赖 argv） | ✅ | ✅ | ✅ |
 
-> Windows procinfo：`windows.rs` 的进程快照 + 进程树遍历能跑，但 `read_cmdline`（`:179`）和 `read_cwd`（`:184`）都 `return None`——需要 `NtQueryInformationProcess` + `ReadProcessMemory` 读 PEB。这直接导致 Win 上 agent 自动恢复失效（识别 `codex exec` 这类需要 argv）、cwd 探测失效。
+> Windows procinfo：`windows.rs` 进程快照 + 进程树遍历；argv/cwd 通过 `NtQueryInformationProcess` + `ReadProcessMemory` 读目标进程 PEB（`read_peb_strings`，手定 x64 偏移 + 奇数长度校验）。解锁了 Win 上 agent 自动恢复（识别 `codex exec` 等需要 argv）与 cwd 探测。
 
 ---
 
@@ -281,9 +281,7 @@
 |---|---|---|
 | `list-panes` 的 `cwd` 永远 `None` | `daemon/server/ipc.rs:441` | JSON/CLI 输出 cwd 始终为空 |
 | `run-command` 不能传 `--cwd` | `main.rs:95` | 协议有字段，CLI 没暴露 |
-| Windows argv/cwd 读取是 stub | `loom-procinfo/src/windows.rs:179,184` | Win 上 agent 自动恢复 / cwd 探测失效 |
-| Windows 桌面通知未实现 | `app/notification.rs:38` | Win 上长命令完成 / bell 不弹通知 |
-| 虚线焦点环只有矩形段、SDF 版未做 | `render.rs:452,1694` | 视觉细节 |
+| 虚线焦点环只有矩形段、SDF 版未做 | `render.rs` | 视觉细节 |
 | 搜索无正则 / 无大小写切换 | `loom-app/src/grid/cell_ops.rs:241` | 仅字面、强制小写匹配 |
 | 命令耗时 / exit code 未在 grid 渲染 | `sync.rs` 仅用于通知 | OSC 133 数据采集到但 UI 没全用上 |
 | 多 client UI 未暴露 | server 层已就绪 | 没有"分享 session"用户流程 |
@@ -314,8 +312,6 @@
 | Hints / URL 键盘 picker（kitty 风） | 对 leader 体系是天然延伸（现 `hints_bar` 只是提示条） |
 | 命名 paste buffer | tmux 用户日用 |
 | `rename-session` / `msg rename` | tmux 等价 |
-| Windows 桌面通知实现 | winrt-notification 或 PowerShell |
-| Windows procinfo PEB 读取（argv + cwd） | 解锁 Win 上 agent 恢复 + 连带修 `list-panes` cwd |
 | 协议有 / CLI 缺：`switch-workspace` / `switch-session` / `resize-pane` / `set-col-width` | 一个下午能补齐 |
 
 ### 🟢 长期（差异化 / 出圈）
@@ -351,7 +347,7 @@
 | Win 原生 | ❌ | ❌ | ⏳ | ❌ | ✅ | ✅ |
 | 预测回显 | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | 配置热重载 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 桌面通知 OSC 9 | ❌ | △ | ✅ | ✅ | △ | ✅ Unix，Win stub |
+| 桌面通知 OSC 9 | ❌ | △ | ✅ | ✅ | △ | ✅ 全平台 |
 | Kitty graphics | ❌ | △ | ✅ | ✅ | ❌ | ✅ |
 | Sixel | △ | △ | ✅ | ✅ | △ | ✅ |
 | 浮动 pane | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
@@ -378,13 +374,12 @@ dev 分支当前真实形态：
 
 **已是真正的独家武器**：三 GPU 后端、列+workspace 布局、二进制远程协议、预测回显、agent-aware session restore、内联图像、**完整的 Web 浏览器客户端**（含 PWA）、Lua 沙箱插件。
 
-**自 5-11 以来新落地**：Web client、`msg capture-pane`、`msg list-prompts`、jump-to-prompt（`[`/`]`）、运行时设置面板（~50 字段）、键位帮助浮层、主题增到 9 个。
+**自 5-11 以来新落地**：Web client、`msg capture-pane`、`msg list-prompts`、jump-to-prompt（`[`/`]`）、运行时设置面板（~50 字段）、键位帮助浮层、主题增到 9 个、Windows 桌面通知（WinRT toast）、Windows procinfo PEB 读取（argv/cwd → 解锁 Win 上 agent 恢复）。
 
 **真正还没做的短板**：
-1. **Windows 半成品**——procinfo argv/cwd（卡死 Win 上 agent 恢复）+ 桌面通知 stub。
-2. **Shell 集成数据没全落地 UI**——exit code 染色 / 耗时显示 / 滚动条 prompt 标记。
-3. **usage 用量功能没合入 dev**——OAuth 探测写好了，躺在 `feat/usage-statusbar` 分支。
-4. **zellij 招牌没拿**——浮动 pane / stack / 多 cursor 协作。
-5. **配置生态封闭**——无导入器、无插件包管理、无多 profile。
+1. **Shell 集成数据没全落地 UI**——exit code 染色 / 耗时显示 / 滚动条 prompt 标记。
+2. **usage 用量功能没合入 dev**——OAuth 探测写好了，躺在 `feat/usage-statusbar` 分支。
+3. **zellij 招牌没拿**——浮动 pane / stack / 多 cursor 协作。
+4. **配置生态封闭**——无导入器、无插件包管理、无多 profile。
 
-**建议下一步**（与你 Windows 平台契合）：Windows procinfo PEB 读取 → 连带解锁 agent 恢复 + 修 `list-panes` cwd；其次把 usage 分支合入 dev；再补 Windows 桌面通知。
+**建议下一步**：把 usage 分支（`feat/usage-statusbar`）合入 dev——OAuth 探测已写好，只差合并 + 收尾；其次把 Shell 集成数据落地 grid 渲染（exit code 染色 / 耗时显示）。

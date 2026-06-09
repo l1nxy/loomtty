@@ -13,7 +13,7 @@ libc = { workspace = true }
 windows = { version = "0.58", features = [
     "Win32_System_Threading",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Diagnostics_Debug", # ReadProcessMemory
+    "Wdk_System_Threading",           # NtQueryInformationProcess
     "Win32_Foundation",
 ] }
-# ntapi will be needed when PEB command line reading is implemented
-# ntapi = "0.4"

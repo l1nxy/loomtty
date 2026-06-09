@@ -37,7 +37,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 taffy = { workspace = true }
 getrandom = "0.4.2"
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(any(unix, windows))'.dependencies]
 notify-rust = "4"
 
 [target.'cfg(windows)'.build-dependencies]

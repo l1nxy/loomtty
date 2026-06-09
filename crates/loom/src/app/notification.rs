@@ -21,7 +21,7 @@ fn escape_notification_markup(s: &str) -> String {
 }
 
 impl App {
-    /// Send a desktop notification (Linux/macOS only).
+    /// Send a desktop notification (Linux, macOS, Windows).
     pub fn send_desktop_notification(&self, summary: &str, body: &str) {
         #[cfg(unix)]
         {
@@ -35,7 +35,31 @@ impl App {
                 .timeout(5000)
                 .show();
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            // Windows toast via notify-rust → tauri-winrt-notification. That
+            // backend builds the toast XML and escapes special chars itself
+            // (quick_xml), so we pass the raw text — applying the freedesktop
+            // markup escaping here would double-escape and surface a literal
+            // `&amp;`. The toast is attributed to the built-in PowerShell AUMID
+            // (the backend's default `app_id`), the only identity guaranteed to
+            // exist without installing/registering loomtty; a custom unregistered
+            // AUMID would fail to show with "Element not found".
+            //
+            // Called from the winit event-loop thread, which has COM initialized
+            // (winit's OleInitialize). Required because `Toast::show()` assumes
+            // an already-initialized apartment — never move this onto a fresh
+            // thread, which would lack COM and fail silently.
+            use notify_rust::Notification;
+            // Log on failure rather than swallowing it: a discarded toast is
+            // otherwise an invisible no-op. Failures here mean a missing AUMID
+            // ("Element not found"), an uninitialized COM apartment (caller is
+            // off the winit thread, see above), or the user's notification quota.
+            if let Err(e) = Notification::new().summary(summary).body(body).show() {
+                log::warn!("windows toast notification failed: {e:?}");
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = (summary, body);
             log::info!("notification (no desktop): {} - {}", summary, body);

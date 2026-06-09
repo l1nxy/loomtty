@@ -76,10 +76,6 @@ pub(crate) struct RenderBuffers {
     pub color_glyph_batches: Vec<PaneGlyphRange>,
     pub active_glyph_batches: Vec<PaneGlyphRange>,
     pub active_color_glyph_batches: Vec<PaneGlyphRange>,
-    pub pane_order: Vec<u64>,
-    pub pane_regions: HashMap<u64, PaneSceneRegion>,
-    pub pane_glyph_end: usize,
-    pub pane_color_glyph_end: usize,
     /// Reused per-frame storage for the assembled SDF rect stream
     /// (pane focus rings + cached chrome + transient overlays).
     /// Without this, `assemble_scene` allocated a fresh `Vec` every
@@ -134,24 +130,8 @@ impl CachedUiScene {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct PaneSceneRegion {
-    pub glyph_offset: usize,
-    pub glyph_len: usize,
-    pub glyph_cap: usize,
-    pub color_offset: usize,
-    pub color_len: usize,
-    pub color_cap: usize,
-    pub scissor: (u32, u32, u32, u32),
-    pub pane_origin: [f32; 2],
-    pub pane_size: [f32; 2],
-    pub pane_radii: [f32; 4],
-    pub is_active: bool,
-    pub snapshot: u64,
-}
-
 impl RenderBuffers {
-    pub fn clear_retained_scene(&mut self) {
+    pub fn clear_scene_buffers(&mut self) {
         self.bg_rects.clear();
         self.bg_rect_ranges.clear();
         self.glyphs.clear();
@@ -163,10 +143,6 @@ impl RenderBuffers {
         self.color_glyph_batches.clear();
         self.active_glyph_batches.clear();
         self.active_color_glyph_batches.clear();
-        self.pane_order.clear();
-        self.pane_regions.clear();
-        self.pane_glyph_end = 0;
-        self.pane_color_glyph_end = 0;
     }
 }
 
@@ -593,10 +569,6 @@ impl App {
                 color_glyph_batches: Vec::new(),
                 active_glyph_batches: Vec::new(),
                 active_color_glyph_batches: Vec::new(),
-                pane_order: Vec::new(),
-                pane_regions: HashMap::new(),
-                pane_glyph_end: 0,
-                pane_color_glyph_end: 0,
                 ui_sdf_rects: Vec::new(),
             },
             clipboard: arboard::Clipboard::new().ok(),
@@ -1852,7 +1824,7 @@ impl App {
         self.cached_views.clear();
         self.image_atlas_entries.clear();
         self.cached_ui_scene.clear();
-        self.render_bufs.clear_retained_scene();
+        self.render_bufs.clear_scene_buffers();
         self.last_render_snapshot = None;
     }
 

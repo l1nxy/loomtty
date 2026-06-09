@@ -85,17 +85,6 @@ struct PaneVisualState {
     open_opacity: f32,
 }
 
-struct PaneGlyphFragment {
-    glyphs: Vec<GlyphInstance>,
-    color_glyphs: Vec<GlyphInstance>,
-    scissor: (u32, u32, u32, u32),
-    pane_origin: [f32; 2],
-    pane_size: [f32; 2],
-    pane_radii: [f32; 4],
-    is_active: bool,
-    snapshot: u64,
-}
-
 impl App {
     fn pane_rect_range(&self, start: usize, end: usize, pane: &GeoRect) -> Option<PaneRectRange> {
         if start >= end {
@@ -150,33 +139,6 @@ impl App {
         })
     }
 
-    fn zero_glyph_instance() -> GlyphInstance {
-        GlyphInstance {
-            pos: [0.0, 0.0],
-            size: [0.0, 0.0],
-            uv_pos: [0.0, 0.0],
-            uv_size: [0.0, 0.0],
-            color: [0.0, 0.0, 0.0, 0.0],
-            bg_color: [0.0, 0.0, 0.0, 0.0],
-        }
-    }
-
-    fn ordered_pane_tiles(tiles: &[(u64, GeoRect, bool)]) -> Vec<(u64, GeoRect, bool)> {
-        let mut ordered = Vec::with_capacity(tiles.len());
-        ordered.extend(
-            tiles
-                .iter()
-                .copied()
-                .filter(|(_, _, is_active)| !*is_active),
-        );
-        ordered.extend(tiles.iter().copied().filter(|(_, _, is_active)| *is_active));
-        ordered
-    }
-
-    fn glyph_scene_capacity(len: usize) -> usize {
-        if len == 0 { 0 } else { len + (len / 4).max(8) }
-    }
-
     fn tile_paint_config(&self) -> TilePaintConfig {
         TilePaintConfig {
             border_w: self.core.config.appearance.border_width,
@@ -194,98 +156,6 @@ impl App {
             link_color: ThemeConfig::parse_color(&self.core.config.theme.accent),
             accent: ThemeConfig::parse_color(&self.core.config.theme.accent),
         }
-    }
-
-    fn pane_glyph_snapshot_hash(
-        &self,
-        pane_id: u64,
-        tile_rect: GeoRect,
-        is_active: bool,
-        zoom: f32,
-        vw: f32,
-        vh: f32,
-    ) -> Option<u64> {
-        let visual = self.pane_visual_state(pane_id, tile_rect, zoom, vw, vh)?;
-        let mut hasher = DefaultHasher::new();
-        pane_id.hash(&mut hasher);
-        is_active.hash(&mut hasher);
-        visual.tr.x.to_bits().hash(&mut hasher);
-        visual.tr.y.to_bits().hash(&mut hasher);
-        visual.tr.w.to_bits().hash(&mut hasher);
-        visual.tr.h.to_bits().hash(&mut hasher);
-        visual.inner_x.to_bits().hash(&mut hasher);
-        visual.inner_y.to_bits().hash(&mut hasher);
-        visual.dim.to_bits().hash(&mut hasher);
-        visual.scissor.hash(&mut hasher);
-
-        if let Some(view) = self.cached_views.get(&pane_id) {
-            view.generation.hash(&mut hasher);
-        } else {
-            0u64.hash(&mut hasher);
-        }
-
-        self.core
-            .prediction
-            .pane_visual_serial(pane_id)
-            .hash(&mut hasher);
-        self.hash_images_for_pane(pane_id, &mut hasher);
-        Some(hasher.finish())
-    }
-
-    fn build_pane_glyph_fragment(
-        &mut self,
-        pane_id: u64,
-        tile_rect: GeoRect,
-        is_active: bool,
-        zoom: f32,
-        vw: f32,
-        vh: f32,
-        paint: TilePaintConfig,
-    ) -> Option<PaneGlyphFragment> {
-        let visual = self.pane_visual_state(pane_id, tile_rect, zoom, vw, vh)?;
-        let view = self.cached_views.get(&pane_id)?;
-        let snapshot =
-            self.pane_glyph_snapshot_hash(pane_id, tile_rect, is_active, zoom, vw, vh)?;
-
-        let mut glyphs = Vec::new();
-        let mut color_glyphs = Vec::new();
-        let mut dirty_glyph_ranges = Vec::new();
-        let mut dirty_color_ranges = Vec::new();
-        Self::emit_tile_glyphs(
-            view,
-            visual.inner_x,
-            visual.inner_y,
-            zoom,
-            visual.dim,
-            paint.bg_color,
-            &mut dirty_glyph_ranges,
-            &mut dirty_color_ranges,
-            &mut glyphs,
-            &mut color_glyphs,
-        );
-
-        self.build_pane_images(
-            pane_id,
-            visual.inner_x,
-            visual.inner_y,
-            zoom,
-            visual.dim,
-            &mut color_glyphs,
-        );
-
-        Some(PaneGlyphFragment {
-            glyphs,
-            color_glyphs,
-            scissor: visual.scissor,
-            pane_origin: [visual.tr.x, visual.tr.y],
-            pane_size: [visual.tr.w, visual.tr.h],
-            pane_radii: {
-                let radius = self.core.config.appearance.pane_corner_radius;
-                [radius, radius, radius, radius]
-            },
-            is_active,
-            snapshot,
-        })
     }
 
     fn emit_tile_background_rows(
@@ -331,147 +201,6 @@ impl App {
             if row_start < row_end {
                 dirty_bg_ranges.push((row_start, row_end));
             }
-        }
-    }
-
-    fn build_tile_backgrounds(
-        &mut self,
-        pane_id: u64,
-        tile_rect: GeoRect,
-        is_active: bool,
-        zoom: f32,
-        vw: f32,
-        vh: f32,
-        paint: TilePaintConfig,
-        bg_rects: &mut Vec<Rect>,
-        bg_rect_ranges: &mut Vec<PaneRectRange>,
-        sdf_rects: &mut Vec<SdfRect>,
-    ) {
-        let Some(visual) = self.pane_visual_state(pane_id, tile_rect, zoom, vw, vh) else {
-            return;
-        };
-        let tr = visual.tr;
-        let inner_x = visual.inner_x;
-        let inner_y = visual.inner_y;
-        // Pane translucency is applied at the two emission sites that
-        // produce pane *interior* bgs (the pane-base rect below and the
-        // per-cell bgs in `emit_tile_background_rows`). Other rects
-        // pushed in this method — focus rings, inactive borders, cursor,
-        // scrollbar, selection, link underline, search highlights —
-        // stay at their author-set alpha so they remain legible at low
-        // pane_opacity. `pane_opacity = 1.0` (default) is a no-op
-        // multiplication.
-        let pane_opacity = self.core.config.appearance.pane_opacity;
-
-        // Same focus-ring/inactive-border split as `build_tile`.
-        let range_start: usize;
-        if is_active {
-            if self.focus_ring_uses_sdf() {
-                self.emit_focus_ring_sdf(&tr, zoom, &paint, sdf_rects);
-            } else {
-                let ring_start = bg_rects.len();
-                self.emit_focus_ring_rects(&tr, zoom, &paint, bg_rects);
-                // TODO(C-followup): proper dashed SDF border
-                if let Some(range) = Self::zero_rect_range(ring_start, bg_rects.len()) {
-                    bg_rect_ranges.push(range);
-                }
-            }
-            range_start = bg_rects.len();
-        } else {
-            range_start = bg_rects.len();
-            bg_rects.push(Rect {
-                x: tr.x,
-                y: tr.y,
-                w: tr.w,
-                h: tr.h,
-                color: paint.inactive_border,
-            });
-        }
-
-        let mut pane_bg_color = paint.bg_color;
-        pane_bg_color[3] *= pane_opacity;
-        bg_rects.push(Rect {
-            x: tr.x + paint.border_w * zoom,
-            y: tr.y + paint.border_w * zoom,
-            w: tr.w - paint.border_w * zoom * 2.0,
-            h: tr.h - paint.border_w * zoom * 2.0,
-            color: pane_bg_color,
-        });
-
-        self.emit_overview_hover(pane_id, &tr, zoom, &paint, bg_rects);
-
-        let Some(view) = self.cached_views.get(&pane_id) else {
-            if let Some(range) = self.pane_rect_range(range_start, bg_rects.len(), &tr) {
-                bg_rect_ranges.push(range);
-            }
-            return;
-        };
-
-        Self::emit_tile_background_rows(
-            view,
-            inner_x,
-            inner_y,
-            zoom,
-            &tr,
-            pane_opacity,
-            &mut self.render_bufs.dirty_bg_ranges,
-            bg_rects,
-        );
-
-        if self.cursor_blink_visible && is_active {
-            for cursor in &view.cursor_rects {
-                let src = GeoRect::new(
-                    inner_x + cursor.x * zoom,
-                    inner_y + cursor.y * zoom,
-                    cursor.w * zoom,
-                    cursor.h * zoom,
-                );
-                if let Some(c) = src.intersection(&tr) {
-                    bg_rects.push(Rect {
-                        x: c.x,
-                        y: c.y,
-                        w: c.w,
-                        h: c.h,
-                        color: cursor.color,
-                    });
-                }
-            }
-        }
-
-        if let Some(sb) = &view.scrollbar_rect {
-            let src = GeoRect::new(
-                inner_x + sb.x * zoom,
-                inner_y + sb.y * zoom,
-                sb.w * zoom,
-                sb.h * zoom,
-            );
-            if let Some(c) = src.intersection(&tr) {
-                bg_rects.push(Rect {
-                    x: c.x,
-                    y: c.y,
-                    w: c.w,
-                    h: c.h,
-                    color: sb.color,
-                });
-            }
-        }
-
-        self.emit_selection_highlight(pane_id, inner_x, inner_y, zoom, &tr, bg_rects);
-        self.emit_link_underline(pane_id, inner_x, inner_y, zoom, &tr, &paint, bg_rects);
-        self.emit_search_highlights(pane_id, inner_x, inner_y, zoom, &tr, bg_rects);
-
-        if visual.open_opacity < 1.0 {
-            let overlay_alpha = 1.0 - visual.open_opacity;
-            bg_rects.push(Rect {
-                x: tr.x,
-                y: tr.y,
-                w: tr.w,
-                h: tr.h,
-                color: [0.0, 0.0, 0.0, overlay_alpha],
-            });
-        }
-        if let Some(range) = self.pane_rect_range(range_start, bg_rects.len(), &tr) {
-            bg_rect_ranges.push(range);
         }
     }
 
@@ -1774,239 +1503,6 @@ impl App {
         active_bg_start
     }
 
-    fn relayout_retained_pane_glyphs(
-        &mut self,
-        ordered_tiles: &[(u64, GeoRect, bool)],
-        zoom: f32,
-        vw: f32,
-        vh: f32,
-        paint: TilePaintConfig,
-    ) {
-        self.render_bufs.pane_order.clear();
-        self.render_bufs.pane_regions.clear();
-        self.render_bufs.glyphs.clear();
-        self.render_bufs.color_glyphs.clear();
-
-        let mut glyph_offset = 0usize;
-        let mut color_offset = 0usize;
-
-        for (pane_id, tile_rect, is_active) in ordered_tiles.iter().copied() {
-            let Some(fragment) =
-                self.build_pane_glyph_fragment(pane_id, tile_rect, is_active, zoom, vw, vh, paint)
-            else {
-                continue;
-            };
-
-            let glyph_cap = Self::glyph_scene_capacity(fragment.glyphs.len());
-            let color_cap = Self::glyph_scene_capacity(fragment.color_glyphs.len());
-
-            let glyph_end = glyph_offset + glyph_cap;
-            let color_end = color_offset + color_cap;
-            let zero = Self::zero_glyph_instance();
-
-            if self.render_bufs.glyphs.len() < glyph_end {
-                self.render_bufs.glyphs.resize(glyph_end, zero);
-            }
-            if self.render_bufs.color_glyphs.len() < color_end {
-                self.render_bufs.color_glyphs.resize(color_end, zero);
-            }
-
-            if !fragment.glyphs.is_empty() {
-                self.render_bufs.glyphs[glyph_offset..glyph_offset + fragment.glyphs.len()]
-                    .copy_from_slice(&fragment.glyphs);
-            }
-            for slot in
-                &mut self.render_bufs.glyphs[glyph_offset + fragment.glyphs.len()..glyph_end]
-            {
-                *slot = zero;
-            }
-
-            if !fragment.color_glyphs.is_empty() {
-                self.render_bufs.color_glyphs
-                    [color_offset..color_offset + fragment.color_glyphs.len()]
-                    .copy_from_slice(&fragment.color_glyphs);
-            }
-            for slot in &mut self.render_bufs.color_glyphs
-                [color_offset + fragment.color_glyphs.len()..color_end]
-            {
-                *slot = zero;
-            }
-
-            self.render_bufs.pane_order.push(pane_id);
-            self.render_bufs.pane_regions.insert(
-                pane_id,
-                super::PaneSceneRegion {
-                    glyph_offset,
-                    glyph_len: fragment.glyphs.len(),
-                    glyph_cap,
-                    color_offset,
-                    color_len: fragment.color_glyphs.len(),
-                    color_cap,
-                    scissor: fragment.scissor,
-                    pane_origin: fragment.pane_origin,
-                    pane_size: fragment.pane_size,
-                    pane_radii: fragment.pane_radii,
-                    is_active: fragment.is_active,
-                    snapshot: fragment.snapshot,
-                    ..Default::default()
-                },
-            );
-
-            glyph_offset = glyph_end;
-            color_offset = color_end;
-        }
-
-        self.render_bufs.pane_glyph_end = glyph_offset;
-        self.render_bufs.pane_color_glyph_end = color_offset;
-        self.render_bufs.glyphs.truncate(glyph_offset);
-        self.render_bufs.color_glyphs.truncate(color_offset);
-    }
-
-    fn sync_retained_pane_glyphs(
-        &mut self,
-        ordered_tiles: &[(u64, GeoRect, bool)],
-        zoom: f32,
-        vw: f32,
-        vh: f32,
-        paint: TilePaintConfig,
-    ) {
-        let current_order: Vec<u64> = ordered_tiles
-            .iter()
-            .filter_map(|(pane_id, tile_rect, is_active)| {
-                self.pane_glyph_snapshot_hash(*pane_id, *tile_rect, *is_active, zoom, vw, vh)
-                    .map(|_| *pane_id)
-            })
-            .collect();
-        if self.render_bufs.pane_order != current_order {
-            self.relayout_retained_pane_glyphs(ordered_tiles, zoom, vw, vh, paint);
-            return;
-        }
-
-        let mut need_relayout = false;
-        let zero = Self::zero_glyph_instance();
-
-        for (pane_id, tile_rect, is_active) in ordered_tiles.iter().copied() {
-            let Some(snapshot) =
-                self.pane_glyph_snapshot_hash(pane_id, tile_rect, is_active, zoom, vw, vh)
-            else {
-                continue;
-            };
-            let Some(region) = self.render_bufs.pane_regions.get(&pane_id).copied() else {
-                need_relayout = true;
-                break;
-            };
-            if region.snapshot == snapshot {
-                continue;
-            }
-
-            let Some(fragment) =
-                self.build_pane_glyph_fragment(pane_id, tile_rect, is_active, zoom, vw, vh, paint)
-            else {
-                need_relayout = true;
-                break;
-            };
-
-            if fragment.glyphs.len() > region.glyph_cap
-                || fragment.color_glyphs.len() > region.color_cap
-            {
-                need_relayout = true;
-                break;
-            }
-
-            if !fragment.glyphs.is_empty() {
-                self.render_bufs.glyphs
-                    [region.glyph_offset..region.glyph_offset + fragment.glyphs.len()]
-                    .copy_from_slice(&fragment.glyphs);
-            }
-            for slot in &mut self.render_bufs.glyphs[region.glyph_offset + fragment.glyphs.len()
-                ..region.glyph_offset + region.glyph_cap]
-            {
-                *slot = zero;
-            }
-
-            if !fragment.color_glyphs.is_empty() {
-                self.render_bufs.color_glyphs
-                    [region.color_offset..region.color_offset + fragment.color_glyphs.len()]
-                    .copy_from_slice(&fragment.color_glyphs);
-            }
-            for slot in &mut self.render_bufs.color_glyphs[region.color_offset
-                + fragment.color_glyphs.len()
-                ..region.color_offset + region.color_cap]
-            {
-                *slot = zero;
-            }
-
-            if let Some(region_mut) = self.render_bufs.pane_regions.get_mut(&pane_id) {
-                region_mut.glyph_len = fragment.glyphs.len();
-                region_mut.color_len = fragment.color_glyphs.len();
-                region_mut.scissor = fragment.scissor;
-                region_mut.pane_origin = fragment.pane_origin;
-                region_mut.pane_size = fragment.pane_size;
-                region_mut.pane_radii = fragment.pane_radii;
-                region_mut.is_active = fragment.is_active;
-                region_mut.snapshot = fragment.snapshot;
-            }
-        }
-
-        if need_relayout {
-            self.relayout_retained_pane_glyphs(ordered_tiles, zoom, vw, vh, paint);
-        }
-    }
-
-    fn rebuild_retained_glyph_batches(&mut self) {
-        self.render_bufs.glyph_batches.clear();
-        self.render_bufs.color_glyph_batches.clear();
-        self.render_bufs.active_glyph_batches.clear();
-        self.render_bufs.active_color_glyph_batches.clear();
-
-        for pane_id in self.render_bufs.pane_order.iter().copied() {
-            let Some(region) = self.render_bufs.pane_regions.get(&pane_id).copied() else {
-                continue;
-            };
-            if region.glyph_len > 0 {
-                let batch = PaneGlyphRange {
-                    start: region.glyph_offset as u32,
-                    count: region.glyph_len as u32,
-                    scissor: region.scissor,
-                    pane_origin: region.pane_origin,
-                    pane_size: region.pane_size,
-                    pane_radii: region.pane_radii,
-                };
-                if region.is_active {
-                    self.render_bufs.active_glyph_batches.push(batch);
-                } else {
-                    self.render_bufs.glyph_batches.push(batch);
-                }
-            }
-            if region.color_len > 0 {
-                let batch = PaneGlyphRange {
-                    start: region.color_offset as u32,
-                    count: region.color_len as u32,
-                    scissor: region.scissor,
-                    pane_origin: region.pane_origin,
-                    pane_size: region.pane_size,
-                    pane_radii: region.pane_radii,
-                };
-                if region.is_active {
-                    self.render_bufs.active_color_glyph_batches.push(batch);
-                } else {
-                    self.render_bufs.color_glyph_batches.push(batch);
-                }
-            }
-        }
-    }
-
-    fn should_use_retained_pane_scene(
-        &self,
-        ordered_tiles: &[(u64, GeoRect, bool)],
-        zoom: f32,
-        vw: f32,
-        vh: f32,
-    ) -> bool {
-        let _ = (ordered_tiles, zoom, vw, vh);
-        false
-    }
-
     pub(in crate::app) fn bell_flash_rects(
         &self,
         tiles: &[(u64, GeoRect, bool)],
@@ -2398,12 +1894,9 @@ impl App {
     fn assemble_scene(
         &mut self,
         offset_tiles: &[(u64, GeoRect, bool)],
-        ordered_tiles: &[(u64, GeoRect, bool)],
-        paint: TilePaintConfig,
         zoom: f32,
         vw_f: f32,
         vh_f: f32,
-        use_retained_panes: bool,
     ) -> AssembledScene {
         self.render_bufs.dirty_bg_ranges.clear();
         self.render_bufs.dirty_glyph_ranges.clear();
@@ -2426,142 +1919,50 @@ impl App {
         ui_sdf_rects.clear();
         bg_rects.clear();
         bg_rect_ranges.clear();
-        let (active_bg_start, pane_glyph_end, pane_color_glyph_end, mut glyphs, mut color_glyphs) =
-            if use_retained_panes {
-                self.render_bufs.glyphs = glyphs;
-                self.render_bufs.color_glyphs = color_glyphs;
-                self.render_bufs.glyph_batches = glyph_batches;
-                self.render_bufs.color_glyph_batches = color_glyph_batches;
-                self.render_bufs.active_glyph_batches = active_glyph_batches;
-                self.render_bufs.active_color_glyph_batches = active_color_glyph_batches;
+        let (active_bg_start, pane_glyph_end, pane_color_glyph_end, mut glyphs, mut color_glyphs) = {
+            let mut glyphs = glyphs;
+            let mut color_glyphs = color_glyphs;
+            let mut glyph_batches = glyph_batches;
+            let mut color_glyph_batches = color_glyph_batches;
+            let mut active_glyph_batches = active_glyph_batches;
+            let mut active_color_glyph_batches = active_color_glyph_batches;
+            glyphs.clear();
+            color_glyphs.clear();
+            glyph_batches.clear();
+            color_glyph_batches.clear();
+            active_glyph_batches.clear();
+            active_color_glyph_batches.clear();
 
-                self.sync_retained_pane_glyphs(ordered_tiles, zoom, vw_f, vh_f, paint);
-                self.rebuild_retained_glyph_batches();
+            let active_bg_start = self.build_tiles(
+                offset_tiles,
+                zoom,
+                vw_f,
+                vh_f,
+                &mut bg_rects,
+                &mut bg_rect_ranges,
+                &mut ui_sdf_rects,
+                &mut glyphs,
+                &mut color_glyphs,
+                &mut glyph_batches,
+                &mut color_glyph_batches,
+                &mut active_glyph_batches,
+                &mut active_color_glyph_batches,
+            );
+            let pane_glyph_end = glyphs.len();
+            let pane_color_glyph_end = color_glyphs.len();
+            self.render_bufs.glyph_batches = glyph_batches;
+            self.render_bufs.color_glyph_batches = color_glyph_batches;
+            self.render_bufs.active_glyph_batches = active_glyph_batches;
+            self.render_bufs.active_color_glyph_batches = active_color_glyph_batches;
 
-                let mut glyphs = std::mem::take(&mut self.render_bufs.glyphs);
-                let mut color_glyphs = std::mem::take(&mut self.render_bufs.color_glyphs);
-                glyphs.truncate(self.render_bufs.pane_glyph_end);
-                color_glyphs.truncate(self.render_bufs.pane_color_glyph_end);
-
-                for (pane_id, tile_rect, is_active) in ordered_tiles.iter().copied() {
-                    if is_active {
-                        continue;
-                    }
-                    self.build_tile_backgrounds(
-                        pane_id,
-                        tile_rect,
-                        false,
-                        zoom,
-                        vw_f,
-                        vh_f,
-                        paint,
-                        &mut bg_rects,
-                        &mut bg_rect_ranges,
-                        &mut ui_sdf_rects,
-                    );
-                }
-
-                let zoom_threshold = self.core.config.animation.zoom_threshold;
-                for (rect, opacity, _slide) in self.core.anim_mgr.closing_panes() {
-                    let range_start = bg_rects.len();
-                    let (rx, ry, rw, rh) = if zoom < zoom_threshold {
-                        let cx = vw_f / 2.0;
-                        let cy = vh_f / 2.0;
-                        (
-                            cx + (rect.x - cx) * zoom,
-                            cy + (rect.y - cy) * zoom,
-                            rect.w * zoom,
-                            rect.h * zoom,
-                        )
-                    } else {
-                        (rect.x, rect.y, rect.w, rect.h)
-                    };
-                    bg_rects.push(Rect {
-                        x: rx,
-                        y: ry,
-                        w: rw,
-                        h: rh,
-                        color: [0.1, 0.1, 0.1, opacity * 0.5],
-                    });
-                    if let Some(range) = Self::zero_rect_range(range_start, bg_rects.len()) {
-                        bg_rect_ranges.push(range);
-                    }
-                }
-
-                let active_bg_start = bg_rects.len();
-                for (pane_id, tile_rect, is_active) in ordered_tiles.iter().copied() {
-                    if !is_active {
-                        continue;
-                    }
-                    self.build_tile_backgrounds(
-                        pane_id,
-                        tile_rect,
-                        true,
-                        zoom,
-                        vw_f,
-                        vh_f,
-                        paint,
-                        &mut bg_rects,
-                        &mut bg_rect_ranges,
-                        &mut ui_sdf_rects,
-                    );
-                }
-
-                (
-                    active_bg_start,
-                    self.render_bufs.pane_glyph_end,
-                    self.render_bufs.pane_color_glyph_end,
-                    glyphs,
-                    color_glyphs,
-                )
-            } else {
-                let mut glyphs = glyphs;
-                let mut color_glyphs = color_glyphs;
-                let mut glyph_batches = glyph_batches;
-                let mut color_glyph_batches = color_glyph_batches;
-                let mut active_glyph_batches = active_glyph_batches;
-                let mut active_color_glyph_batches = active_color_glyph_batches;
-                glyphs.clear();
-                color_glyphs.clear();
-                glyph_batches.clear();
-                color_glyph_batches.clear();
-                active_glyph_batches.clear();
-                active_color_glyph_batches.clear();
-
-                let active_bg_start = self.build_tiles(
-                    offset_tiles,
-                    zoom,
-                    vw_f,
-                    vh_f,
-                    &mut bg_rects,
-                    &mut bg_rect_ranges,
-                    &mut ui_sdf_rects,
-                    &mut glyphs,
-                    &mut color_glyphs,
-                    &mut glyph_batches,
-                    &mut color_glyph_batches,
-                    &mut active_glyph_batches,
-                    &mut active_color_glyph_batches,
-                );
-                let pane_glyph_end = glyphs.len();
-                let pane_color_glyph_end = color_glyphs.len();
-                self.render_bufs.pane_order.clear();
-                self.render_bufs.pane_regions.clear();
-                self.render_bufs.pane_glyph_end = pane_glyph_end;
-                self.render_bufs.pane_color_glyph_end = pane_color_glyph_end;
-                self.render_bufs.glyph_batches = glyph_batches;
-                self.render_bufs.color_glyph_batches = color_glyph_batches;
-                self.render_bufs.active_glyph_batches = active_glyph_batches;
-                self.render_bufs.active_color_glyph_batches = active_color_glyph_batches;
-
-                (
-                    active_bg_start,
-                    pane_glyph_end,
-                    pane_color_glyph_end,
-                    glyphs,
-                    color_glyphs,
-                )
-            };
+            (
+                active_bg_start,
+                pane_glyph_end,
+                pane_color_glyph_end,
+                glyphs,
+                color_glyphs,
+            )
+        };
         let glyph_batches = std::mem::take(&mut self.render_bufs.glyph_batches);
         let color_glyph_batches = std::mem::take(&mut self.render_bufs.color_glyph_batches);
         let active_glyph_batches = std::mem::take(&mut self.render_bufs.active_glyph_batches);
@@ -2879,24 +2280,12 @@ impl App {
             self.debug_metrics.end_frame_skipped();
             return;
         }
-        let paint = self.tile_paint_config();
-        let ordered_tiles = Self::ordered_pane_tiles(&offset_tiles);
-        let use_retained_panes =
-            self.should_use_retained_pane_scene(&ordered_tiles, zoom, vw_f, vh_f);
         self.debug_metrics
             .end_phase(crate::app::debug_metrics::Phase::Layout);
 
         self.debug_metrics
             .begin_phase(crate::app::debug_metrics::Phase::Paint);
-        let scene = self.assemble_scene(
-            &offset_tiles,
-            &ordered_tiles,
-            paint,
-            zoom,
-            vw_f,
-            vh_f,
-            use_retained_panes,
-        );
+        let scene = self.assemble_scene(&offset_tiles, zoom, vw_f, vh_f);
         let scene_bytes = scene_byte_estimate(&scene);
         self.debug_metrics
             .end_phase(crate::app::debug_metrics::Phase::Paint);
@@ -3438,7 +2827,7 @@ mod tests {
         let tiles = vec![(2, GeoRect::new(320.0, 0.0, 300.0, 200.0), true)];
         let paint = app.tile_paint_config();
 
-        let scene = app.assemble_scene(&tiles, &tiles, paint, 1.0, 1600.0, 900.0, false);
+        let scene = app.assemble_scene(&tiles, 1.0, 1600.0, 900.0);
 
         assert_eq!(scene.pane_sdf_len, 1);
         assert_eq!(scene.cached_sdf_len, 1);

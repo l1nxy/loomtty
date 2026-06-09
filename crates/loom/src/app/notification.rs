@@ -51,7 +51,13 @@ impl App {
             // an already-initialized apartment — never move this onto a fresh
             // thread, which would lack COM and fail silently.
             use notify_rust::Notification;
-            let _ = Notification::new().summary(summary).body(body).show();
+            // Log on failure rather than swallowing it: a discarded toast is
+            // otherwise an invisible no-op. Failures here mean a missing AUMID
+            // ("Element not found"), an uninitialized COM apartment (caller is
+            // off the winit thread, see above), or the user's notification quota.
+            if let Err(e) = Notification::new().summary(summary).body(body).show() {
+                log::warn!("windows toast notification failed: {e:?}");
+            }
         }
         #[cfg(not(any(unix, windows)))]
         {

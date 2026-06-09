@@ -19,6 +19,7 @@ loom-motion = { workspace = true }
 loom-ui = { workspace = true }
 loom-input = { path = "../loom-input" }
 loom-config = { workspace = true }
+loom-plugin = { workspace = true }
 crossbeam-channel = { workspace = true }
 rmp-serde = { workspace = true }
 winit = { workspace = true }
@@ -28,7 +29,12 @@ env_logger = { workspace = true }
 anyhow = { workspace = true }
 clap = { version = "4", features = ["derive", "color"] }
 dialoguer = "0.11"
-serde_json = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+base64 = { workspace = true }
+reqwest = { workspace = true }
+dirs = { workspace = true }
 arboard = { workspace = true }
 unicode-width = "0.2"
 notify = { workspace = true }
@@ -39,6 +45,9 @@ getrandom = "0.4.2"
 
 [target.'cfg(any(unix, windows))'.dependencies]
 notify-rust = "4"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"

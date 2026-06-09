@@ -22,6 +22,7 @@ pub(crate) mod status_bar;
 pub(crate) mod sync;
 pub(crate) mod top_bar;
 pub(crate) mod ui;
+pub(crate) mod usage;
 
 use loom_anim::manager::{AnimConfig, AnimationManager};
 use loom_config::config::{LoomConfig, StatusBarPosition};

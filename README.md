@@ -1,8 +1,19 @@
+<p align="center">
+  <img src="assets/icons/icon.svg" width="120" alt="loomtty">
+</p>
+
 # loomtty
 
 A GPU-accelerated terminal multiplexer written in Rust. Column-based layouts and
-workspaces, a built-in browser client, and remote attach over a binary protocol —
-on Linux, macOS, and Windows.
+workspaces, a built-in browser client, and remote attach over a binary protocol.
+
+[![CI](https://github.com/l1nxy/loomtty/actions/workflows/ci.yml/badge.svg)](https://github.com/l1nxy/loomtty/actions/workflows/ci.yml)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20Windows%20%7C%20macOS%20%28WIP%29-blue)
+
+> **🚧 Early and experimental (v0.1).** Expect rough edges — not everything is
+> guaranteed to work yet. Primarily developed on Linux and Windows; **macOS is
+> untested, treat it as work in progress.**
 
 ## Features
 
@@ -81,6 +92,13 @@ mode = "sticky"        # "sticky" (zellij-style) or "prefix" (tmux-style)
 Every option, default, and valid range is documented in
 [`crates/loom-config/src/schema.rs`](crates/loom-config/src/schema.rs). You can
 also edit settings live from the in-app settings panel.
+
+## Shell Integration
+
+Sourcing the snippet for your shell enables OSC 133 prompt marks — jump-to-prompt
+in scroll mode, command status, and exit codes. The scripts live in
+[`crates/loom-server/shell-integration/`](crates/loom-server/shell-integration/)
+(`loom.bash`, `loom.zsh`, `loom.fish`); see [INSTALL.md](INSTALL.md) for setup.
 
 ## Web UI
 

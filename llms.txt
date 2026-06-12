@@ -6,7 +6,7 @@
 - 13-crate workspace: loom (client), loom-server (daemon), loom-app, loom-render, loom-gpu, loom-term, loom-protocol, loom-config, loom-input, loom-layout, loom-anim, loom-session, loom-procinfo
 - Uses patched forks of winit, alacritty_terminal, and vte (branch: loom-patches)
 - Config: TOML at ~/.config/loom/config.toml, interactive setup via `loom init`
-- Shell integration: fish and zsh via OSC 133 + OSC 7
+- Shell integration: bash, zsh, and fish via OSC 133 + OSC 7
 
 ## Installation
 
@@ -20,8 +20,9 @@
 
 ## Shell Integration
 
-- [Fish Integration](crates/loom-server/shell-integration/loom.fish): Fish shell integration script
+- [Bash Integration](crates/loom-server/shell-integration/loom.bash): Bash shell integration script
 - [Zsh Integration](crates/loom-server/shell-integration/loom.zsh): Zsh shell integration script
+- [Fish Integration](crates/loom-server/shell-integration/loom.fish): Fish shell integration script
 
 ## Key Source Files
 

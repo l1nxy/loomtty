@@ -72,6 +72,7 @@ export default defineConfig({
             { text: 'Shell Integration', link: '/guide/shell-integration' },
             { text: 'Remote & Predictive Echo', link: '/guide/remote-attach' },
             { text: 'Web UI', link: '/guide/web-ui' },
+            { text: 'System Tray', link: '/guide/system-tray' },
           ],
         },
       ],

@@ -138,6 +138,19 @@ isn't reachable. `list-prompts` returning nothing means shell integration isn't
 active in that pane.
 :::
 
+## The server daemon
+
+`loomtty-server` is normally **auto-started** by the client — you rarely run it
+by hand. When you do, these flags apply:
+
+| Flag | Description |
+| ---- | ----------- |
+| _(none)_ | Run with the [system tray](/guide/system-tray) (default; needs a desktop session). |
+| `--headless` | Run in the foreground without the tray — for headless / SSH-only hosts. |
+| `--daemonize` | Unix only: fork into the background (also no tray). |
+| `--print-socket-path` | Print the IPC socket path and exit. |
+| `--web` `--web-port <n>` `--web-bind <addr>` `--web-token <tok>` `--web-static-dir <dir>` | Enable and configure the [web gateway](/guide/web-ui) (what `loomtty web` passes through). |
+
 ## Global
 
 | Flag | Description |

@@ -94,6 +94,17 @@ past loopback. See [`web/README.md`](web/README.md).
 [AGENTS.md](AGENTS.md) is the build / architecture / data-flow guide for
 contributors and coding agents.
 
+## Acknowledgments
+
+loomtty borrows ideas from work it admires:
+
+- [niri](https://github.com/YaLTeR/niri) — scrollable column layout
+- [tmux](https://github.com/tmux/tmux) — the detach/attach multiplexer model
+- [zellij](https://zellij.dev) — sticky input modes and a browser client
+- [Windows Terminal](https://github.com/microsoft/terminal) — native Windows + GPU rendering
+- [Ghostty](https://ghostty.org) — GPU-accelerated terminal craft
+- [mosh](https://mosh.org) — predictive echo over high-latency links
+
 ## License
 
 [AGPL-3.0-only](LICENSE) © loomtty contributors.

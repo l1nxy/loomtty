@@ -1,5 +1,8 @@
 # Loom default configuration
 # Copy to ~/.config/loom/config.toml and customize for loomtty.
+#
+# Every option, its default, and its valid range is documented in the full
+# configuration reference: https://linxy.dev/loomtty/reference/configuration
 
 [font]
 family = "Google Sans Code NF"

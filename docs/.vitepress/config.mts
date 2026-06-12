@@ -44,7 +44,7 @@ export default defineConfig({
           },
           {
             text: 'Changelog',
-            link: 'https://github.com/l1nxy/loomtty/commits/main',
+            link: 'https://github.com/l1nxy/loomtty/commits/dev',
           },
         ],
       },
@@ -96,7 +96,7 @@ export default defineConfig({
     },
 
     editLink: {
-      pattern: 'https://github.com/l1nxy/loomtty/edit/main/docs/:path',
+      pattern: 'https://github.com/l1nxy/loomtty/edit/dev/docs/:path',
       text: 'Edit this page on GitHub',
     },
 

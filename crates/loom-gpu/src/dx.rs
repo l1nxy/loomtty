@@ -1951,6 +1951,14 @@ impl Renderer {
     ) -> (GlyphCache, GlyphAtlasGpu) {
         let mut cache = GlyphCache::new(params);
         cache.set_d2d_rendering(true);
+        // Force the atlas texture to be wiped on its first upload. A fresh
+        // `GlyphCache` leaves `pending_clear = false` on the assumption the
+        // brand-new texture is blank — but a D3D11 atlas allocated right after
+        // we destroyed the previous one (on a font-size / DPI change) can reuse
+        // that freed GPU memory, which still holds the old glyph bitmaps at the
+        // old size. Without this, those stale glyphs bleed through and the old
+        // and new font sizes render superimposed.
+        cache.clear_cache();
 
         // Both atlas layers use B8G8R8A8 for D2D render target compatibility.
         // Inject color functions into the alpha pixel shader.

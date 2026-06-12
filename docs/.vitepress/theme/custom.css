@@ -1,0 +1,53 @@
+/**
+ * loomtty brand theme — colors pulled from the app icon:
+ *   primary gradient  #00FBFF (cyan) → #007AFF (blue)
+ *   background        #1E1E20 → #09090B (near-black)
+ */
+
+:root {
+  --vp-c-brand-1: #0093b3;
+  --vp-c-brand-2: #007aff;
+  --vp-c-brand-3: #0093b3;
+  --vp-c-brand-soft: rgba(0, 147, 179, 0.14);
+}
+
+.dark {
+  --vp-c-brand-1: #2bdcff;
+  --vp-c-brand-2: #00c0e8;
+  --vp-c-brand-3: #009dc0;
+  --vp-c-brand-soft: rgba(0, 192, 232, 0.16);
+}
+
+/* Hero: gradient wordmark + glowing logo */
+:root {
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: -webkit-linear-gradient(
+    120deg,
+    #00fbff 30%,
+    #007aff
+  );
+
+  --vp-home-hero-image-background-image: linear-gradient(
+    -45deg,
+    #00fbff 30%,
+    #007aff 70%
+  );
+  --vp-home-hero-image-filter: blur(48px);
+}
+
+@media (min-width: 640px) {
+  :root {
+    --vp-home-hero-image-filter: blur(64px);
+  }
+}
+
+@media (min-width: 960px) {
+  :root {
+    --vp-home-hero-image-filter: blur(80px);
+  }
+}
+
+/* Brand-tinted code accents to match the terminal feel */
+:root {
+  --vp-code-line-highlight-color: rgba(0, 147, 179, 0.1);
+}

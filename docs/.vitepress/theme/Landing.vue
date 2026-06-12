@@ -36,6 +36,7 @@ const features = [
     n: '07',
     title: 'Lua plugins',
     body: 'Sandboxed scripting with an event API for extending the multiplexer.',
+    planned: true,
   },
   {
     n: '08',
@@ -143,7 +144,10 @@ const features = [
 
       <div class="lt-grid">
         <article v-for="f in features" :key="f.n" class="lt-card">
-          <span class="lt-card__n">{{ f.n }}</span>
+          <span class="lt-card__head">
+            <span class="lt-card__n">{{ f.n }}</span>
+            <span v-if="f.planned" class="lt-card__tag">planned</span>
+          </span>
           <h3 class="lt-card__title">{{ f.title }}</h3>
           <p class="lt-card__body">{{ f.body }}</p>
         </article>
@@ -467,11 +471,27 @@ const features = [
   transition: background 0.15s ease;
 }
 .lt-card:hover { background: var(--vp-c-bg-soft); }
+.lt-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 .lt-card__n {
   font-family: var(--vp-font-family-mono);
   font-size: 12px;
   color: var(--vp-c-text-3);
   letter-spacing: 0.1em;
+}
+.lt-card__tag {
+  font-family: var(--vp-font-family-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--vp-c-text-3);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 5px;
+  padding: 1px 6px;
 }
 .lt-card__title {
   font-size: 16.5px;

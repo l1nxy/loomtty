@@ -75,6 +75,11 @@ export default defineConfig({
             { text: 'System Tray', link: '/guide/system-tray' },
           ],
         },
+        {
+          text: 'Extending',
+          collapsed: false,
+          items: [{ text: 'Plugins', link: '/guide/plugins' }],
+        },
       ],
       '/reference/': [
         {

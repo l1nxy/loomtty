@@ -4,6 +4,8 @@
 you'd attach to from the native client, served as an HTTP single-page app and
 installable as a **PWA**.
 
+![The browser client attached to a live session, showing its Claude Code pane](/demo/web-claude.png)
+
 ## Run it
 
 ```bash

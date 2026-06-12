@@ -84,6 +84,8 @@ at once, like a bird's-eye map. Navigate with `h` / `j` / `k` / `l`, open a new
 column with `n`, close one with `x`, and press `o` / `Esc` / `Enter` / `Tab` to
 drop back into the focused pane.
 
+![Overview mode: every workspace zoomed out over the wallpaper](/demo/overview.png)
+
 ## Workspaces & sessions
 
 - **Workspaces** live inside one session and scroll vertically (`j` / `k`).

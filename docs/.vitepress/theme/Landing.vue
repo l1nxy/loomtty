@@ -135,6 +135,33 @@ const features = [
       <div class="lt-glow" aria-hidden="true"></div>
     </section>
 
+    <!-- ───────────────────────── Demo ────────────────────────── -->
+    <section class="lt-section lt-section--demo">
+      <div class="lt-section__head">
+        <p class="lt-eyebrow">demo</p>
+        <h2 class="lt-h2">One take, no cuts.</h2>
+        <p class="lt-demo__lede">
+          Columns and stacked tiles, lazygit and Claude Code in panes, the
+          overview — then the same session attached from a browser, live.
+        </p>
+      </div>
+
+      <figure class="lt-demo">
+        <video
+          class="lt-demo__video"
+          :poster="withBase('/demo/poster.png')"
+          autoplay
+          muted
+          loop
+          playsinline
+          preload="metadata"
+        >
+          <source :src="withBase('/demo/demo.webm')" type="video/webm" />
+          <source :src="withBase('/demo/demo.mp4')" type="video/mp4" />
+        </video>
+      </figure>
+    </section>
+
     <!-- ──────────────────────── Features ─────────────────────── -->
     <section class="lt-section">
       <div class="lt-section__head">
@@ -446,6 +473,29 @@ const features = [
   border-top: 1px solid var(--vp-c-divider);
 }
 .lt-section__head { margin-bottom: 40px; }
+
+/* ─────────────── demo ─────────────── */
+.lt-section--demo .lt-section__head { margin-bottom: 28px; }
+.lt-demo__lede {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--vp-c-text-2);
+  margin: 12px 0 0;
+  max-width: 560px;
+}
+.lt-demo {
+  margin: 0;
+  border: 1px solid var(--t-border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--t-bg);
+  box-shadow: 0 24px 64px -32px rgb(0 0 0 / 0.5);
+}
+.lt-demo__video {
+  display: block;
+  width: 100%;
+  height: auto;
+}
 .lt-h2 {
   font-size: 32px;
   line-height: 1.15;

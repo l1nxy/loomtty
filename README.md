@@ -15,15 +15,13 @@ workspaces, a built-in browser client, and remote attach over a binary protocol.
 > guaranteed to work yet. Primarily developed on Linux and Windows; **macOS is
 > untested, treat it as work in progress.**
 
+https://github.com/user-attachments/assets/6b078921-1065-4867-a412-e2f9c949fb9a
+
 <p align="center">
-  <a href="https://linxy.dev/loomtty/">
-    <img src="docs/public/demo/overview.png" alt="loomtty overview mode — workspaces zoomed out over the wallpaper">
-  </a>
-  <br>
   <sub>
-    <b><a href="https://linxy.dev/loomtty/">▶ Watch the demo</a></b> — one 54-second take:
-    columns &amp; tiles, lazygit and Claude Code in panes, the overview, then the
-    same session attached from a browser.
+    One 54-second take, no cuts — columns &amp; tiles, lazygit and Claude Code in
+    panes, the overview, then the same session attached from a browser.
+    More at <a href="https://linxy.dev/loomtty/">linxy.dev/loomtty</a>.
   </sub>
 </p>
 

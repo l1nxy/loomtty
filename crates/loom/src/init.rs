@@ -247,7 +247,6 @@ b = "toggle_broadcast"
 c = "consume_into_column"
 e = "expel_from_column"
 o = "toggle_overview"
-tab = "toggle_overview"
 q = "detach"
 p = "toggle_command_palette"
 

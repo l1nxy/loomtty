@@ -51,7 +51,7 @@ Set `[input] mode = "prefix"` for tmux-style tap-leader-then-key.
 | `Alt r` | Resize mode |
 | `Alt s` / `Alt m` | Scroll / move mode |
 | `Alt b` | Broadcast input to all panes |
-| `Alt Tab` | Overview |
+| `Alt o` | Overview |
 | `Alt p` | Command palette |
 | `Alt q` | Detach |
 | `Alt /` | Keybindings help |

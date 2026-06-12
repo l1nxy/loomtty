@@ -41,7 +41,6 @@ impl Default for KeybindConfig {
         bindings.insert("c".to_string(), "consume_into_column".to_string());
         bindings.insert("e".to_string(), "expel_from_column".to_string());
         bindings.insert("o".to_string(), "toggle_overview".to_string());
-        bindings.insert("tab".to_string(), "toggle_overview".to_string());
         bindings.insert("q".to_string(), "detach".to_string());
         bindings.insert("p".to_string(), "toggle_command_palette".to_string());
         bindings.insert("g".to_string(), "toggle_lock".to_string());

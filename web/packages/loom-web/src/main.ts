@@ -103,7 +103,9 @@ function connect(token: string): void {
   app = new LoomApp(rootEl, {
     url: wsUrl,
     sessionName,
-    token,
+    // Empty = demo gateway (`auth = "none"`): omit the token so the WS
+    // URL carries no dangling `?token=`.
+    ...(token.length > 0 ? { token } : {}),
     onOpen: () => {
       everOpened = true;
       failedReconnects = 0;
@@ -178,12 +180,25 @@ loginForm.addEventListener("submit", (e) => {
   connect(token);
 });
 
-// Auto-connect when this tab already has a token; otherwise show login.
+// Auto-connect when this tab already has a token. Otherwise ask the
+// gateway whether it wants one at all: a demo gateway (`[web] auth =
+// "none"`, loopback-only) advertises itself via `/api/auth-mode`, and we
+// skip the login card entirely. Any failure — 404 from an older server,
+// network error, malformed body — falls back to the normal token login.
 const stored = sessionStorage.getItem(TOKEN_KEY);
 if (stored !== null && stored.length > 0) {
   connect(stored);
 } else {
-  showLogin("", "");
+  fetch(`${appBase}api/auth-mode`, { cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : { auth: "token" }))
+    .then((mode: { auth?: string }) => {
+      if (mode.auth === "none") {
+        connect("");
+      } else {
+        showLogin("", "");
+      }
+    })
+    .catch(() => showLogin("", ""));
 }
 
 // Register the app-shell service worker — production builds only. In

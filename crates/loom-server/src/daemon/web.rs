@@ -126,7 +126,9 @@ pub(crate) fn prepare_web_token(raw: &str) -> Result<SharedToken> {
 /// so `Clone` (required by axum `State`) is a refcount bump.
 #[derive(Clone)]
 pub(crate) struct WebState {
-    token: SharedToken,
+    /// `None` = `auth = "none"` (demo mode): `/ws` skips the token check.
+    /// The daemon only constructs that state on a loopback bind.
+    token: Option<SharedToken>,
     allowed_origins: Arc<Vec<String>>,
     conn_sem: Arc<Semaphore>,
     server: Arc<Mutex<Server>>,
@@ -136,7 +138,7 @@ pub(crate) struct WebState {
 
 impl WebState {
     pub(crate) fn new(
-        token: SharedToken,
+        token: Option<SharedToken>,
         allowed_origins: Arc<Vec<String>>,
         server: Arc<Mutex<Server>>,
         shutdown: Arc<Notify>,
@@ -204,7 +206,9 @@ pub(crate) fn resolve_static_dir(configured: &str) -> Option<PathBuf> {
 /// immediately. The client routes by `?session=` query, not URL path, so
 /// no SPA path-fallback is needed — unknown paths correctly 404.
 pub(crate) fn build_router(state: WebState, static_dir: Option<PathBuf>) -> Router {
-    let mut app = Router::new().route("/ws", get(ws_handler));
+    let mut app = Router::new()
+        .route("/ws", get(ws_handler))
+        .route("/api/auth-mode", get(auth_mode_handler));
 
     if let Some(dir) = static_dir {
         // One ServeDir serves the whole built site: `/` → index.html (via
@@ -228,9 +232,13 @@ pub(crate) fn build_router(state: WebState, static_dir: Option<PathBuf>) -> Rout
 /// mid-deploy) is never pinned in a cache for a year, and the `/ws`
 /// 101/401/503 responses are left untouched.
 async fn set_static_cache_headers(req: Request, next: Next) -> Response {
-    let immutable = req.uri().path().starts_with("/assets/");
+    let path = req.uri().path();
+    // API handlers stamp their own Cache-Control (e.g. `/api/auth-mode`
+    // sets `no-store`); don't overwrite it with the static-shell policy.
+    let api = path.starts_with("/api/");
+    let immutable = path.starts_with("/assets/");
     let mut res = next.run(req).await;
-    if res.status().is_success() {
+    if !api && res.status().is_success() {
         let value = if immutable {
             "public, max-age=31536000, immutable"
         } else {
@@ -269,11 +277,14 @@ async fn ws_handler(
         log::warn!("ws upgrade from {addr} rejected: Origin not in allowlist");
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let provided = extract_token(&headers, query.as_deref());
-    let authed = provided
-        .as_deref()
-        .map(|t| bool::from(t.as_bytes().ct_eq(st.token.as_bytes())))
-        .unwrap_or(false);
+    let authed = match st.token.as_ref() {
+        // Demo mode (`auth = "none"`, loopback-only): no token to check.
+        None => true,
+        Some(expected) => extract_token(&headers, query.as_deref())
+            .as_deref()
+            .map(|t| bool::from(t.as_bytes().ct_eq(expected.as_bytes())))
+            .unwrap_or(false),
+    };
     if !authed {
         log::warn!("ws upgrade from {addr} rejected: bad or missing token");
         return StatusCode::UNAUTHORIZED.into_response();
@@ -306,6 +317,22 @@ async fn ws_handler(
             // live connections, then release on disconnect.
             drop(permit);
         })
+}
+
+/// Advertise the gateway's auth mode so the SPA can skip the login card
+/// on a demo (`auth = "none"`) gateway. Deliberately public (like the
+/// static shell): it reveals only whether a token is required, never the
+/// token. `no-store` so a mode flip after restart isn't masked by a cache.
+async fn auth_mode_handler(State(st): State<WebState>) -> Response {
+    let mode = if st.token.is_none() { "none" } else { "token" };
+    (
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        format!("{{\"auth\":\"{mode}\"}}"),
+    )
+        .into_response()
 }
 
 /// Returns true if the request Origin satisfies the policy. Empty
@@ -911,7 +938,22 @@ mod router_tests {
             TerminalColors::default(),
         )));
         WebState::new(
-            prepare_web_token("0123456789abcdef0123456789abcdef").unwrap(),
+            Some(prepare_web_token("0123456789abcdef0123456789abcdef").unwrap()),
+            std::sync::Arc::new(Vec::new()),
+            server,
+            std::sync::Arc::new(tokio::sync::Notify::new()),
+            std::sync::Arc::new(tokio::sync::Notify::new()),
+        )
+    }
+
+    fn test_state_noauth() -> WebState {
+        let server = std::sync::Arc::new(tokio::sync::Mutex::new(Server::new(
+            "",
+            8.0,
+            TerminalColors::default(),
+        )));
+        WebState::new(
+            None,
             std::sync::Arc::new(Vec::new()),
             server,
             std::sync::Arc::new(tokio::sync::Notify::new()),
@@ -931,10 +973,14 @@ mod router_tests {
     }
 
     fn site_router() -> (tempfile::TempDir, Router) {
+        site_router_with(test_state())
+    }
+
+    fn site_router_with(state: WebState) -> (tempfile::TempDir, Router) {
         let tmp = tempfile::tempdir().unwrap();
         write_site(tmp.path());
         let dir = std::fs::canonicalize(tmp.path()).unwrap();
-        let router = build_router(test_state(), Some(dir));
+        let router = build_router(state, Some(dir));
         (tmp, router)
     }
 
@@ -1051,6 +1097,46 @@ mod router_tests {
         );
 
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn ws_upgrades_without_token_when_auth_none() {
+        // Demo mode (`auth = "none"`): the same handshake that 401s in
+        // token mode must upgrade with no token at all.
+        let (_tmp, router) = site_router_with(test_state_noauth());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+        let server = tokio::spawn(serve_web(listener, router, shutdown));
+
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let req = format!(
+            "GET /ws HTTP/1.1\r\nHost: {addr}\r\nConnection: Upgrade\r\n\
+             Upgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+             Sec-WebSocket-Version: 13\r\n\r\n",
+        );
+        s.write_all(req.as_bytes()).await.unwrap();
+        let mut buf = [0u8; 64];
+        let n = s.read(&mut buf).await.unwrap();
+        let status = String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or("").to_string();
+        assert!(status.contains("101"), "tokenless upgrade must succeed in demo mode, got: {status}");
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn auth_mode_endpoint_reports_mode() {
+        let (_tmp, router) = site_router();
+        let (status, headers, body) = get(&router, "/api/auth-mode").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "{\"auth\":\"token\"}");
+        assert_eq!(cache_control(&headers), "no-store");
+
+        let (_tmp2, router) = site_router_with(test_state_noauth());
+        let (status, _, body) = get(&router, "/api/auth-mode").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "{\"auth\":\"none\"}");
     }
 
     #[tokio::test]

@@ -223,6 +223,11 @@ enabled = false
 # round-tripped through serde produces no diff.
 bind = ""
 port = 7891
+# Authentication for the /ws data channel: "token" (default) or "none".
+# "none" is demo mode — no token, the browser UI skips the login screen.
+# Only honored on a loopback bind; the daemon refuses to start an
+# unauthenticated gateway on a reachable interface.
+auth = "token"
 # Generate with `openssl rand -hex 16` (32 hex chars) and paste the
 # value between the quotes. Leave as "" while `enabled = false`.
 # Avoid base64-style tokens for query-string clients: characters

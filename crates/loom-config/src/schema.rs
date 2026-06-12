@@ -989,9 +989,17 @@ pub struct WebConfig {
     /// Reject `port = 0` (OS-assigned ephemeral); see Validate impl.
     pub port: u16,
     /// Shared token required on the upgrade. The Validate impl enforces
-    /// a `MIN_WEB_TOKEN_BYTES` floor when `enabled = true`. `enabled =
-    /// false, token = ""` is a valid resting state.
+    /// a `MIN_WEB_TOKEN_BYTES` floor when `enabled = true` (unless
+    /// `auth = "none"`). `enabled = false, token = ""` is a valid
+    /// resting state.
     pub token: String,
+    /// Gateway authentication mode:
+    /// - `"token"` (default) — `/ws` requires the shared `token`.
+    /// - `"none"` — demo mode: `/ws` accepts unauthenticated upgrades and
+    ///   the browser UI skips the login screen. Only honored on a
+    ///   loopback `bind`; the daemon refuses to start an unauthenticated
+    ///   gateway on a reachable interface.
+    pub auth: String,
     /// CSRF defense for browser clients. Each entry is exact-matched
     /// against the `Origin` header on the upgrade request (e.g.,
     /// `"http://localhost:5173"`, `"https://terminal.example.com"`, or
@@ -1010,6 +1018,15 @@ pub struct WebConfig {
     /// authenticated), so the directory must contain only the public web
     /// bundle — never secrets, `.env`, or config dumps.
     pub static_dir: String,
+}
+
+impl WebConfig {
+    /// True when the gateway runs in demo mode (`auth = "none"`): `/ws`
+    /// accepts unauthenticated upgrades. The schema + daemon both restrict
+    /// this to loopback binds.
+    pub fn auth_disabled(&self) -> bool {
+        self.auth.trim().eq_ignore_ascii_case("none")
+    }
 }
 
 /// `Validate` is implemented manually rather than via `#[derive]` so
@@ -1050,7 +1067,34 @@ impl garde::Validate for WebConfig {
             }
         };
 
-        if self.enabled {
+        if !matches!(self.auth.as_str(), "token" | "none") {
+            report.append(
+                parent().join("auth"),
+                garde::Error::new(format!(
+                    "`auth` must be \"token\" or \"none\", got {:?}",
+                    self.auth,
+                )),
+            );
+        }
+
+        if self.enabled && self.auth_disabled() {
+            // An unauthenticated gateway is demo/local-only: every page and
+            // process on the host can drive the terminal. Loopback keeps
+            // that to same-host peers; anything wider is refused.
+            if let Some(ip) = parsed_bind
+                && !ip.is_loopback()
+            {
+                report.append(
+                    parent().join("auth"),
+                    garde::Error::new(format!(
+                        "auth = \"none\" requires a loopback bind, got {ip} — \
+                         set a real token before exposing the gateway"
+                    )),
+                );
+            }
+        }
+
+        if self.enabled && !self.auth_disabled() {
             let trimmed = self.token.trim();
             if trimmed.is_empty() {
                 report.append(
@@ -1194,6 +1238,54 @@ mod web_config_tests {
     #[test]
     fn defaults_validate() {
         WebConfig::default().validate().expect("default must pass");
+    }
+
+    #[test]
+    fn auth_none_allows_empty_token_on_loopback() {
+        for bind in ["", "127.0.0.1", "::1"] {
+            let cfg = WebConfig {
+                enabled: true,
+                bind: bind.to_string(),
+                auth: "none".to_string(),
+                ..WebConfig::default()
+            };
+            cfg.validate()
+                .unwrap_or_else(|e| panic!("auth=none bind={bind:?} must pass: {e}"));
+        }
+    }
+
+    #[test]
+    fn auth_none_rejects_non_loopback_bind() {
+        let cfg = WebConfig {
+            enabled: true,
+            bind: "0.0.0.0".to_string(),
+            auth: "none".to_string(),
+            allowed_origins: vec!["http://demo.example".to_string()],
+            ..WebConfig::default()
+        };
+        let err = cfg.validate().expect_err("auth=none on 0.0.0.0 must fail");
+        assert!(err.to_string().contains("loopback"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_unknown_auth_mode() {
+        let cfg = WebConfig {
+            auth: "open".to_string(),
+            ..WebConfig::default()
+        };
+        let err = cfg.validate().expect_err("auth=open must fail");
+        assert!(err.to_string().contains("auth"), "got: {err}");
+    }
+
+    #[test]
+    fn auth_token_still_requires_token_when_enabled() {
+        let cfg = WebConfig {
+            enabled: true,
+            auth: "token".to_string(),
+            ..WebConfig::default()
+        };
+        cfg.validate()
+            .expect_err("enabled with empty token must still fail in token mode");
     }
 
     #[test]
@@ -1371,6 +1463,7 @@ impl Default for WebConfig {
             bind: String::new(),
             port: 7891,
             token: String::new(),
+            auth: "token".to_string(),
             allowed_origins: Vec::new(),
             // Empty → daemon resolves `<server-exe-dir>/web` at startup.
             static_dir: String::new(),

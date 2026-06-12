@@ -31,11 +31,21 @@ pub fn run_web(
     // below before anything is persisted.
     let mut config = LoomConfig::load_lenient().context("loading config")?;
 
+    // Demo mode: `[web] auth = "none"` skips the token entirely — nothing
+    // to mint, validate, or print. The schema/daemon restrict it to
+    // loopback binds, checked below alongside everything else.
+    let auth_none = config.web.auth_disabled();
+
     // Token precedence: explicit `--token` (warned — it lingers in this
     // process's argv), else the `LOOMTTY_WEB_TOKEN` env var (readable only
     // by the owner via /proc/<pid>/environ, unlike world-readable argv),
     // else a usable configured token, else a freshly minted one.
-    let token = if let Some(t) = token
+    let token = if auth_none {
+        if token.is_some() {
+            log::warn!("[web] auth = \"none\" in your config — ignoring --token");
+        }
+        String::new()
+    } else if let Some(t) = token
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
     {
@@ -61,7 +71,7 @@ pub fn run_web(
     // saved with `enabled = true`, and the server — which re-validates the
     // config on load — would then refuse to start on EVERY launch (desktop
     // included) until the config is hand-edited.
-    if !web_token_is_usable(&token) {
+    if !auth_none && !web_token_is_usable(&token) {
         bail!(
             "token is unusable (under {MIN_WEB_TOKEN_BYTES} bytes, or a known \
              placeholder). Pass a real --token (e.g. `openssl rand -hex 16`), or \
@@ -159,7 +169,9 @@ pub fn run_web(
     //    explicit --bind/--port (only those land on disk, below). This is
     //    exactly what a future `LoomConfig::load()` will see.
     config.web.enabled = true;
-    config.web.token = token.clone();
+    if !auth_none {
+        config.web.token = token.clone();
+    }
     if bind_overridden {
         config.web.bind = bind.clone();
     }
@@ -224,7 +236,9 @@ pub fn run_web(
     // applies when a running server is restarted to pick up the changes).
     let mut editable = EditableConfig::load().context("opening config for write")?;
     editable.set_web_enabled(true);
-    editable.set_web_token(&token);
+    if !auth_none {
+        editable.set_web_token(&token);
+    }
     if bind_overridden {
         editable.set_web_bind(&bind);
     }
@@ -277,7 +291,11 @@ pub fn run_web(
         println!("    • If they already match what you just saved (e.g. a prior");
         println!("      `loomtty web` with the same options), open:");
         println!("        {url}");
-        println!("      and log in with token:  {token}");
+        if auth_none {
+            println!("      (web.auth = \"none\" — no token needed)");
+        } else {
+            println!("      and log in with token:  {token}");
+        }
         println!("    • If you changed --port/--bind/--token/--static-dir, the running");
         println!("      server still uses the OLD ones — restart to apply:");
         println!("      `loomtty kill-server` (sessions are saved), then rerun `loomtty web`.");
@@ -289,10 +307,16 @@ pub fn run_web(
     println!("  loomtty web");
     println!();
     println!("    URL:    {url}");
-    println!("    Token:  {token}");
-    println!();
-    println!("  Starting the server… open the URL and paste the token to log in.");
-    println!("  The token is saved to your config; rerun with `loomtty web`.");
+    if auth_none {
+        println!("    Auth:   none (demo mode — local connections only)");
+        println!();
+        println!("  Starting the server… open the URL; no token needed.");
+    } else {
+        println!("    Token:  {token}");
+        println!();
+        println!("  Starting the server… open the URL and paste the token to log in.");
+        println!("  The token is saved to your config; rerun with `loomtty web`.");
+    }
     if !loopback {
         println!();
         println!("  NOTE: {bind} is reachable beyond loopback — the gateway speaks");

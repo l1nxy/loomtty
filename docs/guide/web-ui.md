@@ -16,6 +16,22 @@ This enables the `[web]` server, mints and saves an access token, prints the URL
 and runs the server in the foreground. Open the URL, log in with the token, and
 you're in your session.
 
+## Demo mode (no token)
+
+For a local try-out you can skip authentication entirely:
+
+```toml
+[web]
+enabled = true
+auth = "none"   # demo mode — loopback only
+```
+
+The gateway then accepts unauthenticated connections and the browser UI skips
+the login screen — open the URL and you're attached. Demo mode is **only
+honored on a loopback `bind`**; the daemon refuses to start an unauthenticated
+gateway on a reachable interface. Switch back by setting `auth = "token"` (the
+default) with a real `token`.
+
 ## How it works
 
 In production there is **no separate web host and no dev bridge**.

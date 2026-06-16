@@ -58,13 +58,19 @@ fn save_to_dir(img: &arboard::ImageData<'_>, parent: &Path) -> std::io::Result<P
         .unwrap_or(0);
 
     let (file, path) = create_exclusive(&dir, unix_ts)?;
-    {
+    let encode_result = {
         let writer = BufWriter::new(&file);
         PngEncoder::new(writer)
             .write_image(img.bytes.as_ref(), width, height, ExtendedColorType::Rgba8)
-            .map_err(std::io::Error::other)?;
-    }
+            .map_err(std::io::Error::other)
+    };
     drop(file);
+    if let Err(e) = encode_result {
+        // The handle is closed above (required on Windows to delete), so the
+        // just-created file isn't left behind as a 0-byte/partial orphan.
+        let _ = std::fs::remove_file(&path);
+        return Err(e);
+    }
 
     let _ = prune_old_files(&dir, KEEP_RECENT);
 

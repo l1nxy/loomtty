@@ -871,7 +871,7 @@ impl Default for RemoteConfig {
     fn default() -> Self {
         RemoteConfig {
             enabled: false,
-            port: 7890,
+            port: default_remote_port(),
             hosts: Vec::new(),
         }
     }

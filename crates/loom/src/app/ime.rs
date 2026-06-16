@@ -1,3 +1,12 @@
+//! IME (input method editor) preedit/commit handling.
+//!
+//! `handle_ime` owns the preedit state (`preedit_active`/`preedit_text`/
+//! `preedit_cursor`). A committed string is routed in precedence order: overlay
+//! input first (e.g. the command-palette query), swallowed if a modal captures
+//! the keyboard, otherwise sent to the PTY — broadcast to every visible pane in
+//! `broadcast_mode` (suppressed to the active pane when it is in password
+//! mode), else just the active pane.
+
 use loom_protocol::message::ClientMessage;
 use winit::event::Ime;
 
@@ -16,7 +25,17 @@ impl App {
                 }
 
                 let data = text.into_bytes();
-                if self.core.broadcast_mode {
+                // Mirror send_key_input: a committed string (which may be a
+                // password typed via IME) must never fan out to peer panes
+                // while the active pane is in password-input mode.
+                let password_mode = self
+                    .core
+                    .workspaces
+                    .active()
+                    .active_pane_id()
+                    .and_then(|pid| self.core.pane_grids.get(&pid))
+                    .is_some_and(|g| g.password_input);
+                if self.core.broadcast_mode && !password_mode {
                     let vox = self.core.anim_mgr.view_offset_x.value() as f32;
                     let pids: Vec<u64> = self
                         .core
@@ -33,7 +52,7 @@ impl App {
                             input_seq: 0,
                         });
                     }
-                } else if let Some(pid) = self.core.workspaces.active_mut().active_pane_id() {
+                } else if let Some(pid) = self.core.workspaces.active().active_pane_id() {
                     self.send(ClientMessage::Input {
                         pane_id: pid,
                         data,

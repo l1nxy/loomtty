@@ -277,7 +277,11 @@ impl ClientPaneGrid {
                 if chars[search_from..search_from + query_chars.len()] == query_chars[..] {
                     let char_start = search_from;
                     let char_end = search_from + query_chars.len() - 1;
-                    let end_col = col_positions[char_end] + col_widths[char_end] - 1;
+                    // Widen to u32 so a wide glyph in the last column of an
+                    // (unrealistically) ~u16::MAX-wide grid can't overflow the add.
+                    let end_col = (col_positions[char_end] as u32 + col_widths[char_end] as u32)
+                        .saturating_sub(1)
+                        .min(u16::MAX as u32) as u16;
                     results.push((row_idx, col_positions[char_start], end_col));
                     search_from += 1;
                 } else {

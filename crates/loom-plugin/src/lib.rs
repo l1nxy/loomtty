@@ -14,11 +14,21 @@ use events::EventRegistry;
 use mlua::{Lua, Table, Value};
 
 /// Agent detected by a plugin's `detect-agent` handler.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DetectedAgent {
     pub name: String,
     pub resume_command: String,
 }
+
+/// `detect-agent` event — handlers receive `(exe_name, argv)` and return a
+/// `{ name, resume_command }` table for a recognised agent, or nil.
+pub const EVENT_DETECT_AGENT: &str = "detect-agent";
+/// `format-tab-title` event — handlers receive `{ pane_id, title, cwd, is_active }`
+/// and return a replacement title string, or nil to keep the default.
+pub const EVENT_FORMAT_TAB_TITLE: &str = "format-tab-title";
+/// `format-status-bar` event — handlers receive `{ session_name, pane_count, mode }`
+/// and return a status-bar string, or nil.
+pub const EVENT_FORMAT_STATUS_BAR: &str = "format-status-bar";
 
 /// The plugin engine owns the Lua VM and event handler registry.
 pub struct PluginEngine {
@@ -52,6 +62,7 @@ impl PluginEngine {
     /// Fire a void event with a Lua table argument.
     pub fn fire_with_table(&self, event: &str, build: impl FnOnce(&Lua, &Table)) {
         let Ok(table) = self.lua.create_table() else {
+            log::warn!("[plugin] failed to create table for event '{event}'");
             return;
         };
         build(&self.lua, &table);
@@ -61,7 +72,7 @@ impl PluginEngine {
     /// Detect an agent from a foreground process.
     /// Dispatches the `detect-agent` event and returns the first non-nil result.
     pub fn detect_agent(&self, exe_name: &str, argv: &[String]) -> Option<DetectedAgent> {
-        let argv_table = match self.lua.create_sequence_from(argv.iter().cloned()) {
+        let argv_table = match self.lua.create_sequence_from(argv.iter().map(String::as_str)) {
             Ok(t) => t,
             Err(e) => {
                 log::warn!("[plugin] failed to create argv table: {e}");
@@ -69,11 +80,9 @@ impl PluginEngine {
             }
         };
 
-        let result: Option<Table> = self.registry.dispatch_first(
-            &self.lua,
-            "detect-agent",
-            (exe_name.to_string(), argv_table),
-        );
+        let result: Option<Table> =
+            self.registry
+                .dispatch_first(&self.lua, EVENT_DETECT_AGENT, (exe_name, argv_table));
 
         result.and_then(|t| {
             let name: String = t.get("name").ok()?;
@@ -96,16 +105,10 @@ impl PluginEngine {
     ) -> Option<String> {
         let table = self.lua.create_table().ok()?;
         table.set("pane_id", pane_id).ok()?;
-        table.set("title", title.to_string()).ok()?;
-        table.set("cwd", cwd.to_string()).ok()?;
+        table.set("title", title).ok()?;
+        table.set("cwd", cwd).ok()?;
         table.set("is_active", is_active).ok()?;
-
-        self.registry
-            .dispatch_first::<Table, Value>(&self.lua, "format-tab-title", table)
-            .and_then(|v| match v {
-                Value::String(s) => Some(s.to_str().ok()?.to_string()),
-                _ => None,
-            })
+        self.first_string(EVENT_FORMAT_TAB_TITLE, table)
     }
 
     /// Format a status bar via the `format-status-bar` event.
@@ -117,12 +120,17 @@ impl PluginEngine {
         mode: &str,
     ) -> Option<String> {
         let table = self.lua.create_table().ok()?;
-        table.set("session_name", session_name.to_string()).ok()?;
+        table.set("session_name", session_name).ok()?;
         table.set("pane_count", pane_count).ok()?;
-        table.set("mode", mode.to_string()).ok()?;
+        table.set("mode", mode).ok()?;
+        self.first_string(EVENT_FORMAT_STATUS_BAR, table)
+    }
 
+    /// Fire a formatter event and return the first handler's string result,
+    /// or `None` if no handler returns a string.
+    fn first_string(&self, event: &str, table: Table) -> Option<String> {
         self.registry
-            .dispatch_first::<Table, Value>(&self.lua, "format-status-bar", table)
+            .dispatch_first::<Table, Value>(&self.lua, event, table)
             .and_then(|v| match v {
                 Value::String(s) => Some(s.to_str().ok()?.to_string()),
                 _ => None,
@@ -259,6 +267,31 @@ mod tests {
         engine.fire_with_table("pane-created", |_, t| {
             t.set("pane_id", 42u64).unwrap();
         });
+    }
+
+    #[test]
+    fn handler_registering_during_dispatch_does_not_panic() {
+        // A handler that calls loom.on(...) mid-dispatch re-enters the registry
+        // (register takes borrow_mut). Dispatch must not hold a RefCell borrow
+        // across the Lua call, or this double-borrows and panics.
+        let engine = PluginEngine::new().unwrap();
+        engine
+            .lua
+            .load(
+                r#"
+                loom.on("detect-agent", function(exe_name, argv)
+                    loom.on("detect-agent", function() end)
+                    return nil
+                end)
+                "#,
+            )
+            .exec()
+            .unwrap();
+
+        // The re-entrant handler returns nil, so detection falls through to the
+        // built-in; the key assertion is simply that this does not panic.
+        let result = engine.detect_agent("claude", &["claude".into()]);
+        assert!(result.is_some());
     }
 
     #[test]

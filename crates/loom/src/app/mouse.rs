@@ -1295,7 +1295,15 @@ impl App {
         target_pid: Option<u64>,
     ) {
         let dy = match delta {
-            MouseScrollDelta::LineDelta(_, y) => y as i32 * 3,
+            MouseScrollDelta::LineDelta(_, y) => {
+                // Accumulate fractional lines: hi-res / free-spin wheels report
+                // |y| < 1.0 per event, which `y as i32` would truncate to 0 and
+                // drop. Standard notch wheels send ±1.0 and pass through as ±3.
+                let accum = self.gestures.scroll_lines_accum + y as f64;
+                let lines = accum.trunc() as i32;
+                self.gestures.scroll_lines_accum = accum - lines as f64;
+                lines * 3
+            }
             MouseScrollDelta::PixelDelta(pos) => {
                 let (_, ch) = self.cell_dimensions();
                 if ch > 0.0 {

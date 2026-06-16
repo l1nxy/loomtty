@@ -175,14 +175,16 @@ impl App {
             }
 
             // Check if the active pane wants release events (kitty level 2+)
-            let kitty_flags = self
+            let active_grid = self
                 .core
                 .workspaces
                 .active()
                 .active_pane_id()
-                .and_then(|pid| self.core.pane_grids.get(&pid))
-                .map(|grid| grid.kitty_flags)
-                .unwrap_or(0);
+                .and_then(|pid| self.core.pane_grids.get(&pid));
+            let kitty_flags = active_grid.map_or(0, |grid| grid.kitty_flags);
+            // Mirror send_key_input: never fan key-release events out to peer
+            // panes while the active pane is in password mode.
+            let password_mode = active_grid.is_some_and(|g| g.password_input);
             let pane_wants_release =
                 kitty_flags & loom_protocol::message::MODE_KITTY_REPORT_EVENTS != 0;
 
@@ -200,7 +202,7 @@ impl App {
                     kitty_flags,
                 );
                 if !bytes.is_empty() {
-                    if self.core.broadcast_mode {
+                    if self.core.broadcast_mode && !password_mode {
                         let vox = self.core.anim_mgr.view_offset_x.value() as f32;
                         let visible_pids: Vec<u64> = self
                             .core

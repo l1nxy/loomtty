@@ -328,6 +328,9 @@ pub enum TopBarHoverRegion {
 /// Touchpad gesture tracking state.
 pub struct GestureState {
     pub scroll_accum: f64,
+    /// Fractional-line accumulator for discrete (LineDelta) wheel events, so
+    /// hi-res / free-spin wheels that report |y| < 1.0 per event aren't dropped.
+    pub scroll_lines_accum: f64,
     pub row_active: bool,
     pub row_start: usize,
 }

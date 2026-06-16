@@ -31,8 +31,8 @@ pub use frame::{
     read_frame_reuse,
 };
 pub use full_sync::{
-    decode_full_pane_sync, decode_full_pane_sync_borrowed, encode_full_pane_sync,
-    encode_full_pane_sync_framed, encode_full_pane_sync_payload, full_pane_sync_to_borrowed,
+    decode_full_pane_sync, decode_full_pane_sync_borrowed, encode_full_pane_sync_framed,
+    encode_full_pane_sync_payload, full_pane_sync_to_borrowed,
 };
 pub use handshake::{
     ClientHello, SERVER_HELLO_LEN, VersionCompat, WIRE_PROTOCOL_VERSION, build_client_hello,

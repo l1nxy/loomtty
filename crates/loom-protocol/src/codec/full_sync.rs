@@ -2,11 +2,8 @@
 
 use crate::message::*;
 use std::io;
-use tokio::io::AsyncWrite;
 
-use super::frame::{
-    TAG_FULL_PANE_SYNC, TAG_FULL_PANE_SYNC_LZ4, finalize_frame_compression, write_frame,
-};
+use super::frame::{TAG_FULL_PANE_SYNC, TAG_FULL_PANE_SYNC_LZ4, finalize_frame_compression};
 use super::state_machine::{StateEncoder, sm_decode_cells_vec, sm_encode_cells};
 use super::util::SliceCursor;
 
@@ -75,7 +72,9 @@ fn write_full_pane_sync_header(
 
 fn write_full_pane_sync_grapheme_extras(buf: &mut Vec<u8>, sync: &FullPaneSync) -> io::Result<()> {
     let extras = &sync.grapheme_extras.0;
-    buf.extend_from_slice(&(extras.len() as u16).to_le_bytes());
+    let count = u16::try_from(extras.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "too many grapheme extras"))?;
+    buf.extend_from_slice(&count.to_le_bytes());
     for (idx, extra) in extras {
         validate_grapheme_extra(extra)?;
         buf.extend_from_slice(&idx.to_le_bytes());
@@ -88,12 +87,16 @@ fn write_full_pane_sync_grapheme_extras(buf: &mut Vec<u8>, sync: &FullPaneSync) 
 
 fn write_full_pane_sync_hyperlink_extras(buf: &mut Vec<u8>, sync: &FullPaneSync) -> io::Result<()> {
     let extras = &sync.hyperlink_extras;
-    buf.extend_from_slice(&(extras.cell_links.len() as u16).to_le_bytes());
+    let cell_link_count = u16::try_from(extras.cell_links.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "too many hyperlink cell-links"))?;
+    buf.extend_from_slice(&cell_link_count.to_le_bytes());
     for &(cell_idx, link_id) in &extras.cell_links {
         buf.extend_from_slice(&cell_idx.to_le_bytes());
         buf.extend_from_slice(&link_id.to_le_bytes());
     }
-    buf.extend_from_slice(&(extras.link_map.len() as u16).to_le_bytes());
+    let link_count = u16::try_from(extras.link_map.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "too many hyperlink links"))?;
+    buf.extend_from_slice(&link_count.to_le_bytes());
     for (link_id, uri) in &extras.link_map {
         validate_hyperlink_uri(uri)?;
         buf.extend_from_slice(&link_id.to_le_bytes());
@@ -248,14 +251,6 @@ pub fn encode_full_pane_sync_framed(buf: &mut Vec<u8>, sync: &FullPaneSync) -> i
         TAG_FULL_PANE_SYNC_LZ4,
     );
     Ok(())
-}
-
-pub async fn encode_full_pane_sync<W: AsyncWrite + Unpin>(
-    writer: &mut W,
-    sync: &FullPaneSync,
-) -> io::Result<()> {
-    let payload = encode_full_pane_sync_payload(sync)?;
-    write_frame(writer, TAG_FULL_PANE_SYNC, &payload).await
 }
 
 // ─── Public decode function ─────────────────────────────────────────

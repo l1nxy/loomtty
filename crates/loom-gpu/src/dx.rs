@@ -473,14 +473,21 @@ unsafe fn compile_shader(source: &str, entry: &str, target: &str) -> Result<ID3D
     unsafe {
         let mut blob = None;
         let mut errors = None;
+        // Bind the nul-terminated entry/target to locals so the pointers handed
+        // to D3DCompile stay valid for the whole call. An inline
+        // `format!(..).as_ptr()` dangles the moment it's lifted out of the call
+        // expression; `CString::new` also rejects an interior nul rather than
+        // silently truncating.
+        let entry_c = std::ffi::CString::new(entry)?;
+        let target_c = std::ffi::CString::new(target)?;
         let hr = D3DCompile(
             source.as_bytes().as_ptr() as *const _,
             source.len(),
             None,
             None,
             None,
-            PCSTR::from_raw(format!("{entry}\0").as_ptr()),
-            PCSTR::from_raw(format!("{target}\0").as_ptr()),
+            PCSTR::from_raw(entry_c.as_ptr().cast()),
+            PCSTR::from_raw(target_c.as_ptr().cast()),
             D3DCOMPILE_OPTIMIZATION_LEVEL3,
             0,
             &mut blob,
@@ -769,6 +776,16 @@ impl DxAtlasLayer {
         }
 
         for upload in pending.drain(..) {
+            // The producer (loom-render) guarantees `data.len() == w*h*bpp`;
+            // UpdateSubresource below reads `row_pitch * h` bytes straight from
+            // the pointer with no length check, so a violated invariant would be
+            // an OOB read into D3D. Catch it in debug before the swizzle (which
+            // would normalize the length and mask the mismatch).
+            debug_assert_eq!(
+                upload.data.len(),
+                upload.w as usize * upload.h as usize * self.bpp as usize,
+                "atlas upload size mismatch",
+            );
             let upload_data = if self.swizzle_rgba_to_bgra && self.bpp == 4 {
                 rgba_to_bgra(&upload.data)
             } else {

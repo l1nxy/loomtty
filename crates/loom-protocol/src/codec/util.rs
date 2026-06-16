@@ -27,10 +27,11 @@ impl<'a> SliceCursor<'a> {
 
     #[inline]
     fn require(&self, n: usize) -> io::Result<()> {
-        if self.pos + n > self.data.len() {
-            Err(truncated())
-        } else {
-            Ok(())
+        // checked_add guards against pos + n overflowing usize on 32-bit hosts
+        // when `n` is an attacker-controlled length read from the wire.
+        match self.pos.checked_add(n) {
+            Some(end) if end <= self.data.len() => Ok(()),
+            _ => Err(truncated()),
         }
     }
 

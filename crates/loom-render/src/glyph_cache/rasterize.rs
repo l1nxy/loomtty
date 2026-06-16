@@ -68,6 +68,16 @@ pub(crate) fn rasterize_glyph_id_ft(
                     }
                 }
             }
+            // A short/under-pitched source buffer skips pixels above, leaving
+            // `data` shorter than the reported w*h*4. Pad to the full size so a
+            // downstream consumer reading w*h*4 (e.g. the GPU texture upload)
+            // can never over-read past the Vec.
+            data.resize(
+                (w as usize)
+                    .saturating_mul(h as usize)
+                    .saturating_mul(4),
+                0,
+            );
             // Scale color bitmap to cell size if needed
             let target_h = cell_height as u32;
             if h != target_h && target_h > 0 {
@@ -146,6 +156,9 @@ pub(crate) fn rasterize_glyph_id_ft(
             data.extend_from_slice(&raw[start..end]);
         }
     }
+    // Pad to w*h if any row was skipped for a short buffer (see the color path
+    // above) so `data.len()` always matches the reported dimensions.
+    data.resize((w as usize).saturating_mul(h as usize), 0);
 
     Some(RasterizedGlyph {
         width: w,

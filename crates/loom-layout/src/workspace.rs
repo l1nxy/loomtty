@@ -78,8 +78,8 @@ impl Workspace {
     pub fn column_x(&self, idx: usize) -> f32 {
         let inner_vw = self.inner_viewport_width();
         let mut x = self.column_gap;
-        for i in 0..idx.min(self.columns.len()) {
-            x += self.columns[i].effective_width(inner_vw) + self.column_gap;
+        for col in self.columns.iter().take(idx) {
+            x += col.effective_width(inner_vw) + self.column_gap;
         }
         x
     }
@@ -89,13 +89,14 @@ impl Workspace {
             return 0.0;
         }
         let inner_vw = self.inner_viewport_width();
-        let mut w = 0.0;
-        for col in &self.columns {
-            w += col.effective_width(inner_vw);
-        }
-        w += (self.columns.len() - 1) as f32 * self.column_gap;
-        w += OUTER_GAP_SIDES * self.column_gap;
-        w
+        let cols_sum: f32 = self
+            .columns
+            .iter()
+            .map(|col| col.effective_width(inner_vw))
+            .sum();
+        cols_sum
+            + (self.columns.len() - 1) as f32 * self.column_gap
+            + OUTER_GAP_SIDES * self.column_gap
     }
 
     /// Y coordinate of the top edge of tiles inside a column (outer gap).
@@ -487,22 +488,23 @@ impl Workspace {
 
     pub fn move_pane_left(&mut self) {
         if self.active_column_idx > 0 {
-            self.columns
-                .swap(self.active_column_idx, self.active_column_idx - 1);
-            // The moved column follows focus; clear prev so OnOverflow doesn't
-            // try to fit against a neighbor whose index just shifted.
-            self.prev_active_column_idx = None;
-            self.active_column_idx -= 1;
+            self.swap_active_column_with(self.active_column_idx - 1);
         }
     }
 
     pub fn move_pane_right(&mut self) {
         if self.active_column_idx + 1 < self.columns.len() {
-            self.columns
-                .swap(self.active_column_idx, self.active_column_idx + 1);
-            self.prev_active_column_idx = None;
-            self.active_column_idx += 1;
+            self.swap_active_column_with(self.active_column_idx + 1);
         }
+    }
+
+    /// Swap the active column with `target`, following it with focus. Clears
+    /// `prev_active_column_idx` so OnOverflow centering doesn't try to fit
+    /// against a neighbor whose index just shifted.
+    fn swap_active_column_with(&mut self, target: usize) {
+        self.columns.swap(self.active_column_idx, target);
+        self.prev_active_column_idx = None;
+        self.active_column_idx = target;
     }
 
     /// Set the active column's width. Other columns are NOT affected (niri model:
@@ -765,7 +767,9 @@ impl Workspace {
                     (column_width_to_proportion(**left, inner_vw) - current_proportion).abs();
                 let right_distance =
                     (column_width_to_proportion(**right, inner_vw) - current_proportion).abs();
-                left_distance.partial_cmp(&right_distance).unwrap()
+                left_distance
+                    .partial_cmp(&right_distance)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|(idx, _)| idx)
             .unwrap_or(0)

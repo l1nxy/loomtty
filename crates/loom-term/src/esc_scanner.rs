@@ -37,10 +37,10 @@ pub(crate) struct ScanResult<'a> {
 fn find_st(data: &[u8], start: usize) -> Option<(usize, usize)> {
     let mut i = start;
     while i < data.len() {
-        // C1 ST (0x9C) — single-byte string terminator.
-        if data[i] == 0x9C {
-            return Some((i, i + 1));
-        }
+        // ST is BEL (0x07) or ESC `\`. The bare C1 ST byte 0x9C is intentionally
+        // NOT treated as a terminator: on a UTF-8 PTY stream 0x9C is a valid
+        // continuation byte (e.g. the trailing byte of U+275C = E2 9D 9C), so
+        // matching it here would truncate OSC/DCS/APC payloads mid-character.
         if data[i] == 0x07 {
             return Some((i, i + 1));
         }
@@ -635,6 +635,16 @@ mod tests {
         // ESC at very end — ambiguous, could be start of ESC \.
         let data = b"payload\x1b";
         assert!(find_st(data, 0).is_none());
+    }
+
+    #[test]
+    fn find_st_ignores_utf8_continuation_byte() {
+        // 0x9C is the trailing byte of U+275C (E2 9D 9C), not a terminator —
+        // scanning must continue to the real BEL instead of truncating here.
+        let data = b"\xe2\x9d\x9c done\x07rest";
+        let (pe, ce) = find_st(data, 0).unwrap();
+        assert_eq!(pe, 8); // the BEL after " done", not the 0x9C at index 2
+        assert_eq!(ce, 9);
     }
 
     // -----------------------------------------------------------------------

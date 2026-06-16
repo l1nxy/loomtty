@@ -616,6 +616,7 @@ impl App {
             },
             gestures: loom_app::app::GestureState {
                 scroll_accum: 0.0,
+                scroll_lines_accum: 0.0,
                 row_active: false,
                 row_start: 0,
             },
@@ -836,6 +837,7 @@ impl App {
         };
         self.gestures = GestureState {
             scroll_accum: 0.0,
+            scroll_lines_accum: 0.0,
             row_active: false,
             row_start: 0,
         };

@@ -390,7 +390,16 @@ pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
         {
             tokio::select! {
                 result = listener.accept() => {
-                    let (stream, _) = result?;
+                    let (stream, _) = match result {
+                        Ok(v) => v,
+                        Err(e) => {
+                            // Transient errors (EMFILE/ENFILE/ECONNABORTED)
+                            // must not tear down the accept loop — log and
+                            // keep accepting.
+                            log::warn!("unix accept failed: {e}");
+                            continue;
+                        }
+                    };
                     // Verify peer UID matches our UID (SO_PEERCRED / getpeereid)
                     match stream.peer_cred() {
                         Ok(cred) => {
@@ -416,7 +425,15 @@ pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
                     tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown, client_input_notify));
                 }
                 result = tcp_accept(&tcp_listener) => {
-                    let (stream, addr) = result?;
+                    let (stream, addr) = match result {
+                        Ok(v) => v,
+                        Err(e) => {
+                            // Transient accept errors must not tear down the
+                            // loop — log and keep accepting.
+                            log::warn!("tcp accept failed: {e}");
+                            continue;
+                        }
+                    };
                     stream.set_nodelay(true).ok();
                     log::info!("TCP client connected from {addr}");
                     let state = state.clone();
@@ -451,7 +468,15 @@ pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
                     }
                 }
                 result = tcp_accept(&tcp_listener) => {
-                    let (stream, addr) = result?;
+                    let (stream, addr) = match result {
+                        Ok(v) => v,
+                        Err(e) => {
+                            // Transient accept errors must not tear down the
+                            // loop — log and keep accepting.
+                            log::warn!("tcp accept failed: {e}");
+                            continue;
+                        }
+                    };
                     stream.set_nodelay(true).ok();
                     log::info!("TCP client connected from {addr}");
                     let state = state.clone();
@@ -495,7 +520,7 @@ pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
 
 /// Fires a `Notify` exactly once on drop. Used to drive the web server's
 /// graceful shutdown on EVERY exit path of the accept loop — the normal
-/// `break`, an early `?` (e.g. a transient accept error), or an unwind —
+/// `break`, an early `?` (e.g. a fatal listener error), or an unwind —
 /// not just the happy path. `notify_one` (not `notify_waiters`) so the
 /// signal is stored if the serve task hasn't yet reached `.notified()`.
 struct NotifyOnDrop(Arc<Notify>);

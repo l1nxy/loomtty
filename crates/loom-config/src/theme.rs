@@ -139,12 +139,6 @@ impl PartialEq<&str> for ThemeValue {
     }
 }
 
-impl PartialEq<ThemeValue> for &str {
-    fn eq(&self, other: &ThemeValue) -> bool {
-        *self == other.value
-    }
-}
-
 impl std::ops::Deref for ThemeValue {
     type Target = str;
 
@@ -156,7 +150,10 @@ impl std::ops::Deref for ThemeValue {
 impl ThemeConfig {
     pub fn parse_color(hex: &str) -> [f32; 4] {
         let hex = hex.trim_start_matches('#');
-        if hex.len() == 6 {
+        // Guard on ASCII hex digits before byte-slicing: theme colors are
+        // unvalidated user TOML, and a 6-byte-but-not-6-char string (e.g.
+        // "aé234") would otherwise panic slicing through a char boundary.
+        if hex.len() == 6 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
             let r = u8::from_str_radix(&hex[0..2], 16);
             let g = u8::from_str_radix(&hex[2..4], 16);
             let b = u8::from_str_radix(&hex[4..6], 16);

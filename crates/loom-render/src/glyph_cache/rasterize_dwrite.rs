@@ -141,10 +141,10 @@ impl DWriteRasterizer {
         pixel_size: f32,
         try_color: bool,
     ) -> Option<RasterizedGlyph> {
-        if try_color {
-            if let Some(g) = rasterize_color_glyph(&self.factory, face, glyph_id, pixel_size) {
-                return Some(g);
-            }
+        if try_color
+            && let Some(g) = rasterize_color_glyph(&self.factory, face, glyph_id, pixel_size)
+        {
+            return Some(g);
         }
         rasterize_grayscale_glyph(&self.factory, face, glyph_id, pixel_size)
     }
@@ -481,8 +481,8 @@ fn create_analysis(
     baseline_y: f32,
 ) -> Option<IDWriteGlyphRunAnalysis> {
     // Prefer Factory3 grayscale (Windows 10+)
-    if let Ok(f3) = factory.cast::<IDWriteFactory3>() {
-        if let Ok(a) = unsafe {
+    if let Ok(f3) = factory.cast::<IDWriteFactory3>()
+        && let Ok(a) = unsafe {
             f3.CreateGlyphRunAnalysis(
                 glyph_run,
                 None,
@@ -493,9 +493,9 @@ fn create_analysis(
                 baseline_x,
                 baseline_y,
             )
-        } {
-            return Some(a);
         }
+    {
+        return Some(a);
     }
     // Fallback: Factory1 ClearType
     unsafe {
@@ -524,8 +524,13 @@ fn read_alpha_texture(analysis: &IDWriteGlyphRunAnalysis) -> Option<(RECT, Vec<u
     if let Ok(bounds) = unsafe { analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1) } {
         let w = (bounds.right - bounds.left) as u32;
         let h = (bounds.bottom - bounds.top) as u32;
-        if w > 0 && h > 0 {
-            let mut data = vec![0u8; (w * h) as usize];
+        // Widen + checked-multiply so pathological glyph bounds can't wrap the
+        // buffer length while CreateAlphaTexture writes the full (large) size.
+        if w > 0
+            && h > 0
+            && let Some(len) = (w as usize).checked_mul(h as usize)
+        {
+            let mut data = vec![0u8; len];
             if unsafe {
                 analysis.CreateAlphaTexture(DWRITE_TEXTURE_ALIASED_1x1, &bounds, &mut data)
             }
@@ -547,7 +552,10 @@ fn read_alpha_texture(analysis: &IDWriteGlyphRunAnalysis) -> Option<(RECT, Vec<u
     if w == 0 || h == 0 {
         return None;
     }
-    let mut rgb = vec![0u8; (w * h * 3) as usize];
+    let len = (w as usize)
+        .checked_mul(h as usize)
+        .and_then(|n| n.checked_mul(3))?;
+    let mut rgb = vec![0u8; len];
     unsafe {
         analysis
             .CreateAlphaTexture(DWRITE_TEXTURE_CLEARTYPE_3x1, &bounds, &mut rgb)
@@ -630,12 +638,17 @@ fn rasterize_color_glyph(
     unsafe { ManuallyDrop::drop(&mut glyph_run.fontFace) };
 
     let enumerator = enumerator.ok()?;
-    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    let len = (w as usize)
+        .checked_mul(h as usize)
+        .and_then(|n| n.checked_mul(4))?;
+    let mut rgba = vec![0u8; len];
 
     // Iterate COLR layers and composite.
     loop {
-        let has_next = unsafe { enumerator.MoveNext() };
-        if has_next.is_err() || !has_next.unwrap().as_bool() {
+        let Ok(more) = (unsafe { enumerator.MoveNext() }) else {
+            break;
+        };
+        if !more.as_bool() {
             break;
         }
 
@@ -726,8 +739,10 @@ fn measure_color_glyph_bounds(
     let mut bounds = None;
 
     loop {
-        let has_next = unsafe { enumerator.MoveNext() };
-        if has_next.is_err() || !has_next.unwrap().as_bool() {
+        let Ok(more) = (unsafe { enumerator.MoveNext() }) else {
+            break;
+        };
+        if !more.as_bool() {
             break;
         }
 

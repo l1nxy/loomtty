@@ -1,8 +1,11 @@
 use anyhow::Result;
 use loom_protocol::message::*;
 
-/// Maximum frame payload size (16 MiB), matching the async codec limit.
-const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
+/// Control frames carry ServerMessage replies, whose authoritative size cap is
+/// the protocol crate's [`loom_protocol::codec::MAX_CONTROL_FRAME_LEN`] (1 MiB)
+/// — not the 16 MiB data-frame limit. Use the canonical constant so the CLI's
+/// trust boundary can't drift from the rest of the system.
+const MAX_FRAME_SIZE: usize = loom_protocol::codec::MAX_CONTROL_FRAME_LEN as usize;
 
 /// Build a serialized ClientHello for control connections.
 fn build_control_hello() -> Vec<u8> {
@@ -216,8 +219,13 @@ pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
                                     p.pane_id,
                                     p.cols,
                                     p.rows,
-                                    if p.title.len() > 30 {
-                                        p.title[..27].to_string() + "..."
+                                    if p.title.chars().count() > 30 {
+                                        // Truncate by char, not byte: the title
+                                        // is arbitrary UTF-8 from OSC 0/2, so a
+                                        // byte slice could split a codepoint and
+                                        // panic.
+                                        let s: String = p.title.chars().take(27).collect();
+                                        s + "..."
                                     } else {
                                         p.title.clone()
                                     },
@@ -329,18 +337,16 @@ pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
                                 "{:<10} {:<10} {:<10} {:<6} {:<10}",
                                 "PROMPT", "OUTPUT", "END", "EXIT", "DURATION"
                             );
+                            let fmt_line = |o: Option<u64>| {
+                                o.map_or_else(|| "-".to_string(), |v| v.to_string())
+                            };
                             for m in &marks {
-                                let fmt_line = |o: Option<u64>| {
-                                    o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string())
-                                };
                                 let fmt_dur = match m.duration_ms {
                                     Some(ms) => format!("{ms}ms"),
                                     None => "-".to_string(),
                                 };
-                                let fmt_exit = m
-                                    .exit_code
-                                    .map(|c| c.to_string())
-                                    .unwrap_or_else(|| "-".to_string());
+                                let fmt_exit =
+                                    m.exit_code.map_or_else(|| "-".to_string(), |c| c.to_string());
                                 println!(
                                     "{:<10} {:<10} {:<10} {:<6} {:<10}",
                                     m.prompt_line,

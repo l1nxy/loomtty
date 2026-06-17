@@ -3,9 +3,26 @@ name = "loomtty"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "loomtty"
+path = "src/lib.rs"
+
+# CLI entry point (console subsystem on Windows).
 [[bin]]
 name = "loomtty"
 path = "src/main.rs"
+
+# GUI entry point. On Windows it's built for the GUI subsystem so Start Menu /
+# desktop shortcuts open the window with no console. Feature-gated so ordinary
+# (non-Windows, or `cargo build`) builds don't link a second copy of the GUI;
+# the Windows release/installer build enables `gui-bin`.
+[[bin]]
+name = "loomtty-gui"
+path = "src/bin/loomtty-gui.rs"
+required-features = ["gui-bin"]
+
+[features]
+gui-bin = []
 
 [dependencies]
 loom-app = { workspace = true }

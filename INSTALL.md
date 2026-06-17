@@ -22,8 +22,7 @@ esac
 curl -sL "https://github.com/l1nxy/loomtty/releases/latest/download/${ARTIFACT}.${EXT}" -o "/tmp/${ARTIFACT}.${EXT}"
 ```
 
-For Windows: ask the user to download `loomtty-windows-x86_64.zip` from
-https://github.com/l1nxy/loomtty/releases and extract it to a directory in their PATH.
+For Windows: prefer the installer — see the [Windows](#windows) section below.
 
 ## 2. Install
 
@@ -74,6 +73,58 @@ if [ "$OS" = "linux" ]; then
 fi
 ```
 
+## Windows
+
+The Unix steps above (`tar`, `~/.local/bin`, desktop entries) don't apply on
+Windows. Use one of these instead.
+
+### Installer (recommended)
+
+Download `loomtty-<version>-x86_64-setup.exe` from
+[Releases](https://github.com/l1nxy/loomtty/releases) and run it. The setup
+wizard lets the user choose:
+
+- **Install for me only** — no admin prompt, installs to
+  `%LOCALAPPDATA%\Programs\loomtty`.
+- **Install for all users** — elevates, installs to `Program Files`.
+
+It adds loomtty to PATH (recommended task, on by default), creates a Start Menu
+shortcut, and registers an uninstaller in *Apps & features*. Both `loomtty.exe`
+and `loomtty-server.exe` land in the same directory, which is how the client
+finds the daemon. After installing, open a **new** terminal and verify:
+
+```powershell
+loomtty --version
+```
+
+Silent install (e.g. for scripted/agent setup):
+
+```powershell
+# per-user, no UAC
+.\loomtty-<version>-x86_64-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /CURRENTUSER
+# all-users (must already be elevated)
+.\loomtty-<version>-x86_64-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /ALLUSERS
+```
+
+### Portable zip
+
+Download `loomtty-windows-x86_64.zip`, extract it to a directory of your choice
+(keeping `loomtty.exe` and `loomtty-server.exe` together), and add that
+directory to your PATH manually.
+
+### Shell integration (PowerShell)
+
+The installer/zip ships `shell-integration\loom.ps1` (OSC 133 prompt marks +
+working-directory reports). Enable it by dot-sourcing it from your profile:
+
+```powershell
+notepad $PROFILE   # create/edit your PowerShell profile, then add:
+. "$env:LOCALAPPDATA\Programs\loomtty\shell-integration\loom.ps1"
+```
+
+(Use the install directory you chose; for an all-users install it's under
+`%ProgramFiles%\loomtty`.)
+
 ## 5. Initial Setup
 
 `loomtty init` is an interactive TUI wizard — the AI cannot run it non-interactively.
@@ -116,6 +167,8 @@ If the build fails due to missing system libraries, the error message will name 
 
 ## Uninstall
 
+### Unix
+
 ```sh
 rm -f ~/.local/bin/loomtty ~/.local/bin/loomtty-server
 rm -rf ~/.config/loom
@@ -123,3 +176,18 @@ rm -f ~/.config/fish/conf.d/loom.fish
 rm -f ~/.local/share/applications/com.github.l1nxy.loom.desktop
 rm -f ~/.local/share/icons/hicolor/*/apps/com.github.l1nxy.loom.*
 ```
+
+### Windows
+
+Uninstall from *Settings → Apps → Installed apps → loomtty* (or run the
+uninstaller in the install directory). It stops the daemon, removes the files,
+and reverses the PATH change. User data is left behind — delete it manually if
+desired:
+
+```powershell
+Remove-Item -Recurse -Force "$env:APPDATA\loom"        # config
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\loom"   # sessions / state
+```
+
+For a portable-zip install, just delete the extracted folder and remove it from
+PATH.

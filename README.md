@@ -112,7 +112,7 @@ also edit settings live from the in-app settings panel.
 Sourcing the snippet for your shell enables OSC 133 prompt marks — jump-to-prompt
 in scroll mode, command status, and exit codes. The scripts live in
 [`crates/loom-server/shell-integration/`](crates/loom-server/shell-integration/)
-(`loom.bash`, `loom.zsh`, `loom.fish`); see [INSTALL.md](INSTALL.md) for setup.
+(`loom.bash`, `loom.zsh`, `loom.fish`, `loom.ps1`); see [INSTALL.md](INSTALL.md) for setup.
 
 ## Web UI
 

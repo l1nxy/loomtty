@@ -81,6 +81,10 @@ jobs:
 
       - name: Build
         run: cargo build --workspace
+      # The GUI-subsystem launcher is feature-gated (not in the default build);
+      # compile it here so a break in loomtty-gui / the lib split is caught.
+      - name: Build GUI launcher
+        run: cargo build -p loomtty --bin loomtty-gui --features gui-bin
       - name: Test
         run: cargo test --workspace
       - name: Clippy

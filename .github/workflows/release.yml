@@ -52,6 +52,12 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
+      # The GUI-subsystem launcher is feature-gated so non-Windows builds don't
+      # link a redundant copy of the GUI; build it explicitly on Windows.
+      - name: Build GUI launcher (Windows)
+        if: runner.os == 'Windows'
+        run: cargo build --release --target ${{ matrix.target }} -p loomtty --bin loomtty-gui --features gui-bin
+
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
@@ -69,13 +75,33 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path ${{ matrix.artifact }}
           Copy-Item target/${{ matrix.target }}/release/loomtty.exe ${{ matrix.artifact }}/
+          Copy-Item target/${{ matrix.target }}/release/loomtty-gui.exe ${{ matrix.artifact }}/
           Copy-Item target/${{ matrix.target }}/release/loomtty-server.exe ${{ matrix.artifact }}/
+          Copy-Item -Recurse crates/loom-server/shell-integration ${{ matrix.artifact }}/
           Compress-Archive -Path ${{ matrix.artifact }} -DestinationPath ${{ matrix.artifact }}.zip
+
+      - name: Build installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Inno Setup ships on the GitHub windows image; install on miss.
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          dist\windows\build-installer.ps1 -Version $version -BinDir "target\${{ matrix.target }}\release"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.*
+
+      - name: Upload installer (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: loomtty-windows-installer
+          path: target/installer/*.exe
 
   release:
     needs: build
@@ -95,3 +121,4 @@ jobs:
             loomtty-macos-aarch64.tar.gz
             loomtty-macos-x86_64.tar.gz
             loomtty-windows-x86_64.zip
+            loomtty-*-x86_64-setup.exe

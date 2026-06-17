@@ -1,7 +1,7 @@
+use crossbeam_channel::{Receiver, Sender};
 use loom_anim::manager::AnimationManager;
 use loom_layout::workspace_set::WorkspaceSet;
 use loom_protocol::message::*;
-use crossbeam_channel::{Receiver, Sender};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -67,6 +67,7 @@ pub enum SettingsCategory {
     Render,
     Prediction,
     Session,
+    Web,
 }
 
 impl SettingsCategory {
@@ -84,6 +85,7 @@ impl SettingsCategory {
         Self::Render,
         Self::Prediction,
         Self::Session,
+        Self::Web,
     ];
 
     pub fn label(self) -> &'static str {
@@ -100,6 +102,7 @@ impl SettingsCategory {
             Self::Render => "Render",
             Self::Prediction => "Prediction",
             Self::Session => "Session",
+            Self::Web => "Web",
         }
     }
 }

@@ -188,6 +188,12 @@ impl App {
             UiAction::OpenSettingsDropdown(field) => {
                 self.open_settings_enum_dropdown(field);
             }
+            UiAction::CopyWebUrl => {
+                self.copy_web_url_to_clipboard();
+            }
+            UiAction::RegenWebToken => {
+                self.regenerate_web_token();
+            }
             UiAction::SelectSettingsCategory(cat) => {
                 self.select_settings_category(cat);
             }
@@ -470,8 +476,13 @@ impl App {
         // is no live taffy borrow to collide with here.
         let (mx, my) = self.last_mouse_pos?;
         let cx = self.ui_context();
-        let top_bar_layout =
-            self.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper);
+        let top_bar_layout = self.top_bar_layout(
+            cx.viewport_w,
+            cx.viewport_h,
+            cx.cell_w,
+            cx.cell_h,
+            cx.ui_shaper,
+        );
         let rect = chrome_rects(
             self,
             cx.viewport_w,

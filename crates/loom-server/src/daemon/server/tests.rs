@@ -614,6 +614,7 @@ fn control_attach_does_not_create_runtime_session() {
             state.clone(),
             shutdown,
             input_notify,
+            None,
         ));
 
         let hello = loom_protocol::codec::ClientHello {
@@ -1105,6 +1106,7 @@ async fn duplex_connect(
         state.clone(),
         shutdown,
         input_notify,
+        None,
     ));
 
     let hello = loom_protocol::codec::ClientHello {
@@ -1148,6 +1150,7 @@ async fn duplex_connect_to(
         state,
         shutdown,
         input_notify,
+        None,
     ));
 
     let hello = loom_protocol::codec::ClientHello {

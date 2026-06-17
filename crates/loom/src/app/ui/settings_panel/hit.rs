@@ -53,8 +53,8 @@ impl ChromeOp {
 }
 
 /// Per-control button role (for field rows). One enum here covers
-/// stepper +/-, switch tap, and dropdown trigger — the kind of widget
-/// is implied by the field's `FieldKind` in the schema.
+/// stepper +/-, switch tap, dropdown trigger, and action button — the
+/// kind of widget is implied by the field's `FieldKind` in the schema.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonRole {
     /// `−` button on a stepper.
@@ -65,6 +65,8 @@ pub enum ButtonRole {
     SwitchToggle,
     /// Dropdown trigger.
     DropdownOpen,
+    /// Row-level action button.
+    ActionButton,
 }
 
 impl ButtonRole {
@@ -74,6 +76,7 @@ impl ButtonRole {
             Self::StepperInc => 2,
             Self::SwitchToggle => 3,
             Self::DropdownOpen => 4,
+            Self::ActionButton => 5,
         }
     }
     fn from_code(c: u64) -> Option<Self> {
@@ -82,6 +85,7 @@ impl ButtonRole {
             2 => Self::StepperInc,
             3 => Self::SwitchToggle,
             4 => Self::DropdownOpen,
+            5 => Self::ActionButton,
             _ => return None,
         })
     }
@@ -163,6 +167,7 @@ mod tests {
                 ButtonRole::StepperInc,
                 ButtonRole::SwitchToggle,
                 ButtonRole::DropdownOpen,
+                ButtonRole::ActionButton,
             ] {
                 assert_eq!(
                     decode(encode_field(m.field, role)),

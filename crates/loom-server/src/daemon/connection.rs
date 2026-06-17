@@ -28,6 +28,15 @@ pub(crate) async fn graceful_shutdown(state: &Arc<Mutex<Server>>) {
         return;
     }
     s.shut_down = true;
+    // Stop the web gateway, if one is running, so the daemon exits cleanly.
+    // Flipping the latch true also cancels every live WebSocket session.
+    if let Some(gateway_shutdown) = s.web_gateway_shutdown.take() {
+        let _ = gateway_shutdown.send(true);
+    }
+    // Detach the accept-loop task; the latch above stops it. No await here —
+    // we hold the Server lock, and daemon exit doesn't need the port freed.
+    s.web_gateway_task = None;
+    s.web_gateway_addr = None;
     // Detect agents and save all sessions
     let restore_agents = s.session_config.restore_agents;
     for session in s.sessions.values_mut() {
@@ -60,12 +69,19 @@ pub(crate) async fn cleanup_client(state: &Arc<Mutex<Server>>, client_id: u64) {
 }
 
 /// Handle a single client connection (handshake, reader loop, writer task).
+///
+/// `cancel` is the per-gateway cancel latch for web (WebSocket) clients —
+/// `None` for the desktop/TCP/pipe paths. When it flips, the reader loop
+/// exits through the SAME cleanup as a disconnect (deregister + writer abort),
+/// so disabling Web / rotating the token actually revokes the browser instead
+/// of leaving a registered client that keeps receiving broadcast output.
 pub(crate) async fn handle_client<R, W>(
     reader: R,
     writer: W,
     state: Arc<Mutex<Server>>,
     client_shutdown: Arc<tokio::sync::Notify>,
     input_notify: Arc<tokio::sync::Notify>,
+    mut cancel: Option<tokio::sync::watch::Receiver<bool>>,
 ) where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -73,8 +89,19 @@ pub(crate) async fn handle_client<R, W>(
     let mut reader = tokio::io::BufReader::new(reader);
     let mut writer = BufWriter::new(writer);
 
-    // Read ClientHello (version + viewport + session name)
-    let hello = match codec::read_client_hello(&mut reader).await {
+    // Read ClientHello (version + viewport + session name). Web clients race
+    // the read against the per-gateway cancel latch, so a socket that upgraded
+    // just before — or whose hello is delayed until after — a disable / token
+    // rotation is dropped here, before it's registered or sent any sync.
+    let hello_read = match cancel.as_mut() {
+        Some(rx) => tokio::select! {
+            biased;
+            _ = rx.wait_for(|cancelled| *cancelled) => return,
+            r = codec::read_client_hello(&mut reader) => r,
+        },
+        None => codec::read_client_hello(&mut reader).await,
+    };
+    let hello = match hello_read {
         Ok((codec::VersionCompat::Exact(v), h)) => {
             log::info!("client handshake ok (v{v}), session={}", h.session_name);
             h
@@ -125,6 +152,13 @@ pub(crate) async fn handle_client<R, W>(
     let initial_frames: Vec<Vec<u8>>;
     {
         let mut s = state.lock().await;
+        // Final revocation check under the lock: if the gateway was disabled or
+        // its token rotated between the hello race above and here, drop the
+        // connection without registering the client or building a sync — so a
+        // revoked socket can't grab even one terminal snapshot.
+        if cancel.as_ref().is_some_and(|rx| *rx.borrow()) {
+            return;
+        }
         client_id = s.next_client_id;
         s.next_client_id += 1;
 
@@ -291,7 +325,19 @@ pub(crate) async fn handle_client<R, W>(
     // Reader loop with guaranteed cleanup on panic or error
     let reader_result = std::panic::AssertUnwindSafe(async {
         loop {
-            match codec::read_frame(&mut reader).await {
+            let frame = match cancel.as_mut() {
+                // Web clients carry the per-gateway cancel latch. Breaking the
+                // loop here (instead of dropping this future from outside) lets
+                // the cleanup below run, so the client is deregistered and its
+                // writer aborted — i.e. the browser is actually revoked.
+                Some(rx) => tokio::select! {
+                    biased;
+                    _ = rx.changed() => break,
+                    f = codec::read_frame(&mut reader) => f,
+                },
+                None => codec::read_frame(&mut reader).await,
+            };
+            match frame {
                 Ok(codec::Frame::ClientMsg(msg)) => {
                     let is_input = matches!(msg, ClientMessage::Input { .. });
                     let mut s = state.lock().await;
@@ -331,10 +377,113 @@ pub(crate) async fn handle_client<R, W>(
                                 client_shutdown.notify_one();
                                 return;
                             }
+                            ServerResponse::StartWebGateway(mut params) => {
+                                // Ordering depends on whether a gateway is already
+                                // bound to the requested PORT (not the full addr —
+                                // `0.0.0.0:p` overlaps `127.0.0.1:p`, so a same-port
+                                // loopback↔all-interfaces switch still clashes):
+                                //   • same port (token rotation, bind switch): the
+                                //     port is already ours, so stop + await the old
+                                //     gateway before we can rebind it.
+                                //   • different port: bind the NEW listener first
+                                //     (no clash with the still-running old one) so a
+                                //     failed bind leaves the old, working gateway
+                                //     untouched; retire the old only once the new
+                                //     one is live.
+                                // Bind + spawn `.await`, so the lock is released
+                                // across all of it and re-acquired afterward.
+                                let port_in_use = matches!(
+                                    s.web_gateway_addr,
+                                    Some(cur) if cur.port() == params.port
+                                );
+                                if port_in_use {
+                                    let old_shutdown = s.web_gateway_shutdown.take();
+                                    let old_task = s.web_gateway_task.take();
+                                    s.web_gateway_addr = None;
+                                    drop(s);
+                                    if let Some(old) = old_shutdown {
+                                        let _ = old.send(true);
+                                    }
+                                    if let Some(task) = old_task {
+                                        // Returns once `serve_web` has dropped
+                                        // its listener, i.e. the port is free.
+                                        let _ = task.await;
+                                    }
+                                } else {
+                                    drop(s);
+                                }
+                                let result = super::start_web_gateway(
+                                    &params.token,
+                                    &params.bind,
+                                    params.port,
+                                    &params.allowed_origins,
+                                    &params.static_dir,
+                                    state.clone(),
+                                    client_shutdown.clone(),
+                                    input_notify.clone(),
+                                )
+                                .await;
+                                // Wipe the token we received over the socket.
+                                {
+                                    use zeroize::Zeroize;
+                                    params.token.zeroize();
+                                }
+                                s = state.lock().await;
+                                let reply = match result {
+                                    Ok((addr, gateway_shutdown, task)) => {
+                                        // Different-port success: the old gateway is
+                                        // still installed — retire it now (stopping
+                                        // it also aborts its live WS sessions). Its
+                                        // port differs, so there's nothing to await.
+                                        if !port_in_use {
+                                            if let Some(old) = s.web_gateway_shutdown.take() {
+                                                let _ = old.send(true);
+                                            }
+                                            let _ = s.web_gateway_task.take();
+                                        }
+                                        s.web_gateway_shutdown = Some(gateway_shutdown);
+                                        s.web_gateway_task = Some(task);
+                                        s.web_gateway_addr = Some(addr);
+                                        ServerMessage::CommandResult {
+                                            success: true,
+                                            message: format!("web gateway listening on {addr}"),
+                                            pane_id: None,
+                                        }
+                                    }
+                                    Err(e) => ServerMessage::CommandResult {
+                                        success: false,
+                                        message: format!("failed to start web gateway: {e}"),
+                                        pane_id: None,
+                                    },
+                                };
+                                s.send_to_client(client_id, &reply);
+                            }
+                            ServerResponse::StopWebGateway => {
+                                // Flip the latch (stops the accept loop and
+                                // cancels live WS sessions), then join the accept
+                                // loop so the port is actually released before we
+                                // reply — a quick disable→enable rebinds cleanly.
+                                let old_shutdown = s.web_gateway_shutdown.take();
+                                let old_task = s.web_gateway_task.take();
+                                s.web_gateway_addr = None;
+                                drop(s);
+                                if let Some(old) = old_shutdown {
+                                    let _ = old.send(true);
+                                }
+                                if let Some(task) = old_task {
+                                    let _ = task.await;
+                                }
+                                s = state.lock().await;
+                                s.send_to_client(
+                                    client_id,
+                                    &ServerMessage::CommandResult {
+                                        success: true,
+                                        message: "web gateway stopped".to_string(),
+                                        pane_id: None,
+                                    },
+                                );
+                            }
                         }
-                    }
-                    if is_input {
-                        input_notify.notify_one();
                     }
                 }
                 Ok(_) => {

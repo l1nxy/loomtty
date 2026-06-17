@@ -42,6 +42,18 @@ pub(crate) struct Server {
     pub(crate) shut_down: bool,
     /// Callback to wake the tick loop when PTY output is available.
     pub(crate) pty_notify: Option<loom_term::pty::PtyOutputNotify>,
+    /// Live web-gateway control for the runtime enable/disable toggle in the
+    /// settings panel. `web_gateway_shutdown` is a `watch` latch; setting it to
+    /// `true` (or dropping it) stops the gateway's accept loop AND cancels every
+    /// already-upgraded WebSocket session, so disabling Web / rotating the token
+    /// actually revokes live browser access. `web_gateway_task` is the accept
+    /// loop's join handle (awaited before a same-port rebind so the old listener
+    /// has actually released the port); `web_gateway_addr` is its bound address.
+    /// All `None` when no gateway runs. Mutated from `connection.rs` (a start
+    /// needs async bind + spawn done with the server lock released).
+    pub(crate) web_gateway_shutdown: Option<tokio::sync::watch::Sender<bool>>,
+    pub(crate) web_gateway_task: Option<tokio::task::JoinHandle<()>>,
+    pub(crate) web_gateway_addr: Option<std::net::SocketAddr>,
 }
 
 const CONTROL_SESSION: &str = "__control__";
@@ -53,6 +65,23 @@ pub(crate) enum ServerResponse {
     SendFullPaneSync(u64, FullPaneSync),
     RemoveClient(u64),
     ShutdownServer,
+    /// Start the web gateway at runtime with these settings. The async bind +
+    /// spawn happens in `connection.rs` with the server lock released.
+    StartWebGateway(Box<WebGatewayParams>),
+    /// Stop the running web gateway (no-op if none is running).
+    StopWebGateway,
+}
+
+/// Settings for a runtime web-gateway start, carried in
+/// [`ServerResponse::StartWebGateway`]. The daemon can't re-read its own
+/// config, so the desktop client sends the resolved `[web]` values it just
+/// persisted to disk.
+pub(crate) struct WebGatewayParams {
+    pub token: String,
+    pub bind: String,
+    pub port: u16,
+    pub allowed_origins: Vec<String>,
+    pub static_dir: String,
 }
 
 #[derive(Clone, Copy)]
@@ -81,6 +110,9 @@ impl Server {
             terminal_colors,
             shut_down: false,
             pty_notify: None,
+            web_gateway_shutdown: None,
+            web_gateway_task: None,
+            web_gateway_addr: None,
         }
     }
 
@@ -125,6 +157,9 @@ impl Server {
                 }
                 ServerResponse::ShutdownServer => {
                     panic!("dispatch_responses cannot handle ShutdownServer");
+                }
+                ServerResponse::StartWebGateway(_) | ServerResponse::StopWebGateway => {
+                    panic!("dispatch_responses cannot handle web-gateway control");
                 }
             }
         }
@@ -526,6 +561,31 @@ impl Server {
             ClientMessage::KillServer => {
                 responses.push(ServerResponse::ShutdownServer);
             }
+            ClientMessage::SetWebEnabled {
+                enabled,
+                token,
+                bind,
+                port,
+                allowed_origins,
+                static_dir,
+            } => {
+                // Validation + the async bind/spawn (or stop) happen in
+                // connection.rs where the server lock is released; here we
+                // only translate the request into a control response.
+                if enabled {
+                    responses.push(ServerResponse::StartWebGateway(Box::new(
+                        WebGatewayParams {
+                            token,
+                            bind,
+                            port,
+                            allowed_origins,
+                            static_dir,
+                        },
+                    )));
+                } else {
+                    responses.push(ServerResponse::StopWebGateway);
+                }
+            }
             ClientMessage::Ping {
                 seq,
                 client_time_us,
@@ -623,6 +683,9 @@ impl Server {
                     self.clients.remove(&cid);
                 }
                 ServerResponse::ShutdownServer => {}
+                ServerResponse::StartWebGateway(_) | ServerResponse::StopWebGateway => {
+                    panic!("apply_responses cannot handle web-gateway control");
+                }
             }
         }
     }

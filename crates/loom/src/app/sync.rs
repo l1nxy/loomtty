@@ -572,10 +572,48 @@ impl App {
                             needs_redraw = true;
                         }
                     }
+                    ServerEvent::Control(ServerMessage::CommandResult {
+                        success,
+                        message,
+                        pane_id: None,
+                    }) => {
+                        if success {
+                            // The optimistic persist stuck; nothing to undo.
+                            self.pending_web_rollback = None;
+                            self.send_desktop_notification("Web", &message);
+                        } else {
+                            // The daemon couldn't start/restart the gateway with
+                            // the settings we optimistically persisted. Restore
+                            // the pre-change `[web]` config so settings.toml and
+                            // the panel don't claim a gateway that isn't live.
+                            if let Some(prev) = self.pending_web_rollback.take() {
+                                // A *same-port* edit (token rotation, bind switch)
+                                // made the daemon stop the old gateway before the
+                                // failed rebind, so the restored enabled config now
+                                // has no live gateway — re-send it once to bring the
+                                // previous one back up. A *different-port* failure
+                                // left the old gateway running (bind-new-first), so
+                                // the restored config already matches it. Compare
+                                // before overwriting `config.web`. Best-effort (no
+                                // rollback armed) so a repeated failure can't loop.
+                                let restart_old =
+                                    prev.enabled && self.core.config.web.port == prev.port;
+                                self.core.config.web = prev;
+                                self.persist_web_settings();
+                                needs_redraw = true;
+                                if restart_old {
+                                    self.send_current_web_settings();
+                                }
+                            }
+                            self.send_desktop_notification("Web Error", &message);
+                        }
+                    }
                     // IPC-only responses — not relevant for the GUI client
                     ServerEvent::Control(ServerMessage::SessionInfoReply { .. })
                     | ServerEvent::Control(ServerMessage::PaneListReply { .. })
-                    | ServerEvent::Control(ServerMessage::CommandResult { .. })
+                    | ServerEvent::Control(ServerMessage::CommandResult {
+                        pane_id: Some(_), ..
+                    })
                     | ServerEvent::Control(ServerMessage::LayoutReply { .. })
                     | ServerEvent::Control(ServerMessage::PaneCapture { .. })
                     | ServerEvent::Control(ServerMessage::PromptListReply { .. }) => {
@@ -587,6 +625,10 @@ impl App {
                         // authoritative path.
                     }
                     ServerEvent::Disconnected(reason) => {
+                        // Drop any armed web rollback: its reply will never
+                        // arrive across a disconnect, and leaving the slot set
+                        // would block all future web edits (they serialize on it).
+                        self.pending_web_rollback = None;
                         // If the text-input palette is still open (async failure
                         // arrived before the user closed it), mirror the reason
                         // into the footer so they see DNS/auth errors instead of

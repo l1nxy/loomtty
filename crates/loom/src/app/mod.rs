@@ -1,6 +1,5 @@
 pub(crate) mod action;
 pub(crate) mod background_image;
-pub(crate) mod loom_ui_adapter;
 pub(crate) mod clipboard_image;
 pub(crate) mod context_menu;
 pub(crate) mod debug_metrics;
@@ -8,6 +7,7 @@ pub(crate) mod event;
 pub(crate) mod ime;
 pub(crate) mod key_encode;
 pub(crate) mod keyboard;
+pub(crate) mod loom_ui_adapter;
 pub(crate) mod modal_state;
 pub(crate) mod mouse;
 pub(crate) mod notification;
@@ -23,6 +23,7 @@ pub(crate) mod sync;
 pub(crate) mod top_bar;
 pub(crate) mod ui;
 
+use crossbeam_channel::{Receiver, Sender};
 use loom_anim::manager::{AnimConfig, AnimationManager};
 use loom_config::config::{LoomConfig, StatusBarPosition};
 use loom_gpu::{GlyphAtlasGpu, Renderer};
@@ -33,7 +34,6 @@ use loom_render::glyph_cache::{GlyphCache, GlyphEntry, GlyphInstance, PaneGlyphR
 use loom_render::rect::{PaneRectRange, Rect};
 use loom_render::shaper::TextShaper;
 use loom_render::terminal::{ColorTable, TerminalView};
-use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -209,6 +209,13 @@ pub(crate) struct App {
     /// dispatcher doesn't touch the developer's real config file or
     /// race other tests on the user-wide temp-sibling path.
     pub persist_settings_to_disk: bool,
+    /// Pre-change `[web]` snapshot for the in-flight runtime web toggle. The
+    /// panel persists + sends optimistically; if the daemon replies that the
+    /// gateway failed to start (port taken, etc.) the `CommandResult` handler
+    /// restores this so settings.toml and the panel don't claim a gateway is
+    /// live when it isn't. Single slot — a rapid second web edit replaces it
+    /// (last-pending-wins), which is fine for the click-then-wait common case.
+    pub pending_web_rollback: Option<loom_config::schema::WebConfig>,
     /// In-flight background-image decode. The worker thread spawned by
     /// `reload_background_image` decodes a (possibly multi-MB) image
     /// off the main thread, then sends the result back here + wakes the
@@ -595,6 +602,7 @@ impl App {
             config_change_rx: None,
             pending_self_config_write_deadline: None,
             persist_settings_to_disk: true,
+            pending_web_rollback: None,
             pending_background_image_decode: None,
             pending_resize: None,
             pending_dpi: None,

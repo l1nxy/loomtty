@@ -318,6 +318,10 @@ pub(crate) enum UiAction {
     /// `ContextMenuAction::SetSettingsEnum { field_id, value }` so
     /// the field round-trip stays opaque to `loom-app`.
     OpenSettingsDropdown(crate::app::ui::settings_panel::schema::SettingsField),
+    /// Copy the derived browser UI URL to the clipboard.
+    CopyWebUrl,
+    /// Regenerate the browser UI token and restart the gateway when enabled.
+    RegenWebToken,
 }
 
 // Per-component hit enums — kept internal, used only within each component's

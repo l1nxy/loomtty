@@ -325,29 +325,25 @@ impl SettingsPanelComponent {
         let theme = cx.theme;
         let bw = tokens::BORDER_THIN;
         let body_w = self.panel_w - tokens::SPACE_4 * 2.0 - SIDEBAR_W - bw;
-        let col = div()
-            .flex_col()
-            .flex_1()
-            .pl(tokens::SPACE_3)
-            .child(
-                // Section header — uppercased category name, hairline
-                // underline. Same shape as the previous panel's
-                // single section header so the visual rhythm carries.
-                div()
-                    .flex_col()
-                    .gap(tokens::SPACE_1)
-                    .child(
-                        div()
-                            .h(cx.ui_line_h + tokens::SPACE_1)
-                            .flex_row()
-                            .items_center()
-                            .child(
-                                text(self.active_category.label().to_uppercase())
-                                    .color(theme.on_surface_muted),
-                            ),
-                    )
-                    .child(div().w(body_w).h(bw).bg(theme.border)),
-            );
+        let col = div().flex_col().flex_1().pl(tokens::SPACE_3).child(
+            // Section header — uppercased category name, hairline
+            // underline. Same shape as the previous panel's
+            // single section header so the visual rhythm carries.
+            div()
+                .flex_col()
+                .gap(tokens::SPACE_1)
+                .child(
+                    div()
+                        .h(cx.ui_line_h + tokens::SPACE_1)
+                        .flex_row()
+                        .items_center()
+                        .child(
+                            text(self.active_category.label().to_uppercase())
+                                .color(theme.on_surface_muted),
+                        ),
+                )
+                .child(div().w(body_w).h(bw).bg(theme.border)),
+        );
         // Rows + interstitial hairline dividers. Body has no gap so the
         // divider sits directly between rows; each row carries its own
         // vertical padding for breathing room. Only the windowed slice
@@ -397,8 +393,7 @@ impl SettingsPanelComponent {
         let track_w = tokens::SPACE_1;
         let track_h = self.visible_rows as f32 * self.item_stride;
         let total = self.total_rows.max(1) as f32;
-        let thumb_h =
-            (track_h * (self.visible_rows as f32 / total)).max(self.item_stride * 0.5);
+        let thumb_h = (track_h * (self.visible_rows as f32 / total)).max(self.item_stride * 0.5);
         let max_offset = self.max_scroll_offset().max(1);
         let thumb_top =
             (track_h - thumb_h).max(0.0) * (self.scroll_offset as f32 / max_offset as f32);
@@ -491,6 +486,29 @@ impl SettingsPanelComponent {
                     .width(CONTROL_COL_W)
                     .into_div(theme)
             }
+            FieldKind::Info => {
+                let raw = schema::display_value(meta.field, &self.config_snapshot);
+                let label = text_layout::truncate_with_ellipsis(cx, &raw, CONTROL_COL_W);
+                div()
+                    .w(CONTROL_COL_W)
+                    .flex_row()
+                    .items_center()
+                    .justify_end()
+                    .child(text(label).color(theme.on_surface_muted))
+            }
+            FieldKind::Action { label } => div()
+                .h(CONTROL_ROW_H - tokens::SPACE_2)
+                .flex_row()
+                .items_center()
+                .justify_center()
+                .px(tokens::SPACE_3)
+                .rounded(theme.radius.sm)
+                .border(tokens::BORDER_THIN, theme.border)
+                .hit_id(encode_field(meta.field, ButtonRole::ActionButton))
+                .cursor_pointer()
+                .hover(|s| s.bg(theme.element_hover))
+                .active(|s| s.bg(theme.element_active))
+                .child(text(label).color(theme.accent)),
         };
         // Unified slot: every control sits inside the same
         // `CONTROL_COL_W × CONTROL_ROW_H` box, right-aligned and
@@ -590,6 +608,11 @@ pub(crate) fn action_for(hit: Option<SettingsHit>) -> UiAction {
                 UiAction::SettingsControl(SettingsActionPayload::Toggle { field })
             }
             ButtonRole::DropdownOpen => UiAction::OpenSettingsDropdown(field),
+            ButtonRole::ActionButton => match field {
+                SettingsField::WebCopyUrl => UiAction::CopyWebUrl,
+                SettingsField::WebRegenToken => UiAction::RegenWebToken,
+                _ => UiAction::SettingsNoOp,
+            },
         },
     }
 }

@@ -124,6 +124,14 @@ pub enum SettingsField {
     SessionRestoreAgents,
     SessionAgentSaveInterval,
     ServerIdleTimeout,
+    // ── Web ───────────────────────────────────────────────
+    WebEnabled,
+    WebPort,
+    WebBind,
+    WebUrl,
+    WebToken,
+    WebCopyUrl,
+    WebRegenToken,
 }
 
 impl SettingsField {
@@ -138,6 +146,7 @@ impl SettingsField {
 
 /// Kind of widget the panel paints for a row, plus everything the
 /// dispatcher needs to apply edits and bound them.
+#[derive(Debug, Clone, Copy)]
 pub enum FieldKind {
     /// `[− value +]` stepper over a float field.
     Float {
@@ -157,6 +166,11 @@ pub enum FieldKind {
     /// kebab-case list (matches what `serde(rename_all = "kebab-case")`
     /// expects on the schema enum).
     Enum { variants: &'static [&'static str] },
+    /// Read-only value text. Used for derived or sensitive-ish values
+    /// that are visible but not edited directly in the panel.
+    Info,
+    /// Clickable row-level command button.
+    Action { label: &'static str },
 }
 
 /// A single panel row. `category` controls which sidebar tab it shows
@@ -680,7 +694,13 @@ pub static FIELDS: &[FieldMeta] = &[
         label: "Pane Open Style",
         description: "Transition used when a pane opens or closes.",
         kind: FieldKind::Enum {
-            variants: &["fade", "slide-up", "slide-down", "slide-left", "fade-slide-up"],
+            variants: &[
+                "fade",
+                "slide-up",
+                "slide-down",
+                "slide-left",
+                "fade-slide-up",
+            ],
         },
     },
     FieldMeta {
@@ -913,6 +933,64 @@ pub static FIELDS: &[FieldMeta] = &[
             step: 30,
         },
     },
+    // ── Web ────────────────────────────────────────────────
+    FieldMeta {
+        field: SettingsField::WebEnabled,
+        category: SettingsCategory::Web,
+        label: "Browser UI",
+        description: "Start or stop the local web gateway on the running daemon.",
+        kind: FieldKind::Bool,
+    },
+    FieldMeta {
+        field: SettingsField::WebPort,
+        category: SettingsCategory::Web,
+        label: "Port",
+        description: "TCP port for the web gateway.",
+        kind: FieldKind::Int {
+            min: 1,
+            max: 65_535,
+            step: 1,
+        },
+    },
+    FieldMeta {
+        field: SettingsField::WebBind,
+        category: SettingsCategory::Web,
+        label: "Bind",
+        description: "Loopback is local-only; all-interfaces requires allowed_origins in settings.toml.",
+        kind: FieldKind::Enum {
+            variants: &["loopback", "all-interfaces"],
+        },
+    },
+    FieldMeta {
+        field: SettingsField::WebUrl,
+        category: SettingsCategory::Web,
+        label: "URL",
+        description: "Address to open after the gateway is listening.",
+        kind: FieldKind::Info,
+    },
+    FieldMeta {
+        field: SettingsField::WebToken,
+        category: SettingsCategory::Web,
+        label: "Token",
+        description: "Shared login token for browser sessions.",
+        kind: FieldKind::Info,
+    },
+    FieldMeta {
+        field: SettingsField::WebCopyUrl,
+        category: SettingsCategory::Web,
+        label: "Copy URL",
+        description: "Copy the browser URL to the clipboard.",
+        kind: FieldKind::Action { label: "Copy URL" },
+    },
+    FieldMeta {
+        field: SettingsField::WebRegenToken,
+        category: SettingsCategory::Web,
+        label: "Regenerate Token",
+        description: "Create a fresh 32-hex token and update the running gateway if enabled.",
+        kind: FieldKind::Action {
+            label: "Regenerate",
+        },
+    },
 ];
 
 /// Look up the metadata for a field. Panics on unknown variants —
@@ -953,6 +1031,29 @@ pub fn enum_variants(field: SettingsField) -> Vec<String> {
         FieldKind::Enum { variants } => variants.iter().map(|s| (*s).to_string()).collect(),
         _ => Vec::new(),
     }
+}
+
+/// Browser URL to open for the saved `[web]` config. With a non-empty
+/// `allowed_origins`, `/ws` authenticates only requests whose browser Origin
+/// exactly matches an entry, so a bind-derived URL (e.g. `127.0.0.1`) would
+/// 401 even with the right token under configs like `["http://localhost:7891"]`
+/// or a proxied `["https://terminal.example.com"]`. Prefer the first non-`null`
+/// allowed origin (itself a `scheme://host[:port]` base); fall back to the
+/// bind+port form only when the policy is open or lists just `null`. Mirrors
+/// the `loomtty web` CLI so the panel and the command agree.
+pub fn web_access_url(c: &LoomConfig) -> String {
+    if let Some(origin) = c.web.allowed_origins.iter().find(|o| o.as_str() != "null") {
+        return format!("{}/", origin.trim_end_matches('/'));
+    }
+    let bind = c.web.bind.trim();
+    let host = match bind {
+        "" => "127.0.0.1".to_string(),
+        "0.0.0.0" => "127.0.0.1".to_string(),
+        "::" => "[::1]".to_string(),
+        h if h.contains(':') && !h.starts_with('[') => format!("[{h}]"),
+        h => h.to_string(),
+    };
+    format!("http://{}:{}/", host, c.web.port)
 }
 
 // ── Read accessors ──────────────────────────────────────────────────
@@ -1019,6 +1120,7 @@ pub fn read_int(field: SettingsField, c: &LoomConfig) -> usize {
         SettingsField::LayoutDynamicFullscreenWidth => {
             c.layout.dynamic_fullscreen_max_width as usize
         }
+        SettingsField::WebPort => c.web.port as usize,
         _ => 0,
     }
 }
@@ -1036,6 +1138,7 @@ pub fn read_bool(field: SettingsField, c: &LoomConfig) -> bool {
         SettingsField::GestureSmoothScroll => c.gesture.smooth_scroll,
         SettingsField::PredictionShowUnderline => c.prediction.show_underline,
         SettingsField::SessionRestoreAgents => c.session.restore_agents,
+        SettingsField::WebEnabled => c.web.enabled,
         _ => false,
     }
 }
@@ -1160,6 +1263,34 @@ pub fn read_enum(field: SettingsField, c: &LoomConfig) -> String {
             AlphaBlending::Linear => "linear".into(),
             AlphaBlending::LinearCorrected => "linear-corrected".into(),
         },
+        SettingsField::WebBind => {
+            let bind = c.web.bind.trim();
+            if bind.is_empty()
+                || bind
+                    .parse::<std::net::IpAddr>()
+                    .map(|ip| ip.is_loopback())
+                    .unwrap_or(true)
+            {
+                "loopback".into()
+            } else {
+                "all-interfaces".into()
+            }
+        }
+        _ => String::new(),
+    }
+}
+
+pub fn read_info(field: SettingsField, c: &LoomConfig) -> String {
+    match field {
+        SettingsField::WebUrl => web_access_url(c),
+        SettingsField::WebToken => {
+            let token = c.web.token.trim();
+            if token.is_empty() {
+                "(none)".to_string()
+            } else {
+                token.to_string()
+            }
+        }
         _ => String::new(),
     }
 }
@@ -1173,6 +1304,8 @@ pub fn display_value(field: SettingsField, c: &LoomConfig) -> String {
         FieldKind::Int { .. } => read_int(field, c).to_string(),
         FieldKind::Bool => if read_bool(field, c) { "On" } else { "Off" }.to_string(),
         FieldKind::Enum { .. } => read_enum(field, c),
+        FieldKind::Info => read_info(field, c),
+        FieldKind::Action { .. } => String::new(),
     }
 }
 
@@ -1202,7 +1335,9 @@ pub fn nudge(field: SettingsField, c: &mut LoomConfig, delta_sign: i32) -> bool 
             write_int(field, c, next);
             true
         }
-        FieldKind::Bool | FieldKind::Enum { .. } => false,
+        FieldKind::Bool | FieldKind::Enum { .. } | FieldKind::Info | FieldKind::Action { .. } => {
+            false
+        }
     }
 }
 
@@ -1360,6 +1495,12 @@ pub fn set_enum(field: SettingsField, c: &mut LoomConfig, value: &str) -> bool {
                 _ => AlphaBlending::LinearCorrected,
             };
         }
+        SettingsField::WebBind => {
+            c.web.bind = match value {
+                "all-interfaces" => "0.0.0.0".to_string(),
+                _ => String::new(),
+            };
+        }
         _ => {
             return false;
         }
@@ -1433,6 +1574,7 @@ fn write_int(field: SettingsField, c: &mut LoomConfig, v: usize) {
         SettingsField::LayoutDynamicFullscreenWidth => {
             c.layout.dynamic_fullscreen_max_width = v as f64
         }
+        SettingsField::WebPort => c.web.port = v.clamp(1, 65_535) as u16,
         _ => {}
     }
 }
@@ -1450,6 +1592,7 @@ fn write_bool(field: SettingsField, c: &mut LoomConfig, v: bool) {
         SettingsField::GestureSmoothScroll => c.gesture.smooth_scroll = v,
         SettingsField::PredictionShowUnderline => c.prediction.show_underline = v,
         SettingsField::SessionRestoreAgents => c.session.restore_agents = v,
+        SettingsField::WebEnabled => c.web.enabled = v,
         _ => {}
     }
 }
@@ -1491,12 +1634,7 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
             // `None` → write empty string (the writer removes the
             // whole `[font.ui]` table, matching the loader's "no
             // override" resting state).
-            let family = c
-                .font
-                .ui
-                .as_ref()
-                .map(|u| u.family.as_str())
-                .unwrap_or("");
+            let family = c.font.ui.as_ref().map(|u| u.family.as_str()).unwrap_or("");
             w.set_font_ui_family(family);
         }
         SettingsField::UiFontSize => {
@@ -1518,9 +1656,7 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
         SettingsField::LayoutCenterFocusedColumn => {
             w.set_layout_center_focused_column(&read_enum(field, c))
         }
-        SettingsField::LayoutNewPaneSizing => {
-            w.set_layout_new_pane_sizing(&read_enum(field, c))
-        }
+        SettingsField::LayoutNewPaneSizing => w.set_layout_new_pane_sizing(&read_enum(field, c)),
         SettingsField::LayoutNewPaneWidth => w.set_layout_new_pane_width(&read_enum(field, c)),
         SettingsField::LayoutDynamicFullscreenWidth => {
             w.set_layout_dynamic_fullscreen_max_width(c.layout.dynamic_fullscreen_max_width)
@@ -1540,9 +1676,7 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
             w.set_appearance_focus_ring_style(&read_enum(field, c))
         }
         SettingsField::FontCellWidth => w.set_font_cell_width(c.font.adjust_cell_width),
-        SettingsField::FontDisableLigatures => {
-            w.set_font_disable_ligatures(&read_enum(field, c))
-        }
+        SettingsField::FontDisableLigatures => w.set_font_disable_ligatures(&read_enum(field, c)),
         SettingsField::FontUnderlinePosition => {
             w.set_font_underline_position(c.font.adjust_underline_position)
         }
@@ -1555,9 +1689,7 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
         SettingsField::FontStrikethroughThickness => {
             w.set_font_strikethrough_thickness(c.font.adjust_strikethrough_thickness)
         }
-        SettingsField::TerminalCursorShape => {
-            w.set_terminal_cursor_shape(&c.terminal.cursor_shape)
-        }
+        SettingsField::TerminalCursorShape => w.set_terminal_cursor_shape(&c.terminal.cursor_shape),
         SettingsField::TerminalCursorOpacity => {
             w.set_terminal_cursor_opacity(c.terminal.cursor_opacity)
         }
@@ -1567,18 +1699,12 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
         SettingsField::TerminalClearSelectionOnType => {
             w.set_terminal_clear_selection_on_type(c.terminal.clear_selection_on_type)
         }
-        SettingsField::TerminalBellUrgency => {
-            w.set_terminal_bell_urgency(c.terminal.bell_urgency)
-        }
+        SettingsField::TerminalBellUrgency => w.set_terminal_bell_urgency(c.terminal.bell_urgency),
         SettingsField::TerminalPasteWarnThreshold => {
             w.set_terminal_paste_warn_threshold(c.terminal.paste_warn_threshold)
         }
-        SettingsField::TerminalDefaultCols => {
-            w.set_terminal_default_cols(c.terminal.default_cols)
-        }
-        SettingsField::TerminalDefaultRows => {
-            w.set_terminal_default_rows(c.terminal.default_rows)
-        }
+        SettingsField::TerminalDefaultCols => w.set_terminal_default_cols(c.terminal.default_cols),
+        SettingsField::TerminalDefaultRows => w.set_terminal_default_rows(c.terminal.default_rows),
         SettingsField::TerminalNotifyThreshold => {
             w.set_terminal_notify_command_threshold(c.terminal.notify_command_threshold_secs)
         }
@@ -1601,9 +1727,7 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
         SettingsField::AnimationOverviewZoomFit => {
             w.set_animation_overview_zoom_fit(c.animation.overview_zoom_fit)
         }
-        SettingsField::InputLeaderTimeout => {
-            w.set_input_leader_timeout(c.input.leader_timeout_ms)
-        }
+        SettingsField::InputLeaderTimeout => w.set_input_leader_timeout(c.input.leader_timeout_ms),
         SettingsField::InputDoubleTapWindow => {
             w.set_input_double_tap_window(c.input.double_tap_window_ms)
         }
@@ -1614,9 +1738,7 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
         SettingsField::GestureNaturalScroll => {
             w.set_gesture_natural_scroll(c.gesture.natural_scroll)
         }
-        SettingsField::GestureSmoothScroll => {
-            w.set_gesture_smooth_scroll(c.gesture.smooth_scroll)
-        }
+        SettingsField::GestureSmoothScroll => w.set_gesture_smooth_scroll(c.gesture.smooth_scroll),
         SettingsField::GesturePinchSensitivity => {
             w.set_gesture_pinch_sensitivity(c.gesture.pinch_sensitivity)
         }
@@ -1630,9 +1752,7 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
         SettingsField::RenderFrameInterval => {
             w.set_render_frame_interval(c.render.frame_interval_ms)
         }
-        SettingsField::PredictionThreshold => {
-            w.set_prediction_threshold(c.prediction.threshold_ms)
-        }
+        SettingsField::PredictionThreshold => w.set_prediction_threshold(c.prediction.threshold_ms),
         SettingsField::PredictionShowUnderline => {
             w.set_prediction_show_underline(c.prediction.show_underline)
         }
@@ -1642,9 +1762,12 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
         SettingsField::SessionAgentSaveInterval => {
             w.set_session_agent_save_interval(c.session.agent_save_interval_secs)
         }
-        SettingsField::ServerIdleTimeout => {
-            w.set_server_idle_timeout(c.server.idle_timeout_secs)
-        }
+        SettingsField::ServerIdleTimeout => w.set_server_idle_timeout(c.server.idle_timeout_secs),
+        SettingsField::WebEnabled => w.set_web_enabled(c.web.enabled),
+        SettingsField::WebPort => w.set_web_port(c.web.port),
+        SettingsField::WebBind => w.set_web_bind(&c.web.bind),
+        SettingsField::WebToken => w.set_web_token(c.web.token.trim()),
+        SettingsField::WebUrl | SettingsField::WebCopyUrl | SettingsField::WebRegenToken => {}
     }
 }
 
@@ -1670,7 +1793,7 @@ mod tests {
         // Bumping this is fine; the assertion exists so a stray edit
         // that drops a row gets caught instead of silently shrinking
         // the panel.
-        assert_eq!(FIELDS.len(), 70);
+        assert_eq!(FIELDS.len(), 77);
     }
 
     #[test]

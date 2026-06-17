@@ -441,6 +441,27 @@ pub enum ClientMessage {
         command: String,
         cwd: Option<String>,
     },
+    /// Runtime web-gateway control from the desktop settings panel. The client
+    /// persists `[web]` to its own config first, then sends the resolved values
+    /// here because the server has NO config hot-reload (it cannot re-read
+    /// settings.toml). On `enabled = true` the daemon binds + serves the gateway
+    /// live; on `false` it stops the running one. Idempotent. The token travels
+    /// over the local IPC socket only and is zeroized by the server after use.
+    SetWebEnabled {
+        #[serde(default)]
+        enabled: bool,
+        #[serde(default)]
+        token: String,
+        /// Empty = loopback.
+        #[serde(default)]
+        bind: String,
+        #[serde(default)]
+        port: u16,
+        #[serde(default)]
+        allowed_origins: Vec<String>,
+        #[serde(default)]
+        static_dir: String,
+    },
     /// IPC: Get detailed info about a session.
     GetSessionInfo {
         session_name: String,

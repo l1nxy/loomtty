@@ -34,7 +34,24 @@ fn build_control_hello() -> Vec<u8> {
 }
 
 /// Send a control command to the server and print the response.
+///
+/// Runs the exchange on a worker thread with an overall deadline. Named-pipe
+/// reads have no OS-level read timeout on Windows (and only a best-effort
+/// socket timeout on Unix), so a wedged daemon could otherwise block a CLI
+/// command — `loomtty kill-server`, `ls`, … — forever. On timeout we abandon
+/// the worker (it dies with the process once the command returns) and report.
 pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(run_control_command_inner(msg, json));
+    });
+    match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(result) => result,
+        Err(_) => anyhow::bail!("server did not respond within 10s (it may be unresponsive)"),
+    }
+}
+
+fn run_control_command_inner(msg: ClientMessage, json: bool) -> Result<()> {
     use loom_protocol::transport;
     use std::io::{Read, Write};
 

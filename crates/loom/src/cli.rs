@@ -11,7 +11,7 @@ const STYLES: Styles = Styles::styled()
     .error(AnsiColor::Red.on_default().effects(Effects::BOLD));
 
 #[derive(Parser, Debug)]
-#[command(name = "loomtty", about = "GPU-accelerated terminal multiplexer")]
+#[command(name = "loomtty", about = "GPU-accelerated terminal multiplexer", version)]
 #[command(arg_required_else_help = false, styles = STYLES)]
 pub struct Cli {
     #[command(subcommand)]

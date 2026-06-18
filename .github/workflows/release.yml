@@ -70,6 +70,14 @@ jobs:
           cp -r assets/icons ${{ matrix.artifact }}/ 2>/dev/null || true
           tar czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
 
+      # Apple Silicon only: assemble loomtty.app, ad-hoc sign it, package a .dmg.
+      - name: Build .dmg (macOS arm64)
+        if: matrix.artifact == 'loomtty-macos-aarch64'
+        run: |
+          version="${{ github.ref_name }}"; version="${version#v}"
+          bash dist/macos/make-app.sh --version "$version" \
+            --bindir "target/${{ matrix.target }}/release" --outdir target/macos
+
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -103,6 +111,13 @@ jobs:
         with:
           name: loomtty-windows-installer
           path: target/installer/*.exe
+
+      - name: Upload .dmg (macOS arm64)
+        if: matrix.artifact == 'loomtty-macos-aarch64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: loomtty-macos-dmg
+          path: target/macos/*.dmg
 
   # ── Linux native packages (.deb / .rpm via cargo-nfpm) ─────────────
   linux-packages:
@@ -169,5 +184,6 @@ jobs:
             loomtty-macos-x86_64.tar.gz
             loomtty-windows-x86_64.zip
             loomtty-*-x86_64-setup.exe
+            loomtty-*-macos-arm64.dmg
             *.deb
             *.rpm

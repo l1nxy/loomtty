@@ -103,8 +103,53 @@ jobs:
           name: loomtty-windows-installer
           path: target/installer/*.exe
 
+  # ── Linux native packages (.deb / .rpm via cargo-nfpm) ─────────────
+  linux-packages:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config libfreetype-dev libfontconfig-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libwayland-dev \
+            libvulkan-dev libegl-dev
+
+      # Build natively (no --target) so the binaries land in target/release and
+      # cargo-nfpm picks up the host arch (amd64 / arm64) automatically.
+      - name: Build binaries
+        run: cargo build --release -p loomtty -p loomtty-server
+
+      - name: Install cargo-nfpm
+        run: cargo install --locked cargo-nfpm
+
+      - name: Build .deb and .rpm
+        run: |
+          cargo nfpm package -p loomtty -f deb --no-build
+          cargo nfpm package -p loomtty -f rpm --no-build
+          mkdir -p pkgs
+          find target -type f \( -name '*.deb' -o -name '*.rpm' \) -exec cp {} pkgs/ \;
+          ls -la pkgs/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: loomtty-linux-packages-${{ matrix.arch }}
+          path: pkgs/*
+
   release:
-    needs: build
+    needs: [build, linux-packages]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -122,3 +167,5 @@ jobs:
             loomtty-macos-x86_64.tar.gz
             loomtty-windows-x86_64.zip
             loomtty-*-x86_64-setup.exe
+            *.deb
+            *.rpm

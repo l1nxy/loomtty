@@ -38,7 +38,16 @@ $ErrorActionPreference = 'Stop'
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $IssPath  = Join-Path $PSScriptRoot 'loomtty.iss'
 
-if (-not $BinDir) { $BinDir = Join-Path $RepoRoot 'target\release' }
+if (-not $BinDir) {
+    $BinDir = Join-Path $RepoRoot 'target\release'
+} elseif (-not [System.IO.Path]::IsPathRooted($BinDir)) {
+    # A relative BinDir (CI passes "target\<triple>\release") is interpreted
+    # relative to the repo root. Make it absolute: ISCC resolves a relative
+    # [Files] Source against the .iss directory (dist\windows), not our CWD, so
+    # a relative BinDir would make Inno look under dist\windows\target\... and
+    # the compile fails with "source file not found".
+    $BinDir = Join-Path $RepoRoot $BinDir
+}
 
 # ── Version ────────────────────────────────────────────────────────────
 if (-not $Version) {

@@ -62,3 +62,95 @@ winres = "0.1"
 
 [dev-dependencies]
 tempfile = "3"
+
+# ── Linux packaging (cargo-nfpm → .deb / .rpm) ──────────────────────────
+# Build natively, then package from the workspace root:
+#   cargo build --release -p loomtty -p loomtty-server
+#   cargo nfpm package -p loomtty -f deb --no-build   (and -f rpm)
+# `loomtty` (the client) is added automatically at /usr/bin/loomtty; the
+# daemon + assets are listed below. Paths are relative to the workspace root.
+# Built without the `gui-bin` feature, so the Windows-only loomtty-gui binary
+# is neither built nor packaged here.
+[package.metadata.nfpm]
+name = "loomtty"
+license = "AGPL-3.0-only"
+maintainer = "loomtty contributors <noreply@users.noreply.github.com>"
+homepage = "https://github.com/l1nxy/loomtty"
+description = "GPU-accelerated terminal multiplexer with column/workspace layout, remote attach, and a browser client."
+section = "utils"
+priority = "optional"
+
+[package.metadata.nfpm.scripts]
+postinstall = "dist/linux/refresh-caches.sh"
+postremove = "dist/linux/refresh-caches.sh"
+
+[[package.metadata.nfpm.contents]]
+src = "target/release/loomtty-server"
+dst = "/usr/bin/loomtty-server"
+
+[[package.metadata.nfpm.contents]]
+src = "dist/linux/com.github.l1nxy.loom.desktop"
+dst = "/usr/share/applications/com.github.l1nxy.loom.desktop"
+
+[[package.metadata.nfpm.contents]]
+src = "dist/linux/com.github.l1nxy.loom.metainfo.xml"
+dst = "/usr/share/metainfo/com.github.l1nxy.loom.metainfo.xml"
+
+[[package.metadata.nfpm.contents]]
+src = "assets/icons/icon.svg"
+dst = "/usr/share/icons/hicolor/scalable/apps/com.github.l1nxy.loom.svg"
+
+[[package.metadata.nfpm.contents]]
+src = "assets/icons/icon-16x16.png"
+dst = "/usr/share/icons/hicolor/16x16/apps/com.github.l1nxy.loom.png"
+
+[[package.metadata.nfpm.contents]]
+src = "assets/icons/icon-32x32.png"
+dst = "/usr/share/icons/hicolor/32x32/apps/com.github.l1nxy.loom.png"
+
+[[package.metadata.nfpm.contents]]
+src = "assets/icons/icon-48x48.png"
+dst = "/usr/share/icons/hicolor/48x48/apps/com.github.l1nxy.loom.png"
+
+[[package.metadata.nfpm.contents]]
+src = "assets/icons/icon-64x64.png"
+dst = "/usr/share/icons/hicolor/64x64/apps/com.github.l1nxy.loom.png"
+
+[[package.metadata.nfpm.contents]]
+src = "assets/icons/icon-128x128.png"
+dst = "/usr/share/icons/hicolor/128x128/apps/com.github.l1nxy.loom.png"
+
+[[package.metadata.nfpm.contents]]
+src = "assets/icons/icon-256x256.png"
+dst = "/usr/share/icons/hicolor/256x256/apps/com.github.l1nxy.loom.png"
+
+[[package.metadata.nfpm.contents]]
+src = "assets/icons/icon-512x512.png"
+dst = "/usr/share/icons/hicolor/512x512/apps/com.github.l1nxy.loom.png"
+
+[[package.metadata.nfpm.contents]]
+src = "crates/loom-server/shell-integration/loom.bash"
+dst = "/usr/share/loomtty/shell-integration/loom.bash"
+
+[[package.metadata.nfpm.contents]]
+src = "crates/loom-server/shell-integration/loom.zsh"
+dst = "/usr/share/loomtty/shell-integration/loom.zsh"
+
+[[package.metadata.nfpm.contents]]
+src = "crates/loom-server/shell-integration/loom.fish"
+dst = "/usr/share/loomtty/shell-integration/loom.fish"
+
+[[package.metadata.nfpm.contents]]
+src = "LICENSE"
+dst = "/usr/share/doc/loomtty/copyright"
+
+# Package names differ between ecosystems. These cover the hard-linked runtime
+# libraries; the GPU/Wayland backends are recommends (the app falls back to
+# X11 + GL). Maintainers should cross-check against `readelf -d`/dpkg-shlibdeps.
+[package.metadata.nfpm.deb]
+depends = ["libc6", "libfreetype6", "libfontconfig1", "libxkbcommon0", "libxcb1"]
+recommends = ["libvulkan1", "libegl1", "libwayland-client0"]
+
+[package.metadata.nfpm.rpm]
+depends = ["freetype", "fontconfig", "libxkbcommon", "libxcb"]
+recommends = ["vulkan-loader", "mesa-libEGL", "libwayland-client"]

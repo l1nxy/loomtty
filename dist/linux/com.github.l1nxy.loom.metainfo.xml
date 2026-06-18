@@ -8,7 +8,7 @@
   <url type="vcs-browser">https://github.com/l1nxy/loomtty</url>
   <summary>GPU-accelerated terminal multiplexer</summary>
   <metadata_license>MIT</metadata_license>
-  <project_license>MIT</project_license>
+  <project_license>AGPL-3.0-only</project_license>
   <content_rating type="oars-1.1" />
   <developer id="com.github.l1nxy">
     <name>l1nxy</name>

@@ -34,7 +34,21 @@ err() { printf 'error: %s\n' "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 if [ "$ACTION" = "help" ]; then
-    sed -n '2,13p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
+    # A literal heredoc, not `sed "$0"`: under `curl … | sh -s -- --help` $0 is
+    # "sh", not this script, so reading help from $0 would print nothing.
+    cat <<'EOF'
+loomtty installer for Linux.
+
+Downloads the latest release and installs it for the current user (no root):
+  curl -fsSL https://raw.githubusercontent.com/l1nxy/loomtty/dev/install.sh | sh
+
+Options (pass after `-- ` when piping to sh, e.g. `… | sh -s -- --system`):
+  --user            install under ~/.local  (default, no root)
+  --system          install under /usr/local (uses sudo if not root)
+  --version=vX.Y.Z  install a specific release tag (default: latest)
+  --uninstall       remove a previous install (respects --user/--system)
+  --help
+EOF
     exit 0
 fi
 

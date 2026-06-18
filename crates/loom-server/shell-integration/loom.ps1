@@ -48,9 +48,22 @@ function global:__loom_urlencode([string]$s) {
 $global:__loom_prev_prompt = if (Test-Path Function:\prompt) { $function:prompt } else { $null }
 
 function global:prompt {
-    # Capture exit status first — before anything here perturbs it.
-    $loomExit = $LASTEXITCODE
-    if ($null -eq $loomExit) { $loomExit = 0 }
+    # Capture the previous command's status FIRST — every statement below
+    # overwrites $? and most leave $LASTEXITCODE untouched. PowerShell only
+    # updates $LASTEXITCODE for native executables, so a cmdlet that succeeds
+    # after a failed native command leaves a stale non-zero value: reading
+    # $LASTEXITCODE alone would mis-report that success as a failure. Derive
+    # from $? (mirrors loom.bash reading $? on its first line) and fall back to
+    # the native exit code only when the command actually failed.
+    $loomOk = $?
+    $loomNativeExit = $global:LASTEXITCODE
+    if ($loomOk) {
+        $loomExit = 0
+    } elseif ($loomNativeExit) {
+        $loomExit = $loomNativeExit
+    } else {
+        $loomExit = 1
+    }
 
     # OSC 133;D — previous command finished, with its exit code.
     $out = __loom_osc "133;D;$loomExit"
@@ -72,10 +85,31 @@ function global:prompt {
         $out += "PS $cwd> "
     }
 
-    # OSC 133;C — command / output start.
-    $out += __loom_osc "133;C"
+    # NB: OSC 133;C (command/output start) is NOT emitted here — drawing the
+    # prompt is not when the command runs. It is emitted from the
+    # PSConsoleHostReadLine wrapper below, after the user submits the line.
 
     # Restore $LASTEXITCODE so our probing doesn't leak into the next prompt.
-    $global:LASTEXITCODE = $loomExit
+    $global:LASTEXITCODE = $loomNativeExit
     return $out
+}
+
+# OSC 133;C marks the start of command execution (output start). PowerShell has
+# no preexec hook, but when PSReadLine is loaded the host reads every
+# interactive command through PSConsoleHostReadLine — wrap it to emit C right
+# after the user submits the line and before it runs. This mirrors loom.bash's
+# preexec (DEBUG trap); emitting C while drawing the prompt instead would
+# wrongly count prompt-idle and typing time as command output. The double-load
+# guard at the top keeps this from wrapping itself on re-source. Without
+# PSReadLine there is no safe hook, so C is skipped rather than emitted early.
+if (Test-Path Function:\PSConsoleHostReadLine) {
+    $global:__loom_prev_readline = $function:PSConsoleHostReadLine
+    function global:PSConsoleHostReadLine {
+        $command = & $global:__loom_prev_readline
+        # Skip blank submissions (bare Enter) — no command actually runs.
+        if (-not [string]::IsNullOrWhiteSpace($command)) {
+            [Console]::Write((__loom_osc "133;C"))
+        }
+        return $command
+    }
 }

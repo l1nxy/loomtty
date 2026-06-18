@@ -271,9 +271,11 @@ rm -f ~/.local/share/icons/hicolor/*/apps/com.github.l1nxy.loom.*
 ### Windows
 
 Uninstall from *Settings → Apps → Installed apps → loomtty* (or run the
-uninstaller in the install directory). It stops the daemon, removes the files,
-and reverses the PATH change. User data is left behind — delete it manually if
-desired:
+uninstaller in the install directory). It removes the files and reverses the
+PATH change; it does **not** stop a running daemon (by design — it must not
+touch another user's session). If loomtty is still running, stop it first with
+`loomtty kill-server` so no files stay locked. User data is left behind —
+delete it manually if desired:
 
 ```powershell
 Remove-Item -Recurse -Force "$env:APPDATA\loom"        # config

@@ -106,6 +106,51 @@ if [ "$OS" = "linux" ]; then
 fi
 ```
 
+## macOS
+
+Apple Silicon (arm64). Two methods.
+
+### Disk image (.dmg)
+
+Download `loomtty-<version>-macos-arm64.dmg` from
+[Releases](https://github.com/l1nxy/loomtty/releases), open it, and drag
+**loomtty** into Applications.
+
+The app is **ad-hoc signed**, not notarized, so on first launch Gatekeeper
+will block it. Either right-click the app → **Open** → **Open**, or clear the
+quarantine flag:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/loomtty.app
+```
+
+For the `loomtty` CLI on your PATH, symlink the in-bundle binaries:
+
+```sh
+ln -sf /Applications/loomtty.app/Contents/MacOS/loomtty /usr/local/bin/loomtty
+ln -sf /Applications/loomtty.app/Contents/MacOS/loomtty-server /usr/local/bin/loomtty-server
+```
+
+### Homebrew
+
+Installs the app **and** puts the CLI on your PATH:
+
+```sh
+brew install --cask l1nxy/loomtty/loomtty   # once a l1nxy/homebrew-loomtty tap exists
+```
+
+The cask lives at [`dist/macos/loomtty.rb`](dist/macos/loomtty.rb); to publish
+it, drop it into a `l1nxy/homebrew-loomtty` tap (`Casks/loomtty.rb`).
+
+### Shell integration
+
+```sh
+echo 'source /Applications/loomtty.app/Contents/Resources/shell-integration/loom.zsh' >> ~/.zshrc
+```
+
+(The tarball / Homebrew install also ship `loom.{bash,zsh,fish}`; use whichever
+your shell is.)
+
 ## Windows
 
 The Unix steps above (`tar`, `~/.local/bin`, desktop entries) don't apply on
@@ -205,6 +250,13 @@ If the build fails due to missing system libraries, the error message will name 
 - Installed via the script: `curl -fsSL …/install.sh | sh -s -- --uninstall`
   (add `--system` if you used it).
 - Installed via package: `sudo apt remove loomtty` / `sudo dnf remove loomtty`.
+
+### macOS
+
+- `.dmg`: drag **loomtty** from Applications to the Trash; `rm` any CLI symlinks
+  you created in `/usr/local/bin`.
+- Homebrew: `brew uninstall --cask loomtty` (add `--zap` to also remove config).
+- Leftover data: `rm -rf ~/.config/loom ~/Library/Application\ Support/loom`.
 
 ### Unix (manual install)
 

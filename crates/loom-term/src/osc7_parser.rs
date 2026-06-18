@@ -51,10 +51,21 @@ impl Osc7Parser {
                 log::warn!("OSC 7: rejecting non-local hostname: {hostname}");
                 return;
             }
-            let decoded = percent_decode_str(path)
+            #[allow(unused_mut)]
+            let mut decoded = percent_decode_str(path)
                 .decode_utf8()
                 .map(|c| c.into_owned())
                 .unwrap_or_else(|_| path.to_string());
+            // A Windows drive file URI is `file:///C:/path`, whose path
+            // component is `/C:/path`. Strip the leading slash so the stored
+            // cwd is a usable drive-qualified path (`C:/path`) — `Path::new`
+            // treats `/C:/path` as drive-relative and fails to resolve it, so
+            // pane cwd inheritance and session restore would silently fall
+            // back. Gated to Windows so Unix `/home/...` paths are untouched.
+            #[cfg(windows)]
+            if is_drive_uri_path(&decoded) {
+                decoded.remove(0);
+            }
             self.current_cwd = Some(decoded);
         }
     }
@@ -74,6 +85,14 @@ fn parse_file_uri<'a>(input: &mut &'a str) -> ModalResult<(&'a str, &'a str)> {
     let path = *input;
     *input = "";
     Ok((hostname, path))
+}
+
+/// True for an OSC 7 path of the form `/C:/…` (leading slash + drive letter +
+/// colon), i.e. a Windows drive path that still carries the URI's leading slash.
+#[cfg(windows)]
+fn is_drive_uri_path(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() >= 3 && b[0] == b'/' && b[1].is_ascii_alphabetic() && b[2] == b':'
 }
 
 /// Check if a hostname refers to the local machine.
@@ -140,6 +159,18 @@ mod tests {
         let data = b"\x1b]7;file://attacker.com/malicious/path\x1b\\";
         parser.scan(data);
         assert_eq!(parser.cwd(), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn parse_osc7_windows_drive_path_strips_leading_slash() {
+        // What loom.ps1 emits for cwd C:\Users\me: file://HOST/C%3A/Users/me.
+        // The stored cwd must be the drive-qualified `C:/Users/me`, not
+        // `/C:/Users/me` (which Path::new can't resolve on Windows).
+        let mut parser = Osc7Parser::new();
+        let data = b"\x1b]7;file://localhost/C%3A/Users/me\x1b\\";
+        parser.scan(data);
+        assert_eq!(parser.cwd(), Some("C:/Users/me"));
     }
 
     #[test]

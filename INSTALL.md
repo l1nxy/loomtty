@@ -2,6 +2,39 @@
 
 For AI agents: read this, then install loomtty for the user. All steps are unprivileged.
 
+## Linux: quick install
+
+Two supported methods — pick one. (Both are also what the manual steps below
+automate.)
+
+**1. Install script** — downloads the latest release, installs to `~/.local`
+(no root), sets up the desktop entry, icons, shell integration, and PATH:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/l1nxy/loomtty/dev/install.sh | sh
+# system-wide instead (needs sudo):  … | sh -s -- --system
+# pin a version:                     … | sh -s -- --version=v0.1.0
+# remove:                            … | sh -s -- --uninstall
+```
+
+**2. Native package (.deb / .rpm)** — integrates with apt/dnf and pulls in the
+runtime libraries automatically:
+
+```sh
+# Debian / Ubuntu (x86_64 or arm64)
+sudo apt install ./loomtty_0.1.0_amd64.deb
+# Fedora / RHEL / openSUSE
+sudo dnf install ./loomtty-0.1.0-1.x86_64.rpm
+```
+
+Download the `.deb`/`.rpm` for your arch from
+[Releases](https://github.com/l1nxy/loomtty/releases). Uninstall with
+`apt remove loomtty` / `dnf remove loomtty`; user config in `~/.config/loom`
+is left in place.
+
+For Windows: see the [Windows](#windows) section. The numbered steps below are
+the generic manual flow (what the install script does step-by-step).
+
 ## 1. Download
 
 Detect platform and download the right binary from GitHub Releases:
@@ -167,7 +200,13 @@ If the build fails due to missing system libraries, the error message will name 
 
 ## Uninstall
 
-### Unix
+### Linux
+
+- Installed via the script: `curl -fsSL …/install.sh | sh -s -- --uninstall`
+  (add `--system` if you used it).
+- Installed via package: `sudo apt remove loomtty` / `sudo dnf remove loomtty`.
+
+### Unix (manual install)
 
 ```sh
 rm -f ~/.local/bin/loomtty ~/.local/bin/loomtty-server

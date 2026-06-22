@@ -49,10 +49,10 @@ impl PredictionEngine {
         // The floor is only authoritative while the shell stays put; once
         // it moves, subsequent Backspaces become legitimately predictable
         // again.
-        if let Some(floor) = overlay.cap_floor {
-            if (grid.cursor_line, grid.cursor_col) != floor {
-                overlay.cap_floor = None;
-            }
+        if let Some(floor) = overlay.cap_floor
+            && (grid.cursor_line, grid.cursor_col) != floor
+        {
+            overlay.cap_floor = None;
         }
         if overlay.is_empty() && overlay.cap_floor.is_none() {
             return;
@@ -126,7 +126,7 @@ impl PredictionEngine {
                     // Glitch repair: quick confirmation reduces trigger.
                     let pred_ms = now.duration_since(row.cells[col].created_at).as_millis() as u64;
                     if pred_ms < GLITCH_THRESHOLD_MS && self.glitch_trigger > 0 {
-                        let can_repair = self.last_quick_confirm.map_or(true, |t| {
+                        let can_repair = self.last_quick_confirm.is_none_or(|t| {
                             now.duration_since(t).as_millis() as u64
                                 >= GLITCH_REPAIR_MIN_INTERVAL_MS
                         });

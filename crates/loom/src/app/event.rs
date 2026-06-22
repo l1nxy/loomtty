@@ -230,11 +230,11 @@ impl ApplicationHandler for App {
             // Proactive leader timeout (tmux-style): clear expired leader
             // state so the UI updates without waiting for the next key event.
             let mut leader_expired = false;
-            if let Some(ld) = self.core.input.leader_deadline() {
-                if ld <= Instant::now() {
-                    self.core.input.poll_timeout();
-                    leader_expired = !self.core.input.is_awaiting_action();
-                }
+            if let Some(ld) = self.core.input.leader_deadline()
+                && ld <= Instant::now()
+            {
+                self.core.input.poll_timeout();
+                leader_expired = !self.core.input.is_awaiting_action();
             }
 
             let mut needs_redraw = is_animating || is_resizing || leader_expired;
@@ -580,10 +580,7 @@ impl ApplicationHandler for App {
                 // any save would otherwise fail the watch attempt.
                 let _ = std::fs::create_dir_all(&watch_target);
                 if let Err(e) = w.watch(&watch_target, notify::RecursiveMode::NonRecursive) {
-                    log::warn!(
-                        "failed to watch config dir {}: {e}",
-                        watch_target.display()
-                    );
+                    log::warn!("failed to watch config dir {}: {e}", watch_target.display());
                 } else {
                     self.config_watcher = Some(w);
                     self.config_change_rx = Some(crx);

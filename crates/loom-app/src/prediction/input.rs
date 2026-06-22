@@ -331,9 +331,7 @@ impl PredictionEngine {
             return;
         }
         if data == b"\x1B[D" || data == b"\x1BOD" {
-            if ccol > 0 {
-                ccol -= 1;
-            }
+            ccol = ccol.saturating_sub(1);
             overlay.set_or_push_cursor(crow, ccol, min_ack, Instant::now());
             return;
         }
@@ -380,30 +378,17 @@ impl PredictionEngine {
                         // buffer's seq, wiping hidden-edit state with it.
                         overlay.increment_epoch();
                         if byte_idx == last_byte_idx {
-                            overlay.set_or_push_cursor(
-                                crow,
-                                cols - 1,
-                                min_ack,
-                                Instant::now(),
-                            );
+                            overlay.set_or_push_cursor(crow, cols - 1, min_ack, Instant::now());
                         }
                         return;
                     }
                 }
-                0xC2..=0xDF | 0xE0..=0xEF | 0xF0..=0xF4 => {
+                0xC2..=0xF4 => {
                     overlay.utf8.start(byte);
                 }
                 0x80..=0xBF => {
                     if let Some(ch) = overlay.utf8.push_cont(byte) {
-                        let w = Self::predict_char(
-                            overlay,
-                            grid,
-                            ch,
-                            crow,
-                            ccol,
-                            min_ack,
-                            show_ul,
-                        );
+                        let w = Self::predict_char(overlay, grid, ch, crow, ccol, min_ack, show_ul);
                         if w == 0 {
                             return;
                         }
@@ -412,12 +397,7 @@ impl PredictionEngine {
                         if ccol >= cols {
                             overlay.increment_epoch();
                             if byte_idx == last_byte_idx {
-                                overlay.set_or_push_cursor(
-                                    crow,
-                                    cols - 1,
-                                    min_ack,
-                                    Instant::now(),
-                                );
+                                overlay.set_or_push_cursor(crow, cols - 1, min_ack, Instant::now());
                             }
                             return;
                         }

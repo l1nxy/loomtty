@@ -63,28 +63,25 @@ fn emit_text_via_shaper(
         // for Braille, symbols, etc. that the UI font lacks).
         if g.glyph_id == 0 {
             let byte = g.cluster as usize;
-            if byte < text.len() {
-                if let Some(ch) = text[byte..].chars().next() {
-                    if let Some(entry) = atlas.ensure_char(ch) {
-                        if entry.width > 0 && entry.height > 0 {
-                            let cw = UnicodeWidthChar::width(ch).unwrap_or(1).max(1);
-                            let inst =
-                                make_text_glyph_instance(&entry, params, 0, atlas.cell_height, cw);
-                            // Reposition to pen_x instead of col-based x, applying
-                            // `scale` consistently with the scaled `inst.size` that
-                            // `make_text_glyph_instance` already produced.
-                            let mut inst = inst;
-                            let sx = (pen_x + entry.bearing_x * scale).round();
-                            let sy = (params.y + params.baseline * scale - entry.bearing_y * scale)
-                                .round();
-                            inst.pos = [sx, sy];
-                            if entry.is_color {
-                                color_glyphs.push(inst);
-                            } else {
-                                glyphs.push(inst);
-                            }
-                        }
-                    }
+            if byte < text.len()
+                && let Some(ch) = text[byte..].chars().next()
+                && let Some(entry) = atlas.ensure_char(ch)
+                && entry.width > 0
+                && entry.height > 0
+            {
+                let cw = UnicodeWidthChar::width(ch).unwrap_or(1).max(1);
+                let inst = make_text_glyph_instance(&entry, params, 0, atlas.cell_height, cw);
+                // Reposition to pen_x instead of col-based x, applying
+                // `scale` consistently with the scaled `inst.size` that
+                // `make_text_glyph_instance` already produced.
+                let mut inst = inst;
+                let sx = (pen_x + entry.bearing_x * scale).round();
+                let sy = (params.y + params.baseline * scale - entry.bearing_y * scale).round();
+                inst.pos = [sx, sy];
+                if entry.is_color {
+                    color_glyphs.push(inst);
+                } else {
+                    glyphs.push(inst);
                 }
             }
             pen_x += g.x_advance * scale;

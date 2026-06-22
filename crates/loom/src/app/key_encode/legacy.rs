@@ -17,10 +17,13 @@ pub(crate) fn key_event_to_pty_bytes(
     // fall through to the regular Enter → CR path.
     // Only bare keys use SS3; Ctrl/Shift modifiers fall through to the normal
     // encoding path so the modifier semantics are preserved.
-    if app_keypad && !ctrl && !shift && event.location == KeyLocation::Numpad {
-        if let Some(ss3) = numpad_app_keypad_byte(event) {
-            return super::with_meta_prefix(format!("\x1bO{}", ss3 as char).into_bytes(), alt);
-        }
+    if app_keypad
+        && !ctrl
+        && !shift
+        && event.location == KeyLocation::Numpad
+        && let Some(ss3) = numpad_app_keypad_byte(event)
+    {
+        return super::with_meta_prefix(format!("\x1bO{}", ss3 as char).into_bytes(), alt);
     }
 
     if let Key::Named(key) = &event.logical_key {

@@ -8,6 +8,23 @@ fn shell_path() -> &'static str {
     if std::path::Path::new("/bin/sh").exists() {
         "/bin/sh"
     } else {
+        #[cfg(windows)]
+        {
+            static SHELL_PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+            return SHELL_PATH
+                .get_or_init(|| {
+                    std::env::var_os("PATH")
+                        .and_then(|paths| {
+                            std::env::split_paths(&paths)
+                                .map(|dir| dir.join("sh.exe"))
+                                .find(|path| path.is_file())
+                                .map(|path| path.to_string_lossy().into_owned())
+                        })
+                        .unwrap_or_else(|| "sh".to_string())
+                })
+                .as_str();
+        }
+        #[cfg(not(windows))]
         "sh"
     }
 }
@@ -629,17 +646,19 @@ fn capture_text_preserve_trailing_spaces_does_not_trim_row_tail() {
     let mut pane = Pane::new_with_opts(92, 16, 4, shell_path(), None, None).expect("create pane");
     pane.write_to_pty(b"printf 'TRAIL\\n'\n");
 
+    let preserve_opts = CapturePaneOpts {
+        preserve_trailing_spaces: true,
+        ..Default::default()
+    };
     let saw = wait_until(&mut pane, Duration::from_secs(3), |p| {
-        p.capture_text(&CapturePaneOpts::default())
+        p.capture_text(&preserve_opts)
             .text
-            .contains("TRAIL")
+            .lines()
+            .any(|l| l.trim_end_matches(' ') == "TRAIL")
     });
     assert!(saw, "marker should appear");
 
-    let preserved = pane.capture_text(&CapturePaneOpts {
-        preserve_trailing_spaces: true,
-        ..Default::default()
-    });
+    let preserved = pane.capture_text(&preserve_opts);
     let trimmed = pane.capture_text(&CapturePaneOpts::default());
 
     // Concrete check: the TRAIL row has trailing spaces in `preserved`
@@ -649,12 +668,12 @@ fn capture_text_preserve_trailing_spaces_does_not_trim_row_tail() {
     let preserved_trail = preserved
         .text
         .lines()
-        .find(|l| l.contains("TRAIL"))
+        .find(|l| l.trim_end_matches(' ') == "TRAIL")
         .expect("preserve: TRAIL row present");
     let trimmed_trail = trimmed
         .text
         .lines()
-        .find(|l| l.contains("TRAIL"))
+        .find(|l| l.trim_end_matches(' ') == "TRAIL")
         .expect("trim: TRAIL row present");
     assert!(
         preserved_trail.ends_with(' '),
@@ -776,8 +795,7 @@ fn osc133_full_cycle_records_a_completed_prompt_mark() {
     // echoes the literal command line first, then the printf writes the
     // real escape bytes to the PTY output stream where our parser sees
     // them).
-    let mut pane =
-        Pane::new_with_opts(81, 80, 8, shell_path(), None, None).expect("create pane");
+    let mut pane = Pane::new_with_opts(81, 80, 8, shell_path(), None, None).expect("create pane");
     // Let the shell settle so any initial PROMPT_COMMAND noise lands
     // before we run the test command.
     std::thread::sleep(Duration::from_millis(150));
@@ -821,27 +839,21 @@ fn osc133_full_cycle_records_a_completed_prompt_mark() {
 
 #[test]
 fn osc133_exit_code_nonzero_propagates_to_prompt_mark() {
-    let mut pane =
-        Pane::new_with_opts(82, 80, 8, shell_path(), None, None).expect("create pane");
+    let mut pane = Pane::new_with_opts(82, 80, 8, shell_path(), None, None).expect("create pane");
     std::thread::sleep(Duration::from_millis(150));
     pane.process_pty_output();
 
-    pane.write_to_pty(
-        b"printf '\\033]133;A\\007\\033]133;C\\007\\033]133;D;42\\007'\n",
-    );
+    pane.write_to_pty(b"printf '\\033]133;A\\007\\033]133;C\\007\\033]133;D;42\\007'\n");
 
     let saw = wait_until(&mut pane, Duration::from_secs(3), |p| {
-        p.prompt_marks
-            .iter()
-            .any(|m| m.exit_code == Some(42))
+        p.prompt_marks.iter().any(|m| m.exit_code == Some(42))
     });
     assert!(saw, "expected exit_code=42 in some prompt mark");
 }
 
 #[test]
 fn osc133_two_cycles_record_two_marks_with_monotonic_lines() {
-    let mut pane =
-        Pane::new_with_opts(83, 80, 10, shell_path(), None, None).expect("create pane");
+    let mut pane = Pane::new_with_opts(83, 80, 10, shell_path(), None, None).expect("create pane");
     std::thread::sleep(Duration::from_millis(150));
     pane.process_pty_output();
     let marks_before = pane.prompt_marks.len();
@@ -850,9 +862,7 @@ fn osc133_two_cycles_record_two_marks_with_monotonic_lines() {
     // command's prompt_line must be strictly greater than the first's
     // — abs_line is `scrollback_total + cursor.line`, which only goes
     // up as new output is appended.
-    pane.write_to_pty(
-        b"printf '\\033]133;A\\007\\033]133;C\\007ONE\\n\\033]133;D;0\\007'\n",
-    );
+    pane.write_to_pty(b"printf '\\033]133;A\\007\\033]133;C\\007ONE\\n\\033]133;D;0\\007'\n");
     let saw_first = wait_until(&mut pane, Duration::from_secs(3), |p| {
         p.prompt_marks.len() >= marks_before + 1
             && p.prompt_marks
@@ -862,9 +872,7 @@ fn osc133_two_cycles_record_two_marks_with_monotonic_lines() {
     });
     assert!(saw_first, "first cycle should record a completed mark");
 
-    pane.write_to_pty(
-        b"printf '\\033]133;A\\007\\033]133;C\\007TWO\\n\\033]133;D;0\\007'\n",
-    );
+    pane.write_to_pty(b"printf '\\033]133;A\\007\\033]133;C\\007TWO\\n\\033]133;D;0\\007'\n");
     let saw_second = wait_until(&mut pane, Duration::from_secs(3), |p| {
         p.prompt_marks
             .iter()
@@ -873,7 +881,10 @@ fn osc133_two_cycles_record_two_marks_with_monotonic_lines() {
             .count()
             >= 2
     });
-    assert!(saw_second, "second cycle should also record a completed mark");
+    assert!(
+        saw_second,
+        "second cycle should also record a completed mark"
+    );
 
     let new_done: Vec<PromptMark> = pane
         .prompt_marks
@@ -902,8 +913,7 @@ fn osc133_two_cycles_record_two_marks_with_monotonic_lines() {
 /// `output_line` / `done_line` despite intervening output.
 #[test]
 fn multi_chunk_drain_stamps_marks_after_intervening_output() {
-    let mut pane =
-        Pane::new_with_opts(84, 80, 8, shell_path(), None, None).expect("create pane");
+    let mut pane = Pane::new_with_opts(84, 80, 8, shell_path(), None, None).expect("create pane");
     // Let the shell settle so any initial PROMPT_COMMAND noise lands first.
     std::thread::sleep(Duration::from_millis(150));
     pane.process_pty_output();

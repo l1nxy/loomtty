@@ -730,6 +730,7 @@ impl AtlasLayer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // Clippy 1.94: GPU uniform upload keeps packed fields explicit.
     fn write_uniform(
         &self,
         slot: usize,
@@ -762,6 +763,7 @@ impl AtlasLayer {
 
     /// Draw scissored glyph batches.
     /// Can be called multiple times after a single `upload_instances`.
+    #[allow(clippy::too_many_arguments)] // Clippy 1.94: draw call mirrors backend state and viewport inputs.
     fn draw_batches(
         &self,
         pass: &mut gpu::RenderCommandEncoder,

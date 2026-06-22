@@ -30,6 +30,7 @@ pub(crate) async fn run_tick_loop(
     let mut frame_pool: Vec<Vec<u8>> = Vec::with_capacity(FRAME_POOL_CAP);
 
     /// Raw snapshot data extracted under the lock for deferred encoding.
+    #[allow(clippy::large_enum_variant)] // Clippy 1.94: snapshot enum avoids boxing in hot tick/send path.
     enum Snapshot {
         FullSync {
             sync: FullPaneSync,
@@ -273,18 +274,17 @@ pub(crate) async fn run_tick_loop(
                                 };
                                 sync.meta.received_ack = client_received_ack;
                                 sync.meta.echo_ack = client_echo_ack;
-                                let ((cline, ccol, cshape), cursor_held) =
-                                    Server::throttle_cursor(
-                                        &mut s.clients,
-                                        cid,
-                                        pane_id,
-                                        (
-                                            sync.meta.cursor_line,
-                                            sync.meta.cursor_col,
-                                            sync.meta.cursor_shape,
-                                        ),
-                                        sync.meta.mode_flags & MODE_ALT_SCREEN != 0,
-                                    );
+                                let ((cline, ccol, cshape), cursor_held) = Server::throttle_cursor(
+                                    &mut s.clients,
+                                    cid,
+                                    pane_id,
+                                    (
+                                        sync.meta.cursor_line,
+                                        sync.meta.cursor_col,
+                                        sync.meta.cursor_shape,
+                                    ),
+                                    sync.meta.mode_flags & MODE_ALT_SCREEN != 0,
+                                );
                                 sync.meta.cursor_line = cline;
                                 sync.meta.cursor_col = ccol;
                                 sync.meta.cursor_shape = cshape;
@@ -298,14 +298,8 @@ pub(crate) async fn run_tick_loop(
                                         force_scrollback_replace,
                                     },
                                 });
-                                if cursor_held
-                                    && let Some(client) = s.clients.get_mut(&cid)
-                                {
-                                    client
-                                        .damage
-                                        .entry(pane_id)
-                                        .or_default()
-                                        .cursor_dirty = true;
+                                if cursor_held && let Some(client) = s.clients.get_mut(&cid) {
+                                    client.damage.entry(pane_id).or_default().cursor_dirty = true;
                                     cursor_held_pending = true;
                                 }
                             }
@@ -332,18 +326,17 @@ pub(crate) async fn run_tick_loop(
                                 );
                                 sync.meta.received_ack = client_received_ack;
                                 sync.meta.echo_ack = client_echo_ack;
-                                let ((cline, ccol, cshape), cursor_held) =
-                                    Server::throttle_cursor(
-                                        &mut s.clients,
-                                        cid,
-                                        pane_id,
-                                        (
-                                            sync.meta.cursor_line,
-                                            sync.meta.cursor_col,
-                                            sync.meta.cursor_shape,
-                                        ),
-                                        sync.meta.mode_flags & MODE_ALT_SCREEN != 0,
-                                    );
+                                let ((cline, ccol, cshape), cursor_held) = Server::throttle_cursor(
+                                    &mut s.clients,
+                                    cid,
+                                    pane_id,
+                                    (
+                                        sync.meta.cursor_line,
+                                        sync.meta.cursor_col,
+                                        sync.meta.cursor_shape,
+                                    ),
+                                    sync.meta.mode_flags & MODE_ALT_SCREEN != 0,
+                                );
                                 sync.meta.cursor_line = cline;
                                 sync.meta.cursor_col = ccol;
                                 sync.meta.cursor_shape = cshape;
@@ -357,14 +350,8 @@ pub(crate) async fn run_tick_loop(
                                         force_scrollback_replace: false,
                                     },
                                 });
-                                if cursor_held
-                                    && let Some(client) = s.clients.get_mut(&cid)
-                                {
-                                    client
-                                        .damage
-                                        .entry(pane_id)
-                                        .or_default()
-                                        .cursor_dirty = true;
+                                if cursor_held && let Some(client) = s.clients.get_mut(&cid) {
+                                    client.damage.entry(pane_id).or_default().cursor_dirty = true;
                                     cursor_held_pending = true;
                                 }
                                 // Also send CellDelta for any viewport damage.
@@ -467,14 +454,8 @@ pub(crate) async fn run_tick_loop(
                                 } else if frame_pool.len() < FRAME_POOL_CAP {
                                     frame_pool.push(buf);
                                 }
-                                if cursor_held
-                                    && let Some(client) = s.clients.get_mut(&cid)
-                                {
-                                    client
-                                        .damage
-                                        .entry(pane_id)
-                                        .or_default()
-                                        .cursor_dirty = true;
+                                if cursor_held && let Some(client) = s.clients.get_mut(&cid) {
+                                    client.damage.entry(pane_id).or_default().cursor_dirty = true;
                                     cursor_held_pending = true;
                                 }
                             }

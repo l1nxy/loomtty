@@ -1345,10 +1345,7 @@ mod web_config_tests {
         let err = cfg
             .validate()
             .expect_err("non-loopback bind + empty origins must fail");
-        assert!(
-            err.to_string().contains("allowed_origins"),
-            "got: {err}"
-        );
+        assert!(err.to_string().contains("allowed_origins"), "got: {err}");
     }
 
     #[test]

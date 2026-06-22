@@ -1,6 +1,5 @@
 pub(crate) mod action;
 pub(crate) mod background_image;
-pub(crate) mod loom_ui_adapter;
 pub(crate) mod clipboard_image;
 pub(crate) mod context_menu;
 pub(crate) mod debug_metrics;
@@ -8,6 +7,7 @@ pub(crate) mod event;
 pub(crate) mod ime;
 pub(crate) mod key_encode;
 pub(crate) mod keyboard;
+pub(crate) mod loom_ui_adapter;
 pub(crate) mod modal_state;
 pub(crate) mod mouse;
 pub(crate) mod notification;
@@ -23,6 +23,7 @@ pub(crate) mod sync;
 pub(crate) mod top_bar;
 pub(crate) mod ui;
 
+use crossbeam_channel::{Receiver, Sender};
 use loom_anim::manager::{AnimConfig, AnimationManager};
 use loom_config::config::{LoomConfig, StatusBarPosition};
 use loom_gpu::{GlyphAtlasGpu, Renderer};
@@ -33,7 +34,6 @@ use loom_render::glyph_cache::{GlyphCache, GlyphEntry, GlyphInstance, PaneGlyphR
 use loom_render::rect::{PaneRectRange, Rect};
 use loom_render::shaper::TextShaper;
 use loom_render::terminal::{ColorTable, TerminalView};
-use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -1377,9 +1377,7 @@ impl App {
     /// hover changes invalidate the cache; display reads hover via the
     /// declarative `.hover()` style on each button.
     pub(crate) fn current_paste_dialog_hover(&self) -> Option<loom_app::app::PasteButton> {
-        if self.core.pending_paste.is_none() {
-            return None;
-        }
+        self.core.pending_paste.as_ref()?;
         let (mx, my) = self.last_mouse_pos?;
         let (vw, vh) = self.command_palette_viewport_size();
         let (_, ch) = self.cell_dimensions();

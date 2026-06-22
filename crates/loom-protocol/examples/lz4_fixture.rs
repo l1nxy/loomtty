@@ -16,7 +16,10 @@ fn main() {
             "compressible_text",
             b"the quick brown fox jumps over the lazy dog ".repeat(20),
         ),
-        ("ascii_alphabet", b"abcdefghijklmnopqrstuvwxyz".repeat(40).to_vec()),
+        (
+            "ascii_alphabet",
+            b"abcdefghijklmnopqrstuvwxyz".repeat(40).to_vec(),
+        ),
         ("medium_pattern", {
             let mut v = Vec::with_capacity(1024);
             for i in 0..1024u32 {

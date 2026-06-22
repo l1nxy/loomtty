@@ -60,16 +60,16 @@ impl FontResolver for CmapResolver {
         // Many text fonts have cmap entries for emoji codepoints that map
         // to text-style placeholders (wrong glyphs). The only reliable
         // way to get correct emoji is to use the dedicated emoji font.
-        if is_default_emoji_presentation(ch) {
-            if self.emoji_cmap.as_ref().is_some_and(|c| c.contains(&cp)) {
-                log::debug!(
-                    "font resolver: U+{cp:04X} '{}' -> Emoji (emoji_presentation)",
-                    ch.escape_unicode()
-                );
-                return ResolvedFont::Emoji;
-            }
-            // Emoji font doesn't have it — fall through to primary/CJK.
+        if is_default_emoji_presentation(ch)
+            && self.emoji_cmap.as_ref().is_some_and(|c| c.contains(&cp))
+        {
+            log::debug!(
+                "font resolver: U+{cp:04X} '{}' -> Emoji (emoji_presentation)",
+                ch.escape_unicode()
+            );
+            return ResolvedFont::Emoji;
         }
+        // Emoji font doesn't have it — fall through to primary/CJK.
 
         // Primary font has it and it's not an emoji → use primary.
         if !is_default_emoji_presentation(ch) && self.primary_cmap.contains(&cp) {

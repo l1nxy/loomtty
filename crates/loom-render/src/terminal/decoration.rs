@@ -102,6 +102,7 @@ pub(super) fn render_cell(
 
 /// Emit underline decoration rects into `bg_rects`. `thickness` is the
 /// resolved underline pixel height (≥ 1).
+#[allow(clippy::too_many_arguments)] // Clippy 1.94: decoration emission keeps geometry/color scalars explicit.
 pub(super) fn emit_underline_rects(
     rects: &mut Vec<Rect>,
     style: UnderlineStyle,
@@ -172,6 +173,7 @@ pub(super) fn emit_underline_rects(
 }
 
 /// Emit a dashed/dotted horizontal line as a series of small rects.
+#[allow(clippy::too_many_arguments)] // Clippy 1.94: small geometry helper mirrors underline parameters directly.
 fn emit_dashed_line(
     rects: &mut Vec<Rect>,
     px: f32,

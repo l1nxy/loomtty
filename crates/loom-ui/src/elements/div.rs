@@ -507,7 +507,7 @@ impl Div {
 /// they aren't part of this check (a bare `div().rounded_md()` with no fill
 /// would otherwise upload a no-op transparent SdfRect every frame).
 fn has_visual(s: &Style) -> bool {
-    s.background.is_some() || s.border_width.map_or(false, |w| w > 0.0) || s.shadow.is_some()
+    s.background.is_some() || s.border_width.is_some_and(|w| w > 0.0) || s.shadow.is_some()
 }
 
 /// Map the semantic `Shadow` enum to concrete (blur, color, offset).

@@ -133,12 +133,7 @@ mod tests {
         assert_eq!(events, vec![Osc133Event::CommandOutput]);
 
         let events = parser.scan(b"\x1b]133;D;7\x07");
-        assert_eq!(
-            events,
-            vec![Osc133Event::Done {
-                exit_code: Some(7)
-            }]
-        );
+        assert_eq!(events, vec![Osc133Event::Done { exit_code: Some(7) }]);
     }
 
     #[test]
@@ -153,9 +148,7 @@ mod tests {
                 Osc133Event::PromptStart,
                 Osc133Event::CommandInput,
                 Osc133Event::CommandOutput,
-                Osc133Event::Done {
-                    exit_code: Some(0)
-                },
+                Osc133Event::Done { exit_code: Some(0) },
             ]
         );
     }

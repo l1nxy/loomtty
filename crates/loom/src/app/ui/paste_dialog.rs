@@ -177,13 +177,12 @@ impl PasteDialogComponent {
         // Backdrop dim catches outside-clicks; the panel is drained via
         // `deferred()` so it sits z-on-top of the backdrop without
         // needing `Layer::Modal`.
-        let root = div()
+
+        div()
             .w(cx.viewport_w)
             .h(cx.viewport_h)
             .bg([0.0, 0.0, 0.0, tokens::ALPHA_BACKDROP])
-            .child(deferred(panel));
-
-        root
+            .child(deferred(panel))
     }
 
     pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {

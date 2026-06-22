@@ -69,17 +69,12 @@ pub enum CursorStyle {
 }
 
 /// Length unit. `Px` = logical pixels, `Percent` = `[0.0, 1.0]` of parent.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum Length {
     Px(f32),
     Percent(f32),
+    #[default]
     Auto,
-}
-
-impl Default for Length {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 /// Preset shadow intensities — resolved to concrete blur/offset/color at paint.

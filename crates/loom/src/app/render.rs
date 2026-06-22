@@ -158,6 +158,7 @@ impl App {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // Clippy 1.94: render helper threads explicit geometry/cache outputs.
     fn emit_tile_background_rows(
         view: &terminal::TerminalView,
         inner_x: f32,
@@ -765,6 +766,7 @@ impl App {
     ///      so settle / wake are balanced on the shared counter.
     ///   2. Call `prop.advance(dt)` once per frame from its own capture
     ///      or paint path with the same `dt` this function receives.
+    ///
     /// Without (2) the ticker stays awake forever once any animation
     /// starts and `motion_ticker.is_animating()` wedges at `true`,
     /// pegging the event loop at frame rate indefinitely. Without (1)
@@ -963,9 +965,9 @@ impl App {
         bg_rects: &mut Vec<Rect>,
     ) {
         if !self.core.overview.active
-            || !self
+            || self
                 .overview_hovered_pane
-                .is_some_and(|(_, hovered_pane_id)| hovered_pane_id == pane_id)
+                .is_none_or(|(_, hovered_pane_id)| hovered_pane_id != pane_id)
         {
             return;
         }
@@ -1073,6 +1075,7 @@ impl App {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // Clippy 1.94: underline emission mirrors pane geometry and paint state.
     fn emit_link_underline(
         &self,
         pane_id: u64,
@@ -1377,19 +1380,17 @@ impl App {
         self.build_pane_images(pane_id, inner_x, inner_y, zoom, visual.dim, color_glyphs);
 
         // Scissor batches
-        if glyph_start < glyphs.len() {
-            if let Some(range) =
+        if glyph_start < glyphs.len()
+            && let Some(range) =
                 self.pane_glyph_range(glyph_start, glyphs.len(), visual.scissor, &tr)
-            {
-                glyph_batches.push(range);
-            }
+        {
+            glyph_batches.push(range);
         }
-        if color_start < color_glyphs.len() {
-            if let Some(range) =
+        if color_start < color_glyphs.len()
+            && let Some(range) =
                 self.pane_glyph_range(color_start, color_glyphs.len(), visual.scissor, &tr)
-            {
-                color_glyph_batches.push(range);
-            }
+        {
+            color_glyph_batches.push(range);
         }
 
         // Open animation overlay
@@ -1727,13 +1728,13 @@ impl App {
                 // Apply prediction overlay
                 let visible_cow = if self.core.prediction.has_overlay(*pane_id) {
                     let mut cells = visible.into_owned();
-                    for i in 0..cells.len() {
+                    for (i, cell) in cells.iter_mut().enumerate() {
                         let row = (i / grid.cols as usize) as u16;
                         let col = (i % grid.cols as usize) as u16;
                         if let Some(replacement) =
                             self.core.prediction.get_overlay_cell(*pane_id, row, col)
                         {
-                            cells[i] = replacement;
+                            *cell = replacement;
                         }
                     }
                     std::borrow::Cow::Owned(cells)
@@ -1793,13 +1794,13 @@ impl App {
                     // Apply prediction overlay
                     let visible_final = if self.core.prediction.has_overlay(*pane_id) {
                         let mut cells = visible.into_owned();
-                        for i in 0..cells.len() {
+                        for (i, cell) in cells.iter_mut().enumerate() {
                             let row = (i / grid.cols as usize) as u16;
                             let col = (i % grid.cols as usize) as u16;
                             if let Some(replacement) =
                                 self.core.prediction.get_overlay_cell(*pane_id, row, col)
                             {
-                                cells[i] = replacement;
+                                *cell = replacement;
                             }
                         }
                         std::borrow::Cow::Owned(cells)

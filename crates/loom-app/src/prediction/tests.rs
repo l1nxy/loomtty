@@ -1060,7 +1060,7 @@ fn predictions_isolated_between_panes() {
     // Pane 1 at col 5: insert-shift created an active cell (shifted from col 0).
     // But pane 2 should not have pane 1's predictions.
     assert_eq!(engine.get_overlay_cell(2, 0, 0), None); // pane 2 col 0 is inactive
-                                                        // Clear pane 1, pane 2 should be unaffected.
+    // Clear pane 1, pane 2 should be unaffected.
     engine.clear_pane(1);
     assert!(!engine.has_overlay(1));
     assert!(engine.has_overlay(2));
@@ -1312,7 +1312,7 @@ fn flagging_hysteresis_srtt_thresholds() {
 fn flagging_forced_by_major_glitch() {
     let mut engine = PredictionEngine::new(PredictionMode::Always, 0, true);
     engine.srtt_us = 0; // low SRTT, normally no flagging
-                        // Set to 15: quick confirm may decrement by 1 → 14, still > 10.
+    // Set to 15: quick confirm may decrement by 1 → 14, still > 10.
     engine.glitch_trigger = 15;
 
     let grid = make_grid_at(80, 24, 0, 0);
@@ -1377,9 +1377,9 @@ fn rendition_propagation_on_confirm() {
     let mut sg = make_grid(80, 24);
     sg.viewport[0].set_ch('A');
     sg.viewport[0].fg = PackedColor::rgb(255, 0, 0); // actual is red
-                                                     // Don't confirm cursor (leave cursor pending) by not matching position.
-                                                     // Actually, cursor is at col 2 after typing AB. Server has cursor at wrong pos
-                                                     // to keep cursor pending. But that might cause reset... Let's just match cursor.
+    // Don't confirm cursor (leave cursor pending) by not matching position.
+    // Actually, cursor is at col 2 after typing AB. Server has cursor at wrong pos
+    // to keep cursor pending. But that might cause reset... Let's just match cursor.
     sg.cursor_col = 2;
     sg.cursor_line = 0;
     // echo_ack=1 → 'A' (min_echo_ack=1) is confirmed, 'B' (min_echo_ack=12) is pending.
@@ -1561,7 +1561,11 @@ fn dual_ack_caps_backspace_walk_past_server_cursor() {
         engine.new_user_input_with_min_ack(1, &[0x7F], &grid, last_seq);
     }
     let predicted = engine.get_overlay_cursor(1);
-    assert_eq!(predicted, Some((0, 4)), "predictions walk past the prompt before sync");
+    assert_eq!(
+        predicted,
+        Some((0, 4)),
+        "predictions walk past the prompt before sync"
+    );
 
     // Server sync: received_ack advances to the latest input_seq (server
     // received all 6 Backspaces). echo_ack stays at 0 (PTY never produced
@@ -1622,7 +1626,10 @@ fn cap_floor_suppresses_rubber_banding_under_held_backspace() {
         "no new predicted cursor after cap_floor was hit"
     );
     assert!(
-        !overlay.rows.values().any(|r| r.cells.iter().any(|c| c.active)),
+        !overlay
+            .rows
+            .values()
+            .any(|r| r.cells.iter().any(|c| c.active)),
         "no cell predictions after cap_floor was hit"
     );
 }
@@ -1678,7 +1685,10 @@ fn dual_ack_preserves_legitimate_forward_predictions() {
 
     // Predicted forward cursor must survive — it's not "past" the server
     // cursor, it's ahead of it, which is the entire point of prediction.
-    assert!(engine.has_overlay(1), "forward predictions must survive received_ack");
+    assert!(
+        engine.has_overlay(1),
+        "forward predictions must survive received_ack"
+    );
 }
 
 #[test]
@@ -1713,7 +1723,10 @@ fn should_display_hysteresis_keeps_predictions_visible_during_dip() {
 
     // RTT drops into the hysteresis band (low = 30 - 10 = 20ms; 25 > 20, <= 30).
     engine.srtt_us = 25_000;
-    assert!(engine.should_display(), "should stay visible while overlay active");
+    assert!(
+        engine.should_display(),
+        "should stay visible while overlay active"
+    );
 }
 
 #[test]
@@ -1859,7 +1872,11 @@ fn line_end_wrap_abandons_rest_of_input() {
     assert_eq!(engine.get_overlay_cell(1, 0, 3).unwrap().ch(), 'A');
     assert_eq!(engine.get_overlay_cell(1, 0, 4).unwrap().ch(), 'B');
     // No prediction for 'C' on the next row.
-    assert!(engine.get_overlay_cell(1, 1, 0).is_none_or(|c| c.ch() != 'C'));
+    assert!(
+        engine
+            .get_overlay_cell(1, 1, 0)
+            .is_none_or(|c| c.ch() != 'C')
+    );
 }
 
 #[test]
@@ -1903,10 +1920,11 @@ fn older_epoch_cursor_mismatch_does_not_reset_back_cursor() {
 
     // Sentinel: the epoch-3 'X' cell exists pre-sync.
     let overlay_pre = engine.overlays.get(&1).unwrap();
-    let has_x_pre = overlay_pre
-        .rows
-        .values()
-        .any(|r| r.cells.iter().any(|c| c.active && c.replacement.ch() == 'X'));
+    let has_x_pre = overlay_pre.rows.values().any(|r| {
+        r.cells
+            .iter()
+            .any(|c| c.active && c.replacement.ch() == 'X')
+    });
     assert!(has_x_pre, "test precondition: X cell exists before sync");
 
     // Server frame: acks inputs 1 and 2 (echo_ack = 2), input 3 still pending.
@@ -1925,10 +1943,11 @@ fn older_epoch_cursor_mismatch_does_not_reset_back_cursor() {
         "older-cursor mismatch must not catastrophically reset; pending X cell should survive"
     );
     let overlay = engine.overlays.get(&1).unwrap();
-    let has_x_post = overlay
-        .rows
-        .values()
-        .any(|r| r.cells.iter().any(|c| c.active && c.replacement.ch() == 'X'));
+    let has_x_post = overlay.rows.values().any(|r| {
+        r.cells
+            .iter()
+            .any(|c| c.active && c.replacement.ch() == 'X')
+    });
     assert!(has_x_post, "still-pending X prediction must survive sync");
     // The epoch-1 cursor was pruned (mismatched, not back); the epoch-2
     // cursor (last position after typing X) is still Pending and survives.

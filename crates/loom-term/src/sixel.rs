@@ -208,7 +208,7 @@ fn sixel_band_height(sixel: u8) -> u32 {
     if sixel == 0 {
         0
     } else {
-        (u8::BITS - sixel.leading_zeros()) as u32
+        u8::BITS - sixel.leading_zeros()
     }
 }
 

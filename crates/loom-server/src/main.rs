@@ -105,9 +105,7 @@ fn main() -> Result<()> {
 /// non-loopback bind) are enforced at daemon startup, so this only
 /// surfaces flag-shape errors (e.g. a non-numeric port).
 fn parse_web_overrides(args: &[String]) -> Result<Option<loom_config::config::LoomConfig>> {
-    let has_web = args
-        .iter()
-        .any(|a| a == "--web" || a.starts_with("--web-"));
+    let has_web = args.iter().any(|a| a == "--web" || a.starts_with("--web-"));
     if !has_web {
         return Ok(None);
     }

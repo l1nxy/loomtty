@@ -16,15 +16,15 @@ impl Server {
                 data,
                 input_seq,
             } => {
-                let (pane_exists, pane_in_alt_screen) =
-                    if let Some(session) = self.sessions.get_mut(session_name)
-                        && let Some(pane) = session.panes.get_mut(&pane_id)
-                    {
-                        pane.write_to_pty(&data);
-                        (true, pane.is_alt_screen())
-                    } else {
-                        (false, false)
-                    };
+                let (pane_exists, pane_in_alt_screen) = if let Some(session) =
+                    self.sessions.get_mut(session_name)
+                    && let Some(pane) = session.panes.get_mut(&pane_id)
+                {
+                    pane.write_to_pty(&data);
+                    (true, pane.is_alt_screen())
+                } else {
+                    (false, false)
+                };
                 // Stash the seq as *received*; promotion to `max_input_seq`
                 // happens later in `process_pty_and_damage` once the PTY
                 // drain proves the framebuffer reflects the input.
@@ -41,18 +41,12 @@ impl Server {
                 // `received_ack` has no consumer, and forcing a frame per
                 // keystroke would sample alacritty mid-redraw in TUI apps
                 // that hide/show the cursor each frame, flickering it off.
-                if pane_exists {
-                    if let Some(client) = self.clients.get_mut(&_client_id) {
-                        let entry = client.received_input_seq.entry(pane_id).or_insert(0);
-                        if input_seq > *entry {
-                            *entry = input_seq;
-                            if !pane_in_alt_screen {
-                                client
-                                    .damage
-                                    .entry(pane_id)
-                                    .or_default()
-                                    .cursor_dirty = true;
-                            }
+                if pane_exists && let Some(client) = self.clients.get_mut(&_client_id) {
+                    let entry = client.received_input_seq.entry(pane_id).or_insert(0);
+                    if input_seq > *entry {
+                        *entry = input_seq;
+                        if !pane_in_alt_screen {
+                            client.damage.entry(pane_id).or_default().cursor_dirty = true;
                         }
                     }
                 }
@@ -73,12 +67,11 @@ impl Server {
                 }
             }
             ClientMessage::FocusChange { focused } => {
-                if let Some(session) = self.sessions.get_mut(session_name) {
-                    if let Some(pane_id) = session.workspaces.active().active_pane_id()
-                        && let Some(pane) = session.panes.get_mut(&pane_id)
-                    {
-                        pane.write_focus_event(focused);
-                    }
+                if let Some(session) = self.sessions.get_mut(session_name)
+                    && let Some(pane_id) = session.workspaces.active().active_pane_id()
+                    && let Some(pane) = session.panes.get_mut(&pane_id)
+                {
+                    pane.write_focus_event(focused);
                 }
             }
             _ => {}

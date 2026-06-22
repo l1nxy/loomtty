@@ -485,8 +485,9 @@ impl App {
                     Ok(img) => match super::clipboard_image::save_to_temp(&img) {
                         Ok(path) => {
                             log::info!("clipboard image saved: {}", path.display());
-                            let quoted =
-                                super::clipboard_image::quote_path_for_shell(&path.to_string_lossy());
+                            let quoted = super::clipboard_image::quote_path_for_shell(
+                                &path.to_string_lossy(),
+                            );
                             // Trailing space matches WindowEvent::DroppedFile so
                             // the user's cursor lands after the argument.
                             (format!("{quoted} "), Source::ImagePath)
@@ -497,9 +498,7 @@ impl App {
                         }
                     },
                     Err(img_err) => {
-                        log::debug!(
-                            "clipboard read failed: text={text_err}, image={img_err}"
-                        );
+                        log::debug!("clipboard read failed: text={text_err}, image={img_err}");
                         return;
                     }
                 },
@@ -542,9 +541,7 @@ impl App {
                 text.clone()
             };
             let preview = preview.replace('\n', " \\n ").replace('\r', "");
-            self.enter_modal_close_peers(ModalKind::PendingPaste(
-                PendingPasteTarget::Terminal,
-            ));
+            self.enter_modal_close_peers(ModalKind::PendingPaste(PendingPasteTarget::Terminal));
             self.core.pending_paste = Some(super::PendingPaste {
                 info,
                 preview,
@@ -743,57 +740,54 @@ impl App {
             // Skip prediction when the pane is in password input mode
             // to avoid leaking sensitive keystrokes into the prediction engine.
             let seq = self.core.prediction.next_input_seq();
-            if !password_mode {
-                if let Some(grid) = self.core.pane_grids.get(&pid) {
-                    let plain_backspace =
-                        matches!(&event.logical_key, Key::Named(NamedKey::Backspace))
-                            && !modifiers.ctrl
-                            && !modifiers.shift
-                            && !modifiers.alt
-                            && !modifiers.super_key;
-                    let plain_text_prediction =
-                        if !modifiers.ctrl && !modifiers.alt && !modifiers.super_key {
-                            key_event_text_for_input(event, modifiers.shift).and_then(|text| {
-                                let text = text.as_ref();
-                                (!text.is_empty() && text.chars().all(|ch| !ch.is_control()))
-                                    .then(|| text.as_bytes().to_vec())
-                            })
-                        } else {
-                            None
-                        };
-                    let old_cursor_row = grid.cursor_line;
-                    if plain_backspace {
-                        self.core
-                            .prediction
-                            .new_user_input_force_visible(pid, &[0x7F], grid, seq);
-                    } else if let Some(prediction_bytes) = plain_text_prediction.as_deref() {
-                        self.core.prediction.new_user_input_track_hidden(
-                            pid,
-                            prediction_bytes,
-                            grid,
-                            seq,
-                        );
+            if !password_mode && let Some(grid) = self.core.pane_grids.get(&pid) {
+                let plain_backspace = matches!(&event.logical_key, Key::Named(NamedKey::Backspace))
+                    && !modifiers.ctrl
+                    && !modifiers.shift
+                    && !modifiers.alt
+                    && !modifiers.super_key;
+                let plain_text_prediction =
+                    if !modifiers.ctrl && !modifiers.alt && !modifiers.super_key {
+                        key_event_text_for_input(event, modifiers.shift).and_then(|text| {
+                            let text = text.as_ref();
+                            (!text.is_empty() && text.chars().all(|ch| !ch.is_control()))
+                                .then(|| text.as_bytes().to_vec())
+                        })
                     } else {
-                        self.core
-                            .prediction
-                            .new_user_input_with_min_ack(pid, &bytes, grid, seq);
+                        None
+                    };
+                let old_cursor_row = grid.cursor_line;
+                if plain_backspace {
+                    self.core
+                        .prediction
+                        .new_user_input_force_visible(pid, &[0x7F], grid, seq);
+                } else if let Some(prediction_bytes) = plain_text_prediction.as_deref() {
+                    self.core.prediction.new_user_input_track_hidden(
+                        pid,
+                        prediction_bytes,
+                        grid,
+                        seq,
+                    );
+                } else {
+                    self.core
+                        .prediction
+                        .new_user_input_with_min_ack(pid, &bytes, grid, seq);
+                }
+                let dirty_rows = self.core.prediction.dirty_rows(pid);
+                let predicted_cursor = self.core.prediction.get_overlay_cursor(pid);
+                if (!dirty_rows.is_empty() || predicted_cursor.is_some())
+                    && let Some(grid) = self.core.pane_grids.get_mut(&pid)
+                {
+                    if old_cursor_row >= 0 {
+                        grid.mark_row_dirty(old_cursor_row as usize);
                     }
-                    let dirty_rows = self.core.prediction.dirty_rows(pid);
-                    let predicted_cursor = self.core.prediction.get_overlay_cursor(pid);
-                    if !dirty_rows.is_empty() || predicted_cursor.is_some() {
-                        if let Some(grid) = self.core.pane_grids.get_mut(&pid) {
-                            if old_cursor_row >= 0 {
-                                grid.mark_row_dirty(old_cursor_row as usize);
-                            }
-                            for row in dirty_rows {
-                                grid.mark_row_dirty(row as usize);
-                            }
-                            if let Some((row, _)) = predicted_cursor {
-                                if row >= 0 {
-                                    grid.mark_row_dirty(row as usize);
-                                }
-                            }
-                        }
+                    for row in dirty_rows {
+                        grid.mark_row_dirty(row as usize);
+                    }
+                    if let Some((row, _)) = predicted_cursor
+                        && row >= 0
+                    {
+                        grid.mark_row_dirty(row as usize);
                     }
                 }
             }

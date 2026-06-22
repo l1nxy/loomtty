@@ -362,8 +362,9 @@ fn run_control_command_inner(msg: ClientMessage, json: bool) -> Result<()> {
                                     Some(ms) => format!("{ms}ms"),
                                     None => "-".to_string(),
                                 };
-                                let fmt_exit =
-                                    m.exit_code.map_or_else(|| "-".to_string(), |c| c.to_string());
+                                let fmt_exit = m
+                                    .exit_code
+                                    .map_or_else(|| "-".to_string(), |c| c.to_string());
                                 println!(
                                     "{:<10} {:<10} {:<10} {:<6} {:<10}",
                                     m.prompt_line,

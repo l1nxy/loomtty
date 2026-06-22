@@ -140,6 +140,7 @@ pub(crate) struct UiContext<'a> {
     pub element_states: Option<&'a RefCell<loom_ui::ElementStates>>,
 }
 
+#[allow(clippy::too_many_arguments)] // Clippy 1.94: context adapter assembles independent UI/render metrics.
 pub(crate) fn ui_context_from_metrics<'a>(
     config: &'a loom_config::config::LoomConfig,
     theme: &'a loom_ui::ResolvedTheme,

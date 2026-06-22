@@ -425,14 +425,13 @@ impl PaletteComponent {
         // Backdrop dim catches outside-clicks (HIT_CLOSE); the panel is
         // wrapped in `deferred()` so the walker drains it after the
         // backdrop, keeping the panel z-on-top without `Layer::Modal`.
-        let root = div()
+
+        div()
             .w(cx.viewport[0])
             .h(cx.viewport[1])
             .bg([0.0, 0.0, 0.0, tokens::ALPHA_BACKDROP])
             .hit_id(HIT_CLOSE)
-            .child(deferred(panel));
-
-        root
+            .child(deferred(panel))
     }
 
     pub(crate) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {

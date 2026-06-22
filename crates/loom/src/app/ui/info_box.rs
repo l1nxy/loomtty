@@ -359,7 +359,10 @@ mod tests {
     /// it never reaches the UI as raw `snake_case`.
     #[test]
     fn unknown_action_is_humanized() {
-        assert_eq!(action_short_label("some_future_action"), "some future action");
+        assert_eq!(
+            action_short_label("some_future_action"),
+            "some future action"
+        );
         assert_eq!(action_short_label("enter_mode:my_custom"), "my custom");
         assert_eq!(action_short_label("switch_workspace_3"), "3");
     }

@@ -246,6 +246,7 @@ struct SimpleTextSource {
 }
 
 impl SimpleTextSource {
+    #[allow(clippy::new_ret_no_self)] // Clippy 1.94: COM constructor returns the DirectWrite interface wrapper.
     fn new(text: &[u16]) -> IDWriteTextAnalysisSource {
         let source = SimpleTextSource {
             text: text.to_vec(),

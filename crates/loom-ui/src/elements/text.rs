@@ -95,7 +95,7 @@ impl IntoElement for Text {
     }
 }
 
-impl<'a> IntoElement for &'a str {
+impl IntoElement for &str {
     type Element = Text;
     fn into_element(self) -> Text {
         Text::new(self)

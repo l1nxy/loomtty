@@ -1,7 +1,7 @@
+use crossbeam_channel::{Receiver, Sender};
 use loom_anim::manager::AnimationManager;
 use loom_layout::workspace_set::WorkspaceSet;
 use loom_protocol::message::*;
-use crossbeam_channel::{Receiver, Sender};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 

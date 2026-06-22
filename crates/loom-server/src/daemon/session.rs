@@ -715,7 +715,7 @@ impl Session {
             }
             // Detect title changes (OSC 0/2 — e.g. spinner in cargo build).
             let prev_title = self.last_title.get(&pane_id);
-            if prev_title.map_or(true, |t| *t != pane.title) {
+            if prev_title.is_none_or(|t| *t != pane.title) {
                 self.last_title.insert(pane_id, pane.title.clone());
                 for client in clients.values_mut() {
                     if client.session_name == self.session_name {
@@ -732,7 +732,7 @@ impl Session {
             // Detect cursor-only changes (no cell damage but cursor moved).
             let cur_cursor = pane.cursor_info();
             let prev_cursor = self.last_cursor.get(&pane_id).copied();
-            let cursor_changed = prev_cursor.map_or(true, |prev| prev != cur_cursor);
+            let cursor_changed = prev_cursor != Some(cur_cursor);
             if cursor_changed {
                 self.last_cursor.insert(pane_id, cur_cursor);
             }

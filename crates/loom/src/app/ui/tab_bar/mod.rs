@@ -298,16 +298,15 @@ impl TabBarComponent {
             }
             TabBarPosition::Right => div().flex_row().child(sep_line).child(rows),
         };
-        let root = div().w(cx.viewport[0]).h(cx.viewport[1]).child(
+
+        div().w(cx.viewport[0]).h(cx.viewport[1]).child(
             bar.absolute()
                 .left(rect.x)
                 .top(rect.y)
                 .w(rect.w)
                 .h(rect.h)
                 .bg(bar_bg),
-        );
-
-        root
+        )
     }
 }
 

@@ -6,15 +6,15 @@
 //! configuration, prints the access URL, then runs `loomtty-server` in the
 //! foreground with the chosen web settings. The server self-hosts the SPA
 //! + the authenticated `/ws` upgrade on one port (see `loom-server`'s
-//! `daemon::web`).
+//!   `daemon::web`).
 
 use std::path::PathBuf;
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use loom_config::config::LoomConfig;
-use loom_config::{MIN_WEB_TOKEN_BYTES, web_token_is_usable};
 use loom_config::writer::EditableConfig;
+use loom_config::{MIN_WEB_TOKEN_BYTES, web_token_is_usable};
 
 /// Entry point for `CliCommand::Web`.
 pub fn run_web(
@@ -35,7 +35,10 @@ pub fn run_web(
     // process's argv), else the `LOOMTTY_WEB_TOKEN` env var (readable only
     // by the owner via /proc/<pid>/environ, unlike world-readable argv),
     // else a usable configured token, else a freshly minted one.
-    let token = if let Some(t) = token.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
+    let token = if let Some(t) = token
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+    {
         log::warn!(
             "--token stays visible to other users in process listings (ps, \
              /proc/<pid>/cmdline) for as long as `loomtty web` runs; prefer the \
@@ -206,9 +209,7 @@ pub fn run_web(
     // won't spawn anyway). A tiny TOCTOU window remains before the child's
     // real bind, but a persistently occupied port — the actual failure mode
     // — is caught here, before anything is written.
-    if !running
-        && let Err(e) = preflight_bind(&bind, port)
-    {
+    if !running && let Err(e) = preflight_bind(&bind, port) {
         bail!(
             "can't bind {bind}:{port} — {e}. Another process (or a stale loomtty) may \
              be using it; pick a free port with `loomtty web --port N`.",
@@ -244,7 +245,12 @@ pub fn run_web(
     // bind-derived URL only when the policy is open or lists just the
     // special "null" origin. The bind-derived form maps wildcard binds to
     // loopback and brackets IPv6 literals so the URL stays parseable.
-    let url = match config.web.allowed_origins.iter().find(|o| o.as_str() != "null") {
+    let url = match config
+        .web
+        .allowed_origins
+        .iter()
+        .find(|o| o.as_str() != "null")
+    {
         Some(origin) => format!("{}/", origin.trim_end_matches('/')),
         None => {
             let display_host = match bind.as_str() {
@@ -383,7 +389,8 @@ fn wait_for_listener(bind: &str, port: u16) -> bool {
 /// Mint a 32-hex-char (128-bit) token from the OS CSPRNG.
 fn generate_token() -> Result<String> {
     let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes).map_err(|e| anyhow::anyhow!("RNG failure generating token: {e}"))?;
+    getrandom::fill(&mut bytes)
+        .map_err(|e| anyhow::anyhow!("RNG failure generating token: {e}"))?;
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
         s.push(char::from_digit((b >> 4) as u32, 16).expect("nibble < 16"));
@@ -413,7 +420,9 @@ fn open_in_browser(url: &str) -> std::io::Result<()> {
     {
         // `start` is a cmd builtin; the empty "" is the window title arg
         // so a URL with spaces isn't mistaken for the title.
-        Command::new("cmd").args(["/C", "start", "", url]).status()?;
+        Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .status()?;
     }
     #[cfg(target_os = "macos")]
     {

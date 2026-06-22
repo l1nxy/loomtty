@@ -158,6 +158,11 @@ pub fn server_pipe_name() -> String {
 
 /// Get the directory for session state files.
 pub fn state_dir() -> PathBuf {
+    #[cfg(debug_assertions)]
+    if let Some(sd) = std::env::var_os("LOOM_TEST_STATE_DIR") {
+        return PathBuf::from(sd);
+    }
+
     if let Some(sd) = dirs::state_dir() {
         return sd.join("loom").join("sessions");
     }

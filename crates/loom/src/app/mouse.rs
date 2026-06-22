@@ -379,17 +379,17 @@ impl App {
                     self.animate_to_active();
 
                     if passthrough {
-                        if was_already_focused {
-                            if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
-                                self.send_lossy(ClientMessage::MouseInput {
-                                    pane_id,
-                                    button: 0,
-                                    col: vcol,
-                                    row: vrow,
-                                    pressed: true,
-                                    modifiers: 0,
-                                });
-                            }
+                        if was_already_focused
+                            && let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my)
+                        {
+                            self.send_lossy(ClientMessage::MouseInput {
+                                pane_id,
+                                button: 0,
+                                col: vcol,
+                                row: vrow,
+                                pressed: true,
+                                modifiers: 0,
+                            });
                         }
                         self.core.selection = None;
                         return;
@@ -426,17 +426,17 @@ impl App {
                         // focused — clicking to switch focus should not inject a
                         // mouse press into the newly-focused application (which
                         // would cause e.g. neovim to enter visual mode).
-                        if was_already_focused {
-                            if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
-                                self.send_lossy(ClientMessage::MouseInput {
-                                    pane_id,
-                                    button: 0,
-                                    col: vcol,
-                                    row: vrow,
-                                    pressed: true,
-                                    modifiers: 0,
-                                });
-                            }
+                        if was_already_focused
+                            && let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my)
+                        {
+                            self.send_lossy(ClientMessage::MouseInput {
+                                pane_id,
+                                button: 0,
+                                col: vcol,
+                                row: vrow,
+                                pressed: true,
+                                modifiers: 0,
+                            });
                         }
                         self.core.selection = Some(super::Selection {
                             pane_id,
@@ -972,8 +972,7 @@ impl App {
                     });
             }
             crate::app::ui::context_menu::ScrollbarHit::TrackAbove => {
-                let new_offset =
-                    self.core.context_menu_scroll_offset.saturating_sub(visible);
+                let new_offset = self.core.context_menu_scroll_offset.saturating_sub(visible);
                 self.core.context_menu_scroll_offset = new_offset.min(max_offset);
             }
             crate::app::ui::context_menu::ScrollbarHit::TrackBelow => {
@@ -1016,7 +1015,8 @@ impl App {
     fn scroll_context_menu(&mut self, steps: i32) -> bool {
         let (total, visible) = {
             let cx = self.ui_context();
-            let Some(menu) = crate::app::ui::context_menu::ContextMenuComponent::capture(self, &cx) else {
+            let Some(menu) = crate::app::ui::context_menu::ContextMenuComponent::capture(self, &cx)
+            else {
                 return false;
             };
             (menu.total_rows(), menu.visible_rows())
@@ -1056,8 +1056,7 @@ impl App {
         if steps == 0 {
             return;
         }
-        let next =
-            (self.core.settings_scroll_offset as i32 + steps).clamp(0, max_offset as i32);
+        let next = (self.core.settings_scroll_offset as i32 + steps).clamp(0, max_offset as i32);
         self.core.settings_scroll_offset = next as usize;
         self.request_mouse_redraw();
     }
@@ -1091,7 +1090,7 @@ impl App {
             }
         };
         if steps != 0 {
-            palette.move_selection(steps as i32, false);
+            palette.move_selection(steps, false);
             self.request_mouse_redraw();
         }
         true

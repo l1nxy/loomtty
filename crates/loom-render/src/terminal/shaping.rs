@@ -256,7 +256,7 @@ pub(super) fn precompute_row_shaping_into(
 
     // ── Detect grapheme clusters + single-char shaping ──
     let mut ligature_idx = 0usize;
-    for col in 0..cols_usize {
+    for (col, covered) in covered_by_run.iter().enumerate().take(cols_usize) {
         while ligature_idx < data.ligature_glyphs.len()
             && data.ligature_glyphs[ligature_idx].0 < col
         {
@@ -370,7 +370,7 @@ pub(super) fn precompute_row_shaping_into(
             }
         }
 
-        if covered_by_run[col] {
+        if *covered {
             // Run shaping already produced the right glyph for this cell;
             // don't add a duplicate per-char entry. The grapheme path above
             // is allowed to override it, since combined clusters
@@ -390,6 +390,7 @@ pub(super) fn precompute_row_shaping_into(
     data.char_glyphs.sort_by_key(|(col, ..)| *col);
 }
 
+#[allow(clippy::too_many_arguments)] // Clippy 1.94: shaping fallback threads explicit cell/run context.
 fn push_shaped_grapheme(
     shaper: &TextShaper,
     faces: &FaceSet<'_>,

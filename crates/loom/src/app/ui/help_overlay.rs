@@ -269,7 +269,12 @@ impl HelpOverlayComponent {
             )
             // Hairline under the header (loom_ui borders are uniform, so
             // an explicit 1px div is used for a bottom-only rule).
-            .child(div().w(self.col_content_w).h(tokens::BORDER_THIN).bg(theme.border))
+            .child(
+                div()
+                    .w(self.col_content_w)
+                    .h(tokens::BORDER_THIN)
+                    .bg(theme.border),
+            )
             .child(div().w(self.col_content_w).h(tokens::SPACE_1));
 
         for (key, desc) in &section.rows {

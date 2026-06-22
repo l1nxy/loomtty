@@ -34,10 +34,9 @@ pub(crate) fn quote_path_for_shell(path: &str) -> String {
 }
 
 fn save_to_dir(img: &arboard::ImageData<'_>, parent: &Path) -> std::io::Result<PathBuf> {
-    let width = u32::try_from(img.width)
-        .map_err(|_| invalid_input("image width overflows u32"))?;
-    let height = u32::try_from(img.height)
-        .map_err(|_| invalid_input("image height overflows u32"))?;
+    let width = u32::try_from(img.width).map_err(|_| invalid_input("image width overflows u32"))?;
+    let height =
+        u32::try_from(img.height).map_err(|_| invalid_input("image height overflows u32"))?;
     let expected = (width as usize)
         .checked_mul(height as usize)
         .and_then(|p| p.checked_mul(4))
@@ -94,11 +93,7 @@ fn create_exclusive(dir: &Path, unix_ts: u64) -> std::io::Result<(std::fs::File,
             format!("{FILENAME_PREFIX}{unix_ts}-{counter}.png")
         };
         let path = dir.join(name);
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(file) => return Ok((file, path)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 counter = counter
@@ -171,10 +166,7 @@ mod tests {
     #[test]
     fn quote_path_for_shell_escapes_embedded_single_quote() {
         // POSIX trick: close quote, emit \', reopen quote.
-        assert_eq!(
-            quote_path_for_shell("/tmp/it's.png"),
-            "'/tmp/it'\\''s.png'"
-        );
+        assert_eq!(quote_path_for_shell("/tmp/it's.png"), "'/tmp/it'\\''s.png'");
     }
 
     #[test]
@@ -236,10 +228,7 @@ mod tests {
             let name = format!("{FILENAME_PREFIX}1000-{i}.png");
             let path = tmp.path().join(&name);
             std::fs::write(&path, b"x").unwrap();
-            let f = std::fs::OpenOptions::new()
-                .write(true)
-                .open(&path)
-                .unwrap();
+            let f = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
             // i=0 oldest, i=4 newest — 10s apart, well above any FS resolution
             f.set_modified(base + std::time::Duration::from_secs(i * 10))
                 .unwrap();

@@ -1,6 +1,6 @@
 use anyhow::Result;
-use loom_config::config::config_path;
 use dialoguer::{Input, Select, theme::ColorfulTheme};
+use loom_config::config::config_path;
 use std::process::Command;
 
 pub fn run_init() -> Result<()> {

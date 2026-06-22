@@ -317,18 +317,28 @@ fn current_side_tab_hover_tracks_cursor_over_side_strip() {
         let second_pane = entries[1].0;
 
         let (vw, vh) = app.command_palette_viewport_size();
-        let (x, y, w, _h) = app.side_tab_bar_rect(vw, vh).expect("left side tab bar rect");
+        let (x, y, w, _h) = app
+            .side_tab_bar_rect(vw, vh)
+            .expect("left side tab bar rect");
         let mid_x = x + w * 0.5;
         let tab_h = app.core.config.tabbar.tab_height;
         let tab_gap = app.core.config.tabbar.tab_gap;
 
         // Row 0 → first tab.
         app.last_mouse_pos = Some((mid_x, y + tab_h * 0.5));
-        assert_eq!(app.current_side_tab_hover(), Some(first_pane), "[{label}] row 0");
+        assert_eq!(
+            app.current_side_tab_hover(),
+            Some(first_pane),
+            "[{label}] row 0"
+        );
 
         // Row 1 (past the first tab plus the inter-tab gap) → second tab.
         app.last_mouse_pos = Some((mid_x, y + tab_h + tab_gap + tab_h * 0.5));
-        assert_eq!(app.current_side_tab_hover(), Some(second_pane), "[{label}] row 1");
+        assert_eq!(
+            app.current_side_tab_hover(),
+            Some(second_pane),
+            "[{label}] row 1"
+        );
 
         // Cursor over the terminal area (right of the strip) → no hover.
         app.last_mouse_pos = Some((x + w + 40.0, y + tab_h * 0.5));

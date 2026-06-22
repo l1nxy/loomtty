@@ -122,7 +122,7 @@ impl Pty {
             let shell_path = std::env::var("SHELL")
                 .ok()
                 .filter(|s| !s.is_empty())
-                .or_else(|| {
+                .or({
                     #[cfg(unix)]
                     {
                         get_pw_shell()

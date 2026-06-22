@@ -20,6 +20,7 @@ use super::{
 /// Full format: `CSI unicode-key-code:shifted-key:base-layout-key ; modifiers:event-type ; text-as-codepoints u`
 /// Modifier bits: shift=1, alt=2, ctrl=4, super=8, hyper=16, meta=32, caps_lock=64, num_lock=128
 /// Transmitted modifier value = bits + 1 (1 = no modifiers).
+#[allow(clippy::too_many_arguments)] // Clippy 1.94: key encoding keeps modifier bits explicit at the call site.
 pub(crate) fn key_event_to_kitty_bytes(
     event: &winit::event::KeyEvent,
     ctrl: bool,

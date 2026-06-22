@@ -704,7 +704,10 @@ mod tests {
         cfg.set_web_token("0123456789abcdef0123456789abcdef");
         cfg.save().unwrap();
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600, "config holding a token must be 0600, was {mode:o}");
+        assert_eq!(
+            mode, 0o600,
+            "config holding a token must be 0600, was {mode:o}"
+        );
 
         // A second save (file already exists) must keep it 0600.
         cfg.set_web_port(7891);
@@ -836,7 +839,10 @@ mod tests {
         // Spot-check a representative leaf from each new section to
         // confirm the key names match what the loader expects.
         assert!((loaded.appearance.border_width - 3.0).abs() < 1e-6);
-        assert_eq!(loaded.font.disable_ligatures, crate::DisableLigatures::Cursor);
+        assert_eq!(
+            loaded.font.disable_ligatures,
+            crate::DisableLigatures::Cursor
+        );
         assert_eq!(loaded.terminal.cursor_shape, "block");
         assert_eq!(loaded.terminal.default_cols, 100);
         assert_eq!(loaded.tabbar.position, crate::config::TabBarPosition::Left);
@@ -849,8 +855,14 @@ mod tests {
         assert_eq!(loaded.prediction.threshold_ms, 40);
         assert!(!loaded.session.restore_agents);
         assert_eq!(loaded.server.idle_timeout_secs, 120);
-        assert_eq!(loaded.layout.new_pane_sizing, crate::config::NewPaneSizing::Dynamic);
-        assert_eq!(loaded.layout.new_pane_width, crate::config::NewPaneWidth::Full);
+        assert_eq!(
+            loaded.layout.new_pane_sizing,
+            crate::config::NewPaneSizing::Dynamic
+        );
+        assert_eq!(
+            loaded.layout.new_pane_width,
+            crate::config::NewPaneWidth::Full
+        );
         assert!((loaded.layout.dynamic_fullscreen_max_width - 1200.0).abs() < 1e-6);
     }
 

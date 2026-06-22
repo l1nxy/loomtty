@@ -3,6 +3,9 @@
 //! Uses D3D11 instanced rendering for rects, alpha text, and color emoji.
 //! HLSL shaders are compiled at runtime via D3DCompile (Fxc).
 
+#![allow(clippy::manual_c_str_literals)] // Clippy 1.94: D3D input descriptors intentionally use PCSTR byte literals.
+#![allow(clippy::missing_transmute_annotations)] // Clippy 1.94: HWND transmute is localized Windows FFI glue.
+
 use anyhow::Result;
 use loom_config::config::RenderConfig;
 use loom_render::FrameScene;

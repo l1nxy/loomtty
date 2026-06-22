@@ -5,12 +5,12 @@
 //!
 //! Uses `glutin` for EGL context management and `glow` for GL calls.
 
+use glow::HasContext;
 use loom_config::config::RenderConfig;
 use loom_render::FrameScene;
 use loom_render::glyph_cache::{GlyphCache, GlyphInstance, PaneGlyphRange, PendingUpload};
 use loom_render::rect::{PaneRectRange, Rect};
 use loom_render::sdf_rect::SdfRect;
-use glow::HasContext;
 
 /// Upper bound on SDF chrome rects per frame. See
 /// `blade::MAX_SDF_RECTS` for rationale; kept identical so all
@@ -255,6 +255,7 @@ impl GlBlurPipeline {
         })
     }
 
+    #[allow(clippy::too_many_arguments)] // Clippy 1.94: GL blur pass exposes framebuffer/viewport/direction state.
     unsafe fn pass(
         &self,
         gl: &glow::Context,

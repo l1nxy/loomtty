@@ -650,17 +650,17 @@ fn capture_text_preserve_trailing_spaces_does_not_trim_row_tail() {
         preserve_trailing_spaces: true,
         ..Default::default()
     };
+    // Match the printf *output* row by suffix, not exact equality: depending
+    // on the shell (bash vs dash) the row is either bare `TRAIL` or carries
+    // the next prompt as a prefix (`$ TRAIL`). The echoed command line ends in
+    // `…TRAIL\n'`, so a trailing-`TRAIL` match excludes it.
     let saw = wait_until(&mut pane, Duration::from_secs(3), |p| {
         p.capture_text(&preserve_opts)
             .text
             .lines()
-            .any(|l| l.trim_end_matches(' ') == "TRAIL")
+            .any(|l| l.trim_end_matches(' ').ends_with("TRAIL"))
     });
-    assert!(
-        saw,
-        "marker should appear; preserve-mode capture was:\n{:?}",
-        pane.capture_text(&preserve_opts).text
-    );
+    assert!(saw, "marker should appear");
 
     let preserved = pane.capture_text(&preserve_opts);
     let trimmed = pane.capture_text(&CapturePaneOpts::default());
@@ -672,12 +672,12 @@ fn capture_text_preserve_trailing_spaces_does_not_trim_row_tail() {
     let preserved_trail = preserved
         .text
         .lines()
-        .find(|l| l.trim_end_matches(' ') == "TRAIL")
+        .find(|l| l.trim_end_matches(' ').ends_with("TRAIL"))
         .expect("preserve: TRAIL row present");
     let trimmed_trail = trimmed
         .text
         .lines()
-        .find(|l| l.trim_end_matches(' ') == "TRAIL")
+        .find(|l| l.trim_end_matches(' ').ends_with("TRAIL"))
         .expect("trim: TRAIL row present");
     assert!(
         preserved_trail.ends_with(' '),
@@ -759,20 +759,21 @@ fn capture_text_join_wrapped_merges_softwraps_but_keeps_hard_newlines() {
     let mut pane = Pane::new_with_opts(93, 8, 6, shell_path(), None, None).expect("create pane");
     pane.write_to_pty(b"stty -echo; printf 'LOOMWRAPMARK1234ABCDEFGH\\nNEXTROW\\n'; stty echo\n");
 
+    // Wait on the join_wrapped capture: at 8 cols the shell prompt can shift
+    // the output so a marker straddles a soft-wrap boundary (dash renders
+    // `$ LOOMWR|APMARK…`), and the default split capture inserts a newline
+    // there — `contains("LOOMWRAP")` would miss it. Joining the soft-wrap
+    // chain makes the marker contiguous regardless of prompt width.
     let saw = wait_until(&mut pane, Duration::from_secs(3), |p| {
-        let t = p.capture_text(&CapturePaneOpts::default()).text;
+        let t = p
+            .capture_text(&CapturePaneOpts {
+                join_wrapped: true,
+                ..Default::default()
+            })
+            .text;
         t.contains("LOOMWRAP") && t.contains("NEXTROW")
     });
-    assert!(
-        saw,
-        "both markers should appear in output;\nviewport:\n{:?}\nwith scrollback:\n{:?}",
-        pane.capture_text(&CapturePaneOpts::default()).text,
-        pane.capture_text(&CapturePaneOpts {
-            scrollback_rows: 50,
-            ..Default::default()
-        })
-        .text
-    );
+    assert!(saw, "both markers should appear in output");
 
     let joined = pane
         .capture_text(&CapturePaneOpts {

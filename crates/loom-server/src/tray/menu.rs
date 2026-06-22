@@ -151,7 +151,13 @@ pub fn sessions_hash(state: &TraySnapshot) -> u64 {
     h
 }
 
+// muda's macOS menu objects (`Menu`, `Submenu`, `MenuItem`) must be built on
+// the main thread with a live NSApplication; constructing them in a headless
+// `cargo test` panics inside muda's AppKit backend. The menu-content logic
+// under test is platform-independent, so exercise it on Linux/Windows only —
+// where muda builds menus without a running event loop.
 #[cfg(test)]
+#[cfg(not(target_os = "macos"))]
 mod tests {
     use super::*;
     use crate::tray::TraySessionInfo;

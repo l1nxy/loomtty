@@ -14,6 +14,10 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  # The headless GPU tests need a Vulkan adapter that hosted runners no longer
+  # provide (ERROR_INCOMPATIBLE_DRIVER); their built-in escape hatch soft-skips
+  # them when this is set. Drop it once CI runs on GPU-capable runners.
+  LOOM_SKIP_HEADLESS_GPU_TESTS: "1"
 
 jobs:
   # ── Format check (fast, run once) ────────────────────
@@ -21,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.94.0
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
@@ -48,7 +52,7 @@ jobs:
             libgtk-3-dev \
             libxdo-dev
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.94.0
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
@@ -63,7 +67,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.94.0
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
@@ -78,7 +82,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.94.0
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
@@ -103,7 +107,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.94.0
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with:

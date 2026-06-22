@@ -51,7 +51,7 @@ winget install -e --id JRSoftware.InnoSetup
 ```powershell
 # Build all three binaries first (the GUI launcher needs the gui-bin feature):
 cargo build --release --features loomtty/gui-bin
-ISCC.exe /DMyAppVersion=0.1.0 /DBinDir=target\release dist\windows\loomtty.iss
+ISCC.exe /DMyAppVersion=0.1.0 /DBinDir=..\..\target\release dist\windows\loomtty.iss
 ```
 
 ## CI

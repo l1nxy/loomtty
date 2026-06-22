@@ -50,6 +50,13 @@ fn get_pw_shell() -> Option<String> {
     shell.to_str().ok().map(|s| s.to_string())
 }
 
+/// Non-unix platforms have no passwd database, so there's no login shell to
+/// query. A `None`-returning stub lets the call site stay a plain `fn` ref.
+#[cfg(not(unix))]
+fn get_pw_shell() -> Option<String> {
+    None
+}
+
 impl Pty {
     pub fn spawn(cols: u16, rows: u16, shell: &str) -> Result<Self> {
         Self::spawn_with_opts(cols, rows, shell, None, None)
@@ -122,16 +129,11 @@ impl Pty {
             let shell_path = std::env::var("SHELL")
                 .ok()
                 .filter(|s| !s.is_empty())
-                .or({
-                    #[cfg(unix)]
-                    {
-                        get_pw_shell()
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        None
-                    }
-                })
+                // `or_else` keeps the passwd lookup lazy: only fall back to
+                // `get_pw_shell()` when `$SHELL` is unset/empty. `or(..)` would
+                // run the (possibly NSS/LDAP-blocking) lookup on every pane
+                // spawn even when `$SHELL` is already valid.
+                .or_else(get_pw_shell)
                 .unwrap_or_else(|| "/bin/sh".to_string());
             CommandBuilder::new(shell_path)
         };

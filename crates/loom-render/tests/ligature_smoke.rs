@@ -15,18 +15,37 @@ fn fontconfig_match(family: &str) -> Option<String> {
         // import inside the cfg block so non-Linux targets don't trip
         // the `unused_imports` lint when CI runs with `-D warnings`.
         use std::process::Command;
+        // `fc-match` always resolves to *some* installed font — when the
+        // requested family is absent it silently falls back to a default
+        // (e.g. DejaVu Sans), so a returned path is not proof the family is
+        // installed. Ask for the resolved family name too and require it to
+        // actually match what we asked for; otherwise we'd shape `==`/`++`
+        // against a non-ligature fallback and fail spuriously on CI runners
+        // that ship no programming fonts.
         let output = Command::new("fc-match")
-            .args(["--format=%{file}", family])
+            .args(["--format=%{file}\t%{family}", family])
             .output()
             .ok()?;
         if !output.status.success() {
             return None;
         }
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if path.is_empty() || !Path::new(&path).exists() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let (path, resolved_family) = stdout.split_once('\t')?;
+        let path = path.trim();
+        if path.is_empty() || !Path::new(path).exists() {
             return None;
         }
-        Some(path)
+        // Reject fontconfig fallbacks: the resolved family must share the
+        // requested family's leading token (case-insensitive). A real match
+        // for "Fira Code" reports "Fira Code"; a DejaVu fallback does not.
+        let needle = family.split_whitespace().next()?.to_ascii_lowercase();
+        if !resolved_family
+            .to_ascii_lowercase()
+            .contains(needle.as_str())
+        {
+            return None;
+        }
+        Some(path.to_string())
     }
     #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
     {

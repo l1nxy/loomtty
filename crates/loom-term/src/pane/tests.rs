@@ -656,7 +656,11 @@ fn capture_text_preserve_trailing_spaces_does_not_trim_row_tail() {
             .lines()
             .any(|l| l.trim_end_matches(' ') == "TRAIL")
     });
-    assert!(saw, "marker should appear");
+    assert!(
+        saw,
+        "marker should appear; preserve-mode capture was:\n{:?}",
+        pane.capture_text(&preserve_opts).text
+    );
 
     let preserved = pane.capture_text(&preserve_opts);
     let trimmed = pane.capture_text(&CapturePaneOpts::default());
@@ -759,7 +763,16 @@ fn capture_text_join_wrapped_merges_softwraps_but_keeps_hard_newlines() {
         let t = p.capture_text(&CapturePaneOpts::default()).text;
         t.contains("LOOMWRAP") && t.contains("NEXTROW")
     });
-    assert!(saw, "both markers should appear in output");
+    assert!(
+        saw,
+        "both markers should appear in output;\nviewport:\n{:?}\nwith scrollback:\n{:?}",
+        pane.capture_text(&CapturePaneOpts::default()).text,
+        pane.capture_text(&CapturePaneOpts {
+            scrollback_rows: 50,
+            ..Default::default()
+        })
+        .text
+    );
 
     let joined = pane
         .capture_text(&CapturePaneOpts {

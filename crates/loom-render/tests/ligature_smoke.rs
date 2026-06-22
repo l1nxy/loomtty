@@ -177,7 +177,9 @@ fn assert_run_substitutes_input_glyph(family: &str, font_path: &str, text: &str,
             "no shaped glyph differed from bare '{bare_ch}' cmap glyph {bare_glyph}; ligature wiring is broken"
         );
     }
-    let _ = (font_id, bare_glyph);
+    // `text` is only consumed inside the `cfg(not(macos))` block above; name
+    // it here so the macOS build doesn't trip `-D unused-variables`.
+    let _ = (font_id, bare_glyph, text);
 }
 
 #[test]

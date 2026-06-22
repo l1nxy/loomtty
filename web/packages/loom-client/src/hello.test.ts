@@ -105,7 +105,7 @@ describe("ClientHello encoder", () => {
       cellWidth: 9,
       cellHeight: 18,
     });
-    expect(bytes[0]).toBe(0x43); // magic "C"
+    expect(bytes[0]).toBe(0x4c); // magic "L"
   });
 
   test("accepts the auto-attach escape (`__auto__`)", () => {
@@ -119,7 +119,7 @@ describe("ClientHello encoder", () => {
       cellWidth: 9,
       cellHeight: 18,
     });
-    expect(bytes[0]).toBe(0x43); // magic "C"
+    expect(bytes[0]).toBe(0x4c); // magic "L"
   });
 
   test("rejects non-finite cell dims", () => {
@@ -150,7 +150,7 @@ describe("ClientHello encoder", () => {
 describe("ServerHello decoder", () => {
   test("accepts byte-identical local version (exact compat)", () => {
     const buf = new Uint8Array(SERVER_HELLO_LEN);
-    buf.set([0x43, 0x49, 0x52, 0x49], 0); // "LOOM"
+    buf.set([0x4c, 0x4f, 0x4f, 0x4d], 0); // "LOOM"
     new DataView(buf.buffer).setUint32(4, LOOM_PKG_VERSION, true);
     const info = decodeServerHello(buf);
     expect(info.compat.kind).toBe("exact");
@@ -160,7 +160,7 @@ describe("ServerHello decoder", () => {
   test("flags minor-mismatch but does not throw", () => {
     const peer = LOOM_PKG_VERSION + (1 << 16); // bump minor
     const buf = new Uint8Array(SERVER_HELLO_LEN);
-    buf.set([0x43, 0x49, 0x52, 0x49], 0);
+    buf.set([0x4c, 0x4f, 0x4f, 0x4d], 0);
     new DataView(buf.buffer).setUint32(4, peer, true);
     const info = decodeServerHello(buf);
     expect(info.compat.kind).toBe("minor-mismatch");
@@ -169,7 +169,7 @@ describe("ServerHello decoder", () => {
   test("throws on major mismatch", () => {
     const peer = LOOM_PKG_VERSION + (1 << 24); // bump major
     const buf = new Uint8Array(SERVER_HELLO_LEN);
-    buf.set([0x43, 0x49, 0x52, 0x49], 0);
+    buf.set([0x4c, 0x4f, 0x4f, 0x4d], 0);
     new DataView(buf.buffer).setUint32(4, peer, true);
     expect(() => decodeServerHello(buf)).toThrow(/major version/);
   });

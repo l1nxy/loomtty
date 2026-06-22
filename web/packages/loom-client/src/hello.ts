@@ -31,7 +31,7 @@ import {
 // Typed arrays cannot be frozen by `Object.freeze` (the engine rejects
 // freezing a backing store with elements), so this is left as a `const`
 // reference instead. Treat it as read-only — never mutate.
-const HANDSHAKE_MAGIC = new Uint8Array([0x43, 0x49, 0x52, 0x49]); // "LOOM"
+const HANDSHAKE_MAGIC = new Uint8Array([0x4c, 0x4f, 0x4f, 0x4d]); // "LOOM"
 const CLIENT_HELLO_HEADER_LEN = 11;
 const CLIENT_HELLO_FIXED_FIELDS_LEN = 16;
 const MAX_SESSION_NAME_LEN = 255;

@@ -81,10 +81,10 @@ pub(crate) fn ct_shape_grapheme(font: &CTFont, cluster: &str) -> Option<u32> {
     for run in runs.iter() {
         let glyphs = run.glyphs();
         total_glyphs += glyphs.len();
-        if first_nonzero_glyph.is_none() {
-            if let Some(&g) = glyphs.iter().find(|&&g| g != 0) {
-                first_nonzero_glyph = Some(g as u32);
-            }
+        if first_nonzero_glyph.is_none()
+            && let Some(&g) = glyphs.iter().find(|&&g| g != 0)
+        {
+            first_nonzero_glyph = Some(g as u32);
         }
     }
 

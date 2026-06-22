@@ -115,10 +115,7 @@ impl CoreTextRasterizer {
             core_text::font::new_from_name("Apple Color Emoji", pt_size).ok()
         };
 
-        let emoji_is_color = emoji_font
-            .as_ref()
-            .map(|f| has_sbix_table(f))
-            .unwrap_or(false);
+        let emoji_is_color = emoji_font.as_ref().map(has_sbix_table).unwrap_or(false);
 
         if let Some(ref ef) = emoji_font {
             log::info!(
@@ -233,19 +230,20 @@ impl CoreTextRasterizer {
         try_color: bool,
     ) -> Option<RasterizedGlyph> {
         // Try color rendering for emoji
-        if try_color && self.emoji_is_color {
-            if let Some(g) = render_color_glyph(font, glyph) {
-                log::debug!(
-                    "CoreText raster: glyph_id={} color render {}x{} bearing=({:.1},{:.1}) font={}",
-                    glyph,
-                    g.width,
-                    g.height,
-                    g.bearing_x,
-                    g.bearing_y,
-                    font.family_name(),
-                );
-                return Some(g);
-            }
+        if try_color
+            && self.emoji_is_color
+            && let Some(g) = render_color_glyph(font, glyph)
+        {
+            log::debug!(
+                "CoreText raster: glyph_id={} color render {}x{} bearing=({:.1},{:.1}) font={}",
+                glyph,
+                g.width,
+                g.height,
+                g.bearing_x,
+                g.bearing_y,
+                font.family_name(),
+            );
+            return Some(g);
         }
 
         let result = render_grayscale_glyph(font, glyph, synth);

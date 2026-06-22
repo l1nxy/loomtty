@@ -678,12 +678,12 @@ impl UiTextShaper {
 
             // Check if it matches known CJK or emoji fonts by name heuristics.
             let run_ps_lower = run_ps.to_lowercase();
-            if self.emoji_font_id.is_some()
+            if let Some(id) = self.emoji_font_id
                 && (run_ps_lower.contains("emoji") || run_ps_lower.contains("color"))
             {
-                return self.emoji_font_id.unwrap();
+                return id;
             }
-            if self.cjk_font_id.is_some()
+            if let Some(id) = self.cjk_font_id
                 && (run_ps_lower.contains("cjk")
                     || run_ps_lower.contains("pingfang")
                     || run_ps_lower.contains("hiragino")
@@ -692,7 +692,7 @@ impl UiTextShaper {
                     || run_ps_lower.contains("gothic")
                     || run_ps_lower.contains("mincho"))
             {
-                return self.cjk_font_id.unwrap();
+                return id;
             }
 
             // Unknown fallback font — use primary; glyph cache may .notdef

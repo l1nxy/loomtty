@@ -764,19 +764,20 @@ impl GlyphCache {
                     ),
                 };
                 if let Some(font) = font {
-                    if let Some(glyph) = self.coretext.rasterize_char(ch, style, font, try_color) {
-                        if glyph.width > 0 && glyph.height > 0 {
-                            log::debug!(
-                                "CoreText cache: U+{:04X} rasterized via {:?} ({}x{} color={})",
-                                ch as u32,
-                                resolved,
-                                glyph.width,
-                                glyph.height,
-                                glyph.is_color,
-                            );
-                            result = Some(glyph);
-                            break;
-                        }
+                    if let Some(glyph) = self.coretext.rasterize_char(ch, style, font, try_color)
+                        && glyph.width > 0
+                        && glyph.height > 0
+                    {
+                        log::debug!(
+                            "CoreText cache: U+{:04X} rasterized via {:?} ({}x{} color={})",
+                            ch as u32,
+                            resolved,
+                            glyph.width,
+                            glyph.height,
+                            glyph.is_color,
+                        );
+                        result = Some(glyph);
+                        break;
                     }
                 } else {
                     log::debug!(

@@ -303,13 +303,13 @@ impl Pty {
     /// **Windows:** Always returns `false` — ConPTY does not expose termios state.
     #[cfg(unix)]
     pub fn is_password_input(&self) -> bool {
-        if let Some(ref master) = self.master {
-            if let Some(termios) = master.get_termios() {
-                let bits = termios.local_flags.bits() as u64;
-                let canonical = (bits & (libc::ICANON as u64)) != 0;
-                let echo = (bits & (libc::ECHO as u64)) != 0;
-                return canonical && !echo;
-            }
+        if let Some(ref master) = self.master
+            && let Some(termios) = master.get_termios()
+        {
+            let bits = termios.local_flags.bits();
+            let canonical = (bits & libc::ICANON) != 0;
+            let echo = (bits & libc::ECHO) != 0;
+            return canonical && !echo;
         }
         false
     }

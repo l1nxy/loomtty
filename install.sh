@@ -123,7 +123,13 @@ run install -m755 "$SRC/loomtty-server" "$BIN_DIR/loomtty-server"
 # ── Desktop entry + AppStream metadata ──────────────────────────────────
 if [ -f "$SRC/dist/linux/$APP_ID.desktop" ]; then
     run mkdir -p "$DATA_DIR/applications"
-    run install -m644 "$SRC/dist/linux/$APP_ID.desktop" "$DATA_DIR/applications/$APP_ID.desktop"
+    # Rewrite Exec/TryExec to the absolute binary path. Desktop launchers run
+    # from the session environment, which often lacks ~/.local/bin (we only add
+    # it to the shell rc), so a bare `Exec=loomtty` would leave the menu entry
+    # unable to launch even though the install succeeded.
+    sed -E "s#^(Exec|TryExec)=loomtty\b#\1=$BIN_DIR/loomtty#" \
+        "$SRC/dist/linux/$APP_ID.desktop" > "$TMP/$APP_ID.desktop"
+    run install -m644 "$TMP/$APP_ID.desktop" "$DATA_DIR/applications/$APP_ID.desktop"
 fi
 if [ -f "$SRC/dist/linux/$APP_ID.metainfo.xml" ]; then
     run mkdir -p "$DATA_DIR/metainfo"

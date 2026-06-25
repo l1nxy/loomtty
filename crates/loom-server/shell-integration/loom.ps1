@@ -50,20 +50,22 @@ $global:__loom_prev_prompt = if (Test-Path Function:\prompt) { $function:prompt 
 function global:prompt {
     # Capture the previous command's status FIRST — every statement below
     # overwrites $? and most leave $LASTEXITCODE untouched. PowerShell only
-    # updates $LASTEXITCODE for native executables, so a cmdlet that succeeds
-    # after a failed native command leaves a stale non-zero value: reading
-    # $LASTEXITCODE alone would mis-report that success as a failure. Derive
-    # from $? (mirrors loom.bash reading $? on its first line) and fall back to
-    # the native exit code only when the command actually failed.
+    # updates $LASTEXITCODE for native executables, so it goes stale: a cmdlet
+    # that succeeds after a failed native command leaves a non-zero value, and a
+    # cmdlet that *fails* leaves whatever the last native command set. Derive the
+    # exit code from $?, and trust $LASTEXITCODE only when it's non-zero AND
+    # changed since the last prompt (i.e. a native command actually ran and
+    # failed this cycle); otherwise report a generic 1 for the cmdlet failure.
     $loomOk = $?
     $loomNativeExit = $global:LASTEXITCODE
     if ($loomOk) {
         $loomExit = 0
-    } elseif ($loomNativeExit) {
+    } elseif ($loomNativeExit -and $loomNativeExit -ne $global:__loom_prev_exit) {
         $loomExit = $loomNativeExit
     } else {
         $loomExit = 1
     }
+    $global:__loom_prev_exit = $loomNativeExit
 
     # OSC 133;D — previous command finished, with its exit code.
     $out = __loom_osc "133;D;$loomExit"

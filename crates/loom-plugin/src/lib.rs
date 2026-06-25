@@ -72,7 +72,10 @@ impl PluginEngine {
     /// Detect an agent from a foreground process.
     /// Dispatches the `detect-agent` event and returns the first non-nil result.
     pub fn detect_agent(&self, exe_name: &str, argv: &[String]) -> Option<DetectedAgent> {
-        let argv_table = match self.lua.create_sequence_from(argv.iter().map(String::as_str)) {
+        let argv_table = match self
+            .lua
+            .create_sequence_from(argv.iter().map(String::as_str))
+        {
             Ok(t) => t,
             Err(e) => {
                 log::warn!("[plugin] failed to create argv table: {e}");

@@ -279,16 +279,9 @@ pub trait Render: 'static + Sized {
 /// explicitly via [`ElementStates::clear_id`] when an element goes
 /// away. For the single-window chrome use case the map is bounded
 /// and stays small.
+#[derive(Default)]
 pub struct ElementStates {
     map: std::collections::HashMap<(ElementId, std::any::TypeId), Box<dyn std::any::Any>>,
-}
-
-impl Default for ElementStates {
-    fn default() -> Self {
-        Self {
-            map: std::collections::HashMap::new(),
-        }
-    }
 }
 
 impl ElementStates {

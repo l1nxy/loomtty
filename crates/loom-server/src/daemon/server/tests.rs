@@ -449,14 +449,16 @@ fn list_prompts_returns_empty_marks_for_fresh_pane() {
         1,
     );
 
-    let [ServerResponse::SendToClient(
-        1,
-        ServerMessage::PromptListReply {
-            session_name: sn,
-            pane_id: pid,
-            marks,
-        },
-    )] = responses.as_slice()
+    let [
+        ServerResponse::SendToClient(
+            1,
+            ServerMessage::PromptListReply {
+                session_name: sn,
+                pane_id: pid,
+                marks,
+            },
+        ),
+    ] = responses.as_slice()
     else {
         panic!(
             "expected exactly one PromptListReply, got {} response(s)",
@@ -1594,13 +1596,7 @@ fn cursor_debounce_alt_screen_never_holds() {
     assert!(!held);
 
     // Alt-screen path should not leave per-pane state behind.
-    assert!(
-        !clients
-            .get(&1)
-            .unwrap()
-            .last_sent_cursor
-            .contains_key(&42)
-    );
+    assert!(!clients.get(&1).unwrap().last_sent_cursor.contains_key(&42));
 }
 
 /// Cross-tick CUPs from an inline TUI (codex/aider pattern: each fragment
@@ -1619,13 +1615,21 @@ fn cursor_debounce_cross_tick_cups_suppresses_transient() {
 
     // Tick 1: transient cursor — first observation, hold.
     let (sent, held) = Server::throttle_cursor(&mut clients, 1, 42, (3, 1, 0), false);
-    assert_eq!(sent, (0, 0, 0), "transient must not propagate on first sight");
+    assert_eq!(
+        sent,
+        (0, 0, 0),
+        "transient must not propagate on first sight"
+    );
     assert!(held);
 
     // Tick 2: different transient — pending replaced, still held, (3,1) was
     // never emitted.
     let (sent, held) = Server::throttle_cursor(&mut clients, 1, 42, (5, 10, 0), false);
-    assert_eq!(sent, (0, 0, 0), "transient (3,1) leaked despite being superseded");
+    assert_eq!(
+        sent,
+        (0, 0, 0),
+        "transient (3,1) leaked despite being superseded"
+    );
     assert!(held);
 
     // Tick 3: same final value — settles, emits.
@@ -1700,13 +1704,7 @@ fn cursor_debounce_alt_screen_clears_pending() {
     let (sent, held) = Server::throttle_cursor(&mut clients, 1, 42, (7, 20, 0), true);
     assert_eq!(sent, (7, 20, 0));
     assert!(!held);
-    assert!(
-        !clients
-            .get(&1)
-            .unwrap()
-            .last_sent_cursor
-            .contains_key(&42)
-    );
+    assert!(!clients.get(&1).unwrap().last_sent_cursor.contains_key(&42));
 }
 
 /// Exiting alt-screen back to inline must re-seed `sent = actual` and

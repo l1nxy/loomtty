@@ -2230,10 +2230,7 @@ mod network_edge_cases {
             b"ListPrompts",
             "variant NAME bytes must stay 'ListPrompts' on the wire"
         );
-        assert_eq!(
-            bytes[13], 0x92,
-            "struct payload must be fixarray of size 2"
-        );
+        assert_eq!(bytes[13], 0x92, "struct payload must be fixarray of size 2");
 
         let decoded: ClientMessage = rmp_serde::from_slice(&bytes).unwrap();
         assert!(matches!(decoded, ClientMessage::ListPrompts { .. }));

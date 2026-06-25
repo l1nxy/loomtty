@@ -39,6 +39,11 @@ fn try_create_headless_context() -> Result<gpu::Context, String> {
 }
 
 fn create_headless_context() -> Option<gpu::Context> {
+    if std::env::var("LOOM_SKIP_HEADLESS_GPU_TESTS").is_ok() {
+        eprintln!("Headless GPU tests skipped (LOOM_SKIP_HEADLESS_GPU_TESTS set)");
+        return None;
+    }
+
     match try_create_headless_context() {
         Ok(ctx) => Some(ctx),
         Err(e) if std::env::var("LOOM_SKIP_HEADLESS_GPU_TESTS").is_ok() => {

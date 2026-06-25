@@ -77,7 +77,12 @@ impl EventRegistry {
 
     /// Reset a handler's consecutive-failure count after a successful call.
     fn reset_failures(&self, event: &str, idx: usize) {
-        if let Some(h) = self.inner.borrow_mut().get_mut(event).and_then(|hs| hs.get_mut(idx)) {
+        if let Some(h) = self
+            .inner
+            .borrow_mut()
+            .get_mut(event)
+            .and_then(|hs| hs.get_mut(idx))
+        {
             h.failures = 0;
         }
     }
@@ -137,7 +142,9 @@ impl EventRegistry {
                     match R::from_lua_multi(val.into_lua_multi(lua).ok()?, lua) {
                         Ok(r) => return Some(r),
                         Err(e) => {
-                            log::warn!("[plugin] failed to convert return value for '{event}': {e}");
+                            log::warn!(
+                                "[plugin] failed to convert return value for '{event}': {e}"
+                            );
                             continue;
                         }
                     }

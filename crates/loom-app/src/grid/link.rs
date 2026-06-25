@@ -345,9 +345,7 @@ fn is_bare_filename(name: &str) -> bool {
             return false;
         }
         let ext_lower = ext.to_ascii_lowercase();
-        BARE_FILENAME_EXTENSIONS
-            .iter()
-            .any(|&e| e == ext_lower.as_str())
+        BARE_FILENAME_EXTENSIONS.contains(&ext_lower.as_str())
     } else {
         false
     }

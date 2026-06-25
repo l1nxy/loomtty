@@ -279,10 +279,10 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
                 // pending bg strip so the line geometry isn't covered when
                 // the strip is appended later.
                 if super::box_drawing::is_in_range(props.ch) {
-                    if let Some(sc) = strip_color.take() {
-                        if strip_start < col {
-                            flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, &m);
-                        }
+                    if let Some(sc) = strip_color.take()
+                        && strip_start < col
+                    {
+                        flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, &m);
                     }
                     if props.bg != m.default_bg {
                         let cell_bg_w = if props.is_wide { m.cw * 2.0 } else { m.cw };
@@ -370,7 +370,7 @@ pub fn build_view_from_grid(atlas: &mut GlyphCache, inputs: &PackedViewInputs<'_
         params.config,
     );
 
-    let view = TerminalView {
+    TerminalView {
         glyph_instances,
         color_glyph_instances,
         bg_rects,
@@ -385,8 +385,7 @@ pub fn build_view_from_grid(atlas: &mut GlyphCache, inputs: &PackedViewInputs<'_
         cell_height: metrics.ch,
         generation: 1,
         last_cursor_line: inputs.cursor_line,
-    };
-    view
+    }
 }
 
 /// Incrementally update a TerminalView for only the dirty rows.
@@ -573,10 +572,10 @@ fn rebuild_row_render_data(
             // `bg_rects` and paints over them. Force the strip out now and
             // emit this cell's bg as a single rect so the line geometry
             // sits on top.
-            if let Some(sc) = strip_color.take() {
-                if strip_start < col {
-                    flush_bg_strip(bg_rects, sc, strip_start, col, row, grid.metrics);
-                }
+            if let Some(sc) = strip_color.take()
+                && strip_start < col
+            {
+                flush_bg_strip(bg_rects, sc, strip_start, col, row, grid.metrics);
             }
             if props.bg != grid.metrics.default_bg {
                 let cell_bg_w = if props.is_wide {
@@ -676,32 +675,33 @@ fn rebuild_row_render_data(
                 // shape is carried by the leading glyph. Falling through to
                 // `emit_glyph` here would draw the bare `?`/`=` on top, which
                 // is exactly the "first char thick, second char thin" bug.
-                if let Some(entry) = atlas.ensure_glyph_id(gid, font_id, props.style, is_wide) {
-                    if entry.width > 0 && entry.height > 0 {
-                        let px = col as f32 * grid.metrics.cw;
-                        let py = row as f32 * grid.metrics.ch;
-                        let is_cjk_text_wide =
-                            is_wide && !entry.is_color && Some(font_id) == grid.cjk_font_id;
-                        let color_span = color_glyph_cell_span(props.ch, is_wide).max(2);
-                        let g = if entry.is_color {
-                            constrain_color_glyph_to_cells(
-                                &entry,
-                                px,
-                                py,
-                                grid.metrics,
-                                props.fg,
-                                color_span,
-                            )
-                        } else if is_cjk_text_wide {
-                            constrain_wide_text_glyph(&entry, px, py, grid.metrics, props.fg)
-                        } else {
-                            make_relative_glyph(&entry, px, py, grid.metrics, props.fg)
-                        };
-                        if entry.is_color {
-                            color_glyphs.push(g);
-                        } else {
-                            glyphs.push(g);
-                        }
+                if let Some(entry) = atlas.ensure_glyph_id(gid, font_id, props.style, is_wide)
+                    && entry.width > 0
+                    && entry.height > 0
+                {
+                    let px = col as f32 * grid.metrics.cw;
+                    let py = row as f32 * grid.metrics.ch;
+                    let is_cjk_text_wide =
+                        is_wide && !entry.is_color && Some(font_id) == grid.cjk_font_id;
+                    let color_span = color_glyph_cell_span(props.ch, is_wide).max(2);
+                    let g = if entry.is_color {
+                        constrain_color_glyph_to_cells(
+                            &entry,
+                            px,
+                            py,
+                            grid.metrics,
+                            props.fg,
+                            color_span,
+                        )
+                    } else if is_cjk_text_wide {
+                        constrain_wide_text_glyph(&entry, px, py, grid.metrics, props.fg)
+                    } else {
+                        make_relative_glyph(&entry, px, py, grid.metrics, props.fg)
+                    };
+                    if entry.is_color {
+                        color_glyphs.push(g);
+                    } else {
+                        glyphs.push(g);
                     }
                 }
                 continue;

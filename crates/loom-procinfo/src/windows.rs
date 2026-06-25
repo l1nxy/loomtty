@@ -113,7 +113,7 @@ impl Drop for Snapshot {
 }
 
 /// Find all descendants of `root_pid` in the process list.
-fn find_descendants<'a>(entries: &'a [ProcEntry], root_pid: u32) -> Vec<&'a ProcEntry> {
+fn find_descendants(entries: &[ProcEntry], root_pid: u32) -> Vec<&ProcEntry> {
     let mut result = Vec::new();
     let mut pids_to_check = vec![root_pid];
     let mut visited = std::collections::HashSet::new();
@@ -271,7 +271,7 @@ unsafe fn read_remote_wstr(handle: HANDLE, s: &UnicodeString) -> Option<String> 
     //  - zero / null buffer: nothing to read.
     //  - oversized: bound the allocation against a garbage length.
     let byte_len = s.length as usize;
-    if byte_len == 0 || byte_len % 2 != 0 || s.buffer.is_null() || byte_len > 64 * 1024 {
+    if byte_len == 0 || !byte_len.is_multiple_of(2) || s.buffer.is_null() || byte_len > 64 * 1024 {
         return None;
     }
     let mut buf = vec![0u16; byte_len / 2];
@@ -442,14 +442,20 @@ mod tests {
         let expected = std::env::current_dir().unwrap();
         assert_eq!(
             cwd.to_lowercase().trim_end_matches('\\'),
-            expected.to_string_lossy().to_lowercase().trim_end_matches('\\'),
+            expected
+                .to_string_lossy()
+                .to_lowercase()
+                .trim_end_matches('\\'),
             "PEB cwd should match std::env::current_dir"
         );
     }
 
     #[test]
     fn split_simple_tokens() {
-        assert_eq!(split_command_line("codex exec foo"), ["codex", "exec", "foo"]);
+        assert_eq!(
+            split_command_line("codex exec foo"),
+            ["codex", "exec", "foo"]
+        );
         assert_eq!(split_command_line("   claude   -p  "), ["claude", "-p"]);
         assert_eq!(split_command_line(""), Vec::<String>::new());
     }

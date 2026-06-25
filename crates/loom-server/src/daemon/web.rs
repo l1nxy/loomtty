@@ -165,7 +165,10 @@ impl WebState {
 pub(crate) fn resolve_static_dir(configured: &str) -> Option<PathBuf> {
     let trimmed = configured.trim();
     let candidate = if trimmed.is_empty() {
-        match std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("web"))) {
+        match std::env::current_exe()
+            .ok()
+            .and_then(|e| e.parent().map(|p| p.join("web")))
+        {
             Some(p) => p,
             None => {
                 log::warn!("[web] could not resolve the server exe dir for the default static_dir");
@@ -362,7 +365,10 @@ fn extract_bearer(headers: &HeaderMap) -> Option<String> {
 fn extract_token_query(query: &str) -> Option<String> {
     for pair in query.split(['&', ';']) {
         if let Some(value) = pair.strip_prefix("token=") {
-            return percent_decode_str(value).decode_utf8().ok().map(|s| s.into_owned());
+            return percent_decode_str(value)
+                .decode_utf8()
+                .ok()
+                .map(|s| s.into_owned());
         }
     }
     None
@@ -714,8 +720,14 @@ mod tests {
     #[test]
     fn extract_token_query_finds_first_pair() {
         assert_eq!(extract_token_query("token=abc").as_deref(), Some("abc"));
-        assert_eq!(extract_token_query("foo=1&token=abc").as_deref(), Some("abc"));
-        assert_eq!(extract_token_query("token=abc&token=second").as_deref(), Some("abc"));
+        assert_eq!(
+            extract_token_query("foo=1&token=abc").as_deref(),
+            Some("abc")
+        );
+        assert_eq!(
+            extract_token_query("token=abc&token=second").as_deref(),
+            Some("abc")
+        );
         assert_eq!(extract_token_query("foo=bar").as_deref(), None);
         assert_eq!(extract_token_query("").as_deref(), None);
         assert_eq!(extract_token_query("token=").as_deref(), Some(""));
@@ -723,17 +735,32 @@ mod tests {
 
     #[test]
     fn extract_token_query_percent_decodes() {
-        assert_eq!(extract_token_query("token=abc%2Bdef").as_deref(), Some("abc+def"));
-        assert_eq!(extract_token_query("token=ab%3Dcd").as_deref(), Some("ab=cd"));
-        assert_eq!(extract_token_query("token=%E4%B8%AD").as_deref(), Some("中"));
+        assert_eq!(
+            extract_token_query("token=abc%2Bdef").as_deref(),
+            Some("abc+def")
+        );
+        assert_eq!(
+            extract_token_query("token=ab%3Dcd").as_deref(),
+            Some("ab=cd")
+        );
+        assert_eq!(
+            extract_token_query("token=%E4%B8%AD").as_deref(),
+            Some("中")
+        );
     }
 
     #[test]
     fn extract_token_query_stops_at_unencoded_separator() {
         assert_eq!(extract_token_query("token=abc&def").as_deref(), Some("abc"));
-        assert_eq!(extract_token_query("token=abc%26def").as_deref(), Some("abc&def"));
+        assert_eq!(
+            extract_token_query("token=abc%26def").as_deref(),
+            Some("abc&def")
+        );
         assert_eq!(extract_token_query("token=abc;def").as_deref(), Some("abc"));
-        assert_eq!(extract_token_query("foo=1;token=abc").as_deref(), Some("abc"));
+        assert_eq!(
+            extract_token_query("foo=1;token=abc").as_deref(),
+            Some("abc")
+        );
     }
 
     #[test]
@@ -745,7 +772,11 @@ mod tests {
     fn extract_bearer_matches_scheme_case_insensitively() {
         for scheme in &["Bearer", "bearer", "BEARER", "BeArEr"] {
             let h = headers(&[("authorization", &format!("{scheme} abc123"))]);
-            assert_eq!(extract_bearer(&h).as_deref(), Some("abc123"), "scheme {scheme}");
+            assert_eq!(
+                extract_bearer(&h).as_deref(),
+                Some("abc123"),
+                "scheme {scheme}"
+            );
         }
     }
 
@@ -757,9 +788,15 @@ mod tests {
 
     #[test]
     fn extract_bearer_ignores_empty_credentials() {
-        assert_eq!(extract_bearer(&headers(&[("authorization", "Bearer   ")])), None);
+        assert_eq!(
+            extract_bearer(&headers(&[("authorization", "Bearer   ")])),
+            None
+        );
         // No space → split_once fails.
-        assert_eq!(extract_bearer(&headers(&[("authorization", "Bearer")])), None);
+        assert_eq!(
+            extract_bearer(&headers(&[("authorization", "Bearer")])),
+            None
+        );
     }
 
     #[test]
@@ -771,33 +808,51 @@ mod tests {
     #[test]
     fn extract_token_header_wins_over_query() {
         let h = headers(&[("authorization", "Bearer correct")]);
-        assert_eq!(extract_token(&h, Some("token=wrong")).as_deref(), Some("correct"));
+        assert_eq!(
+            extract_token(&h, Some("token=wrong")).as_deref(),
+            Some("correct")
+        );
         // A wrong header still wins (and will fail the compare) so an
         // attacker who can inject only the header can't silently downgrade
         // a query-authenticated client.
         let h = headers(&[("authorization", "Bearer wrong")]);
-        assert_eq!(extract_token(&h, Some("token=correct")).as_deref(), Some("wrong"));
+        assert_eq!(
+            extract_token(&h, Some("token=correct")).as_deref(),
+            Some("wrong")
+        );
     }
 
     #[test]
     fn extract_token_falls_back_to_query() {
         let h = HeaderMap::new();
-        assert_eq!(extract_token(&h, Some("token=via-query")).as_deref(), Some("via-query"));
+        assert_eq!(
+            extract_token(&h, Some("token=via-query")).as_deref(),
+            Some("via-query")
+        );
         assert_eq!(extract_token(&h, None), None);
     }
 
     #[test]
     fn origin_allowed_empty_allowlist_is_permissive() {
         assert!(origin_allowed(&HeaderMap::new(), &[]));
-        assert!(origin_allowed(&headers(&[("origin", "http://anywhere.example")]), &[]));
+        assert!(origin_allowed(
+            &headers(&[("origin", "http://anywhere.example")]),
+            &[]
+        ));
         assert!(origin_allowed(&headers(&[("origin", "null")]), &[]));
     }
 
     #[test]
     fn origin_allowed_strict_allowlist_requires_match() {
         let allowed = vec!["https://terminal.example.com".to_string()];
-        assert!(origin_allowed(&headers(&[("origin", "https://terminal.example.com")]), &allowed));
-        assert!(!origin_allowed(&headers(&[("origin", "https://attacker.example.com")]), &allowed));
+        assert!(origin_allowed(
+            &headers(&[("origin", "https://terminal.example.com")]),
+            &allowed
+        ));
+        assert!(!origin_allowed(
+            &headers(&[("origin", "https://attacker.example.com")]),
+            &allowed
+        ));
         // Missing Origin under strict policy must fail.
         assert!(!origin_allowed(&HeaderMap::new(), &allowed));
     }
@@ -816,7 +871,12 @@ mod tests {
         // classic auth-mismatch source; trim before the length check.
         let token = prepare_web_token("  deadbeefcafebabe1234  \n").unwrap();
         assert_eq!(token.as_str(), "deadbeefcafebabe1234");
-        assert_eq!(prepare_web_token(&"a".repeat(MIN_WEB_TOKEN_BYTES)).unwrap().len(), MIN_WEB_TOKEN_BYTES);
+        assert_eq!(
+            prepare_web_token(&"a".repeat(MIN_WEB_TOKEN_BYTES))
+                .unwrap()
+                .len(),
+            MIN_WEB_TOKEN_BYTES
+        );
     }
 
     #[test]
@@ -861,7 +921,11 @@ mod router_tests {
 
     fn write_site(dir: &Path) {
         std::fs::create_dir_all(dir.join("assets")).unwrap();
-        std::fs::write(dir.join("index.html"), "<!doctype html><title>loomtty</title>").unwrap();
+        std::fs::write(
+            dir.join("index.html"),
+            "<!doctype html><title>loomtty</title>",
+        )
+        .unwrap();
         std::fs::write(dir.join("assets/app-abc123.js"), "console.log(1)").unwrap();
         std::fs::write(dir.join("sw.js"), "/* sw */").unwrap();
     }
@@ -994,7 +1058,11 @@ mod router_tests {
         let (_tmp, router) = site_router();
         // ServeDir rejects `..` traversal; the encoded form must not reach
         // a file outside the served root either.
-        for uri in ["/../Cargo.toml", "/..%2f..%2fCargo.toml", "/%2e%2e/Cargo.toml"] {
+        for uri in [
+            "/../Cargo.toml",
+            "/..%2f..%2fCargo.toml",
+            "/%2e%2e/Cargo.toml",
+        ] {
             let (status, _, body) = get(&router, uri).await;
             assert_ne!(status, StatusCode::OK, "{uri} unexpectedly served 200");
             assert!(!body.contains("[package]"), "{uri} leaked a manifest");
@@ -1036,17 +1104,26 @@ mod stream_tests {
 
     impl Sink<Message> for MockWs {
         type Error = axum::Error;
-        fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), axum::Error>> {
+        fn poll_ready(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Result<(), axum::Error>> {
             Poll::Ready(Ok(()))
         }
         fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), axum::Error> {
             self.get_mut().sent.push(item);
             Ok(())
         }
-        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), axum::Error>> {
+        fn poll_flush(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Result<(), axum::Error>> {
             Poll::Ready(Ok(()))
         }
-        fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), axum::Error>> {
+        fn poll_close(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Result<(), axum::Error>> {
             Poll::Ready(Ok(()))
         }
     }
@@ -1054,7 +1131,9 @@ mod stream_tests {
     #[tokio::test]
     async fn poll_read_drains_binary_across_short_reads() {
         let payload: Vec<u8> = (0..100u8).collect();
-        let mut s = AxumWsStream::new(MockWs::new(vec![Message::Binary(Bytes::from(payload.clone()))]));
+        let mut s = AxumWsStream::new(MockWs::new(vec![Message::Binary(Bytes::from(
+            payload.clone(),
+        ))]));
         let mut out = Vec::new();
         let mut chunk = [0u8; 32];
         loop {
@@ -1168,13 +1247,16 @@ mod listener_tests {
         let mut c2 = TcpStream::connect(addr).await.unwrap();
         let mut buf = [0u8; 1];
         let closed = match tokio::time::timeout(Duration::from_secs(5), c2.read(&mut buf)).await {
-            Ok(Ok(0)) => true,   // FIN: clean EOF
-            Ok(Ok(_)) => false,  // server sent data — it did NOT shed
-            Ok(Err(_)) => true,  // RST/abort — also a server-side close
-            Err(_) => false,     // timed out — connection left open
+            Ok(Ok(0)) => true,  // FIN: clean EOF
+            Ok(Ok(_)) => false, // server sent data — it did NOT shed
+            Ok(Err(_)) => true, // RST/abort — also a server-side close
+            Err(_) => false,    // timed out — connection left open
         };
         assert!(closed, "a shed connection must be closed by the server");
-        assert!(rx.try_recv().is_err(), "a shed connection must not reach the app");
+        assert!(
+            rx.try_recv().is_err(),
+            "a shed connection must not reach the app"
+        );
 
         // Releasing the held permit admits the next connection.
         drop(held);

@@ -8,7 +8,7 @@
 //! `App::reload_background_image` so a multi-MB image doesn't stall
 //! the event loop. The worker sends its result back through a channel
 //! + an `EventLoopProxy` wake; the main thread applies it via
-//! `App::apply_pending_background_image` next event-loop iteration.
+//!   `App::apply_pending_background_image` next event-loop iteration.
 
 use anyhow::{Context, Result};
 use loom_config::config::expand_config_path;

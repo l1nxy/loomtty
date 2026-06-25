@@ -50,6 +50,13 @@ fn get_pw_shell() -> Option<String> {
     shell.to_str().ok().map(|s| s.to_string())
 }
 
+/// Non-unix platforms have no passwd database, so there's no login shell to
+/// query. A `None`-returning stub lets the call site stay a plain `fn` ref.
+#[cfg(not(unix))]
+fn get_pw_shell() -> Option<String> {
+    None
+}
+
 impl Pty {
     pub fn spawn(cols: u16, rows: u16, shell: &str) -> Result<Self> {
         Self::spawn_with_opts(cols, rows, shell, None, None)
@@ -122,16 +129,11 @@ impl Pty {
             let shell_path = std::env::var("SHELL")
                 .ok()
                 .filter(|s| !s.is_empty())
-                .or_else(|| {
-                    #[cfg(unix)]
-                    {
-                        get_pw_shell()
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        None
-                    }
-                })
+                // `or_else` keeps the passwd lookup lazy: only fall back to
+                // `get_pw_shell()` when `$SHELL` is unset/empty. `or(..)` would
+                // run the (possibly NSS/LDAP-blocking) lookup on every pane
+                // spawn even when `$SHELL` is already valid.
+                .or_else(get_pw_shell)
                 .unwrap_or_else(|| "/bin/sh".to_string());
             CommandBuilder::new(shell_path)
         };
@@ -303,13 +305,13 @@ impl Pty {
     /// **Windows:** Always returns `false` — ConPTY does not expose termios state.
     #[cfg(unix)]
     pub fn is_password_input(&self) -> bool {
-        if let Some(ref master) = self.master {
-            if let Some(termios) = master.get_termios() {
-                let bits = termios.local_flags.bits() as u64;
-                let canonical = (bits & (libc::ICANON as u64)) != 0;
-                let echo = (bits & (libc::ECHO as u64)) != 0;
-                return canonical && !echo;
-            }
+        if let Some(ref master) = self.master
+            && let Some(termios) = master.get_termios()
+        {
+            let bits = termios.local_flags.bits();
+            let canonical = (bits & libc::ICANON) != 0;
+            let echo = (bits & libc::ECHO) != 0;
+            return canonical && !echo;
         }
         false
     }

@@ -1,0 +1,8 @@
+# Pin the toolchain so CI is reproducible. Floating `@stable` silently drifted
+# (a newer rustfmt reformatted the tree and stricter lints began firing),
+# turning CI red with no source change behind it. Bump this deliberately —
+# never let the channel float — and run `cargo fmt` / `cargo clippy` against the
+# pinned version before bumping.
+[toolchain]
+channel = "1.94.0"
+components = ["rustfmt", "clippy"]

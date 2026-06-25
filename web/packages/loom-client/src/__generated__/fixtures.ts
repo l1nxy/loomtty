@@ -31,9 +31,9 @@ export interface HelloFixture {
 }
 
 export const HELLO_FIXTURES: HelloFixture[] = [
-  { name: "main", hex: "43495249000001000104006d61696e00050000d00200000000184100009041", hello: { sessionName: "main", width: 1280, height: 720, cellWidth: 9.5, cellHeight: 18.0 } },
-  { name: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", hex: "4349524900000100014000616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612003000058020000000020410000a041", hello: { sessionName: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", width: 800, height: 600, cellWidth: 10.0, cellHeight: 20.0 } },
-  { name: "fresh-fox-12", hex: "4349524900000100010c0066726573682d666f782d313280070000380400000000004100008041", hello: { sessionName: "fresh-fox-12", width: 1920, height: 1080, cellWidth: 8.0, cellHeight: 16.0 } },
+  { name: "main", hex: "4c4f4f4d000001000104006d61696e00050000d00200000000184100009041", hello: { sessionName: "main", width: 1280, height: 720, cellWidth: 9.5, cellHeight: 18.0 } },
+  { name: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", hex: "4c4f4f4d00000100014000616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612003000058020000000020410000a041", hello: { sessionName: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", width: 800, height: 600, cellWidth: 10.0, cellHeight: 20.0 } },
+  { name: "fresh-fox-12", hex: "4c4f4f4d00000100010c0066726573682d666f782d313280070000380400000000004100008041", hello: { sessionName: "fresh-fox-12", width: 1920, height: 1080, cellWidth: 8.0, cellHeight: 16.0 } },
 ];
 
 export const CLIENT_FIXTURES: Fixture<ClientMessage>[] = [

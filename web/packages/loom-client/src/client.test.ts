@@ -14,7 +14,7 @@ import { CLIENT_FIXTURES, SERVER_FIXTURES } from "./__generated__/fixtures.js";
 
 function serverHelloBytes(version: number = LOOM_PKG_VERSION): Uint8Array {
   const buf = new Uint8Array(SERVER_HELLO_LEN);
-  buf.set([0x43, 0x49, 0x52, 0x49], 0);
+  buf.set([0x4c, 0x4f, 0x4f, 0x4d], 0);
   new DataView(buf.buffer).setUint32(4, version, true);
   return buf;
 }
@@ -64,8 +64,8 @@ describe("LoomClient handshake", () => {
     c.start();
     sockets[0]!.simulateOpen();
     expect(sockets[0]!.sent).toHaveLength(1);
-    // First byte must be the magic "C".
-    expect(sockets[0]!.sent[0]!.bytes[0]).toBe(0x43);
+    // First byte must be the magic "L".
+    expect(sockets[0]!.sent[0]!.bytes[0]).toBe(0x4c);
   });
 
   test("emits `open` after receiving 8-byte ServerHello", () => {
@@ -401,9 +401,9 @@ describe("LoomClient resize-replay safety", () => {
       expect(sockets).toHaveLength(2);
       sockets[1]!.simulateOpen();
       // Reconnect succeeded (Hello bytes on the wire start with magic
-      // "C"). If the bad Resize had been cached, encodeClientHello
+      // "L"). If the bad Resize had been cached, encodeClientHello
       // inside `handleSocketOpen` would have thrown.
-      expect(sockets[1]!.sent[0]!.bytes[0]).toBe(0x43);
+      expect(sockets[1]!.sent[0]!.bytes[0]).toBe(0x4c);
       // No error events were emitted from the reconnect path.
       expect(events.filter((e) => e.kind === "error")).toHaveLength(0);
       void c;
@@ -427,7 +427,7 @@ describe("LoomClient reconnect", () => {
       expect(sockets).toHaveLength(2);
       sockets[1]!.simulateOpen();
       // First payload after open MUST be a fresh ClientHello (magic).
-      expect(sockets[1]!.sent[0]!.bytes[0]).toBe(0x43);
+      expect(sockets[1]!.sent[0]!.bytes[0]).toBe(0x4c);
       void c;
     } finally {
       vi.useRealTimers();

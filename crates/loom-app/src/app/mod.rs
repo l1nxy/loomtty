@@ -9,12 +9,12 @@ mod types;
 pub use modal_state::{ContextMenuParent, ModalField, ModalKind, kept_set};
 pub use types::*;
 
+use crossbeam_channel::{Receiver, Sender};
 use loom_config::config::LoomConfig;
 use loom_input::leader::InputHandler;
 use loom_layout::geometry::ViewSize;
 use loom_layout::workspace_set::WorkspaceSet;
 use loom_protocol::message::ClientMessage;
-use crossbeam_channel::{Receiver, Sender};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 

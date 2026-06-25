@@ -20,7 +20,11 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use crate::font_resolver::{FontResolver, ResolvedFont};
+use crate::font_resolver::FontResolver;
+// ResolvedFont drives the non-macOS per-run face selection; the macOS path
+// shapes via Core Text and never touches it, so gate the import to match.
+#[cfg(not(target_os = "macos"))]
+use crate::font_resolver::ResolvedFont;
 
 #[cfg(target_os = "macos")]
 use core_text::font::CTFont;
@@ -202,9 +206,14 @@ pub struct UiTextShaper {
     #[cfg(target_os = "macos")]
     ct_leading: f32,
     font_id: Option<fontdb::ID>,
+    // Read only by the non-macOS shaping path; the macOS Core Text path leaves
+    // these set-but-unread, so allow dead_code there rather than cfg them out
+    // (they are still written unconditionally at construction).
+    #[allow(dead_code)]
     terminal_font_id: Option<fontdb::ID>,
     cjk_font_id: Option<fontdb::ID>,
     emoji_font_id: Option<fontdb::ID>,
+    #[allow(dead_code)]
     resolver: Option<Arc<dyn FontResolver>>,
     pixel_size: f32,
     cache: ShapeLru,
@@ -429,9 +438,11 @@ impl UiTextShaper {
             let first_ch = grapheme.chars().next().unwrap();
             let resolved = resolver.resolve_char(first_ch);
 
-            if run_font.is_some() && run_font != Some(resolved) {
+            if let Some(font) = run_font
+                && font != resolved
+            {
                 let run_text = &text[run_start..byte_off];
-                let (face, fid) = self.face_for_resolved(run_font.unwrap());
+                let (face, fid) = self.face_for_resolved(font);
                 out.extend(self.shape_rustybuzz_run(face, fid, run_text, run_start));
                 run_start = byte_off;
             }
@@ -514,24 +525,22 @@ impl UiTextShaper {
             if gid == 0 {
                 let cluster_byte = info.cluster as usize;
                 if let (Some(tf), Some(tid)) = (self.terminal_face.as_ref(), self.terminal_font_id)
+                    && let Some(ch) = text[cluster_byte..].chars().next()
                 {
-                    if let Some(ch) = text[cluster_byte..].chars().next() {
-                        let mut buf2 = rustybuzz::UnicodeBuffer::new();
-                        buf2.push_str(&ch.to_string());
-                        let tf_face = tf.borrow_face();
-                        let out2 = rustybuzz::shape(&tf_face, &[], buf2);
-                        if let (Some(i2), Some(p2)) =
-                            (out2.glyph_infos().first(), out2.glyph_positions().first())
-                        {
-                            if i2.glyph_id != 0 {
-                                let tscale = self.pixel_size / tf.units_per_em.max(1.0);
-                                gid = i2.glyph_id;
-                                fid = tid;
-                                adv = p2.x_advance as f32 * tscale;
-                                xoff = p2.x_offset as f32 * tscale;
-                                yoff = p2.y_offset as f32 * tscale;
-                            }
-                        }
+                    let mut buf2 = rustybuzz::UnicodeBuffer::new();
+                    buf2.push_str(&ch.to_string());
+                    let tf_face = tf.borrow_face();
+                    let out2 = rustybuzz::shape(&tf_face, &[], buf2);
+                    if let (Some(i2), Some(p2)) =
+                        (out2.glyph_infos().first(), out2.glyph_positions().first())
+                        && i2.glyph_id != 0
+                    {
+                        let tscale = self.pixel_size / tf.units_per_em.max(1.0);
+                        gid = i2.glyph_id;
+                        fid = tid;
+                        adv = p2.x_advance as f32 * tscale;
+                        xoff = p2.x_offset as f32 * tscale;
+                        yoff = p2.y_offset as f32 * tscale;
                     }
                 }
             }
@@ -558,7 +567,6 @@ impl UiTextShaper {
         use core_foundation::attributed_string::CFMutableAttributedString;
         use core_foundation::base::{CFRange, TCFType};
         use core_foundation::string::CFString;
-        use core_text::font::CTFont as CTFontType;
         use core_text::line::CTLine;
         use core_text::string_attributes::kCTFontAttributeName;
 
@@ -640,7 +648,6 @@ impl UiTextShaper {
     ) -> fontdb::ID {
         use core_foundation::base::TCFType;
         use core_foundation::dictionary::CFDictionaryRef;
-        use core_foundation::string::CFString;
         use core_text::font::CTFont as CTFontType;
         use core_text::string_attributes::kCTFontAttributeName;
 
@@ -671,12 +678,12 @@ impl UiTextShaper {
 
             // Check if it matches known CJK or emoji fonts by name heuristics.
             let run_ps_lower = run_ps.to_lowercase();
-            if self.emoji_font_id.is_some()
+            if let Some(id) = self.emoji_font_id
                 && (run_ps_lower.contains("emoji") || run_ps_lower.contains("color"))
             {
-                return self.emoji_font_id.unwrap();
+                return id;
             }
-            if self.cjk_font_id.is_some()
+            if let Some(id) = self.cjk_font_id
                 && (run_ps_lower.contains("cjk")
                     || run_ps_lower.contains("pingfang")
                     || run_ps_lower.contains("hiragino")
@@ -685,7 +692,7 @@ impl UiTextShaper {
                     || run_ps_lower.contains("gothic")
                     || run_ps_lower.contains("mincho"))
             {
-                return self.cjk_font_id.unwrap();
+                return id;
             }
 
             // Unknown fallback font — use primary; glyph cache may .notdef

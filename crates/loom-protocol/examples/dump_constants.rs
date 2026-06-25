@@ -29,13 +29,14 @@ fn main() {
     println!("export const TAG_CELL_DELTA = 0x{TAG_CELL_DELTA:02x};");
     println!("export const TAG_FULL_PANE_SYNC = 0x{TAG_FULL_PANE_SYNC:02x};");
     println!("export const TAG_CELL_DELTA_LZ4 = 0x{TAG_CELL_DELTA_LZ4:02x};");
-    println!(
-        "export const TAG_FULL_PANE_SYNC_LZ4 = 0x{TAG_FULL_PANE_SYNC_LZ4:02x};"
-    );
+    println!("export const TAG_FULL_PANE_SYNC_LZ4 = 0x{TAG_FULL_PANE_SYNC_LZ4:02x};");
     println!();
     println!("// ── PackedCell layout ─────────────────────────────────");
     println!("export const PACKED_CELL_SIZE = {PACKED_CELL_SIZE};");
-    println!("export const DEFAULT_CELL_CHAR = 0x{:02x}; // space", DEFAULT_CELL_CHAR as u32);
+    println!(
+        "export const DEFAULT_CELL_CHAR = 0x{:02x}; // space",
+        DEFAULT_CELL_CHAR as u32
+    );
     println!("export const DEFAULT_CELL_FLAGS = 0x{DEFAULT_CELL_FLAGS:04x};");
     println!();
     println!("// ── Color discriminant tags ───────────────────────────");

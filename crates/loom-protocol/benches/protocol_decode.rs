@@ -1,11 +1,11 @@
 //! Benchmarks for protocol decode hot paths.
 
+use criterion::{Criterion, criterion_group, criterion_main};
 use loom_protocol::codec::{
     StateEncoder, decode_cell_delta_borrowed, decode_full_pane_sync, decode_sm_cells,
     encode_cell_delta_streaming_framed, encode_full_pane_sync_payload,
 };
 use loom_protocol::message::*;
-use criterion::{Criterion, criterion_group, criterion_main};
 
 // ─── Test data builders ─────────────────────────────────────────────
 

@@ -13,8 +13,8 @@ use super::text_layout;
 use super::tokens;
 use super::types::{UiContext, UiScene};
 use crate::app::App;
-use crate::app::loom_ui_adapter::paint_element_tree;
 use crate::app::debug_metrics::Stats;
+use crate::app::loom_ui_adapter::paint_element_tree;
 use loom_ui::{Div, IntoElement, Render, RenderCtx, Styled, deferred, div, text};
 
 const TITLE: &str = "Gotta Go Fast";

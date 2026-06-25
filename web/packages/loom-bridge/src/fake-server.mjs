@@ -12,7 +12,7 @@ const srv = createServer((sock) => {
   process.stdout.write(`fake-server: client connected from ${sock.remoteAddress}\n`);
   sock.on("data", (chunk) => {
     process.stdout.write(`fake-server: received ${chunk.length} bytes; echoing 8-byte preamble\n`);
-    sock.write(Buffer.from([0x43, 0x49, 0x52, 0x49, 0, 0, 0, 0]));
+    sock.write(Buffer.from([0x4c, 0x4f, 0x4f, 0x4d, 0, 0, 0, 0]));
   });
   sock.on("close", () => process.stdout.write(`fake-server: client disconnected\n`));
 });

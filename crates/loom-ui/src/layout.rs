@@ -233,6 +233,7 @@ pub fn paint_tree_into_with_layout(
 /// a mouse button is held after pressing on the element with that
 /// `hit_id`, `None` otherwise. Threaded into [`PaintCtx::active_hit_id`]
 /// so elements can apply `.active(|s| ...)` refinements.
+#[allow(clippy::too_many_arguments)] // Clippy 1.94: retained UI paint entry point mirrors host render state.
 pub fn paint_tree_into_with(
     root: &dyn Element,
     theme: &ResolvedTheme,
@@ -356,6 +357,7 @@ pub fn layout_tree_into_retained(
 /// is not derivable from the current cursor position. Threaded into
 /// [`PaintCtx::active_hit_id`] so elements can apply
 /// `.active(|s| ...)` refinements while a button is held.
+#[allow(clippy::too_many_arguments)] // Clippy 1.94: retained paint walker needs explicit render/input context.
 pub fn paint_tree_into_retained(
     root: &dyn Element,
     theme: &ResolvedTheme,
@@ -456,7 +458,7 @@ pub fn paint_tree_into_retained(
     let mut deferred_queue: Vec<DeferredEntry<'_>> = Vec::new();
     let mut states_owner = states;
     {
-        let states_for_main: Option<&mut ElementStates> = states_owner.as_mut().map(|s| &mut **s);
+        let states_for_main: Option<&mut ElementStates> = states_owner.as_deref_mut();
         paint_node(
             tree,
             root_node,
@@ -490,7 +492,7 @@ pub fn paint_tree_into_retained(
         scene,
         layout_snapshot,
         &mut paint_order,
-        states_owner.as_mut().map(|s| &mut **s),
+        states_owner,
     );
 }
 
@@ -606,7 +608,7 @@ fn paint_node<'a>(
     // for this call, then `states` is still live for the children loop.
     let mut states_owner = states;
     {
-        let states_for_paint: Option<&mut ElementStates> = states_owner.as_mut().map(|s| &mut **s);
+        let states_for_paint: Option<&mut ElementStates> = states_owner.as_deref_mut();
         let mut ctx = PaintCtx {
             theme,
             bounds: [paint_x, paint_y, layout.size.width, layout.size.height],
@@ -666,7 +668,7 @@ fn paint_node<'a>(
         "Taffy child count disagrees with Element::children()",
     );
     for (child_node, child_el) in taffy_children.iter().zip(children.iter()) {
-        let states_for_child: Option<&mut ElementStates> = states.as_mut().map(|s| &mut **s);
+        let states_for_child: Option<&mut ElementStates> = states.as_deref_mut();
         paint_node(
             tree,
             *child_node,
@@ -786,8 +788,7 @@ fn drain_deferred_paint<'a>(
         pending.sort_by_key(|e| e.priority);
         let mut next_pending: Vec<DeferredEntry<'a>> = Vec::new();
         for entry in pending.drain(..) {
-            let states_for_call: Option<&mut ElementStates> =
-                states_owner.as_mut().map(|s| &mut **s);
+            let states_for_call: Option<&mut ElementStates> = states_owner.as_deref_mut();
             // For anchored entries, recompute parent_local from the
             // child's measured size + viewport. The captured value
             // (the wrapper's parent_local) is irrelevant — anchored
@@ -981,25 +982,25 @@ fn walk_for_layout_snapshot<'a>(
 // ─── Style translators (loom-ui::style → taffy::Style) ────────────────
 
 pub(crate) fn to_taffy_style(s: &crate::Style) -> taffy::Style {
-    let mut t = taffy::Style::default();
-
     // Default display is **flex** — matches gpui / Tailwind's `div`
     // semantics where builder helpers like `.gap_*`, `.items_*`,
     // `.justify_*` only take effect on flex containers. Falling through
     // to `Block` silently ignored those helpers on the plain `div()` case.
-    t.display = match s.display {
-        Some(UiDisplay::Block) => taffy::Display::Block,
-        Some(UiDisplay::None) => taffy::Display::None,
-        // Explicit Flex AND the unset/default case both become Flex.
-        Some(UiDisplay::Flex) | None => taffy::Display::Flex,
-    };
-
-    t.flex_direction = match s.flex_direction {
-        Some(UiFlexDirection::Column) => taffy::FlexDirection::Column,
-        Some(UiFlexDirection::Row) => taffy::FlexDirection::Row,
-        Some(UiFlexDirection::RowReverse) => taffy::FlexDirection::RowReverse,
-        Some(UiFlexDirection::ColumnReverse) => taffy::FlexDirection::ColumnReverse,
-        None => taffy::FlexDirection::Row,
+    let mut t = taffy::Style {
+        display: match s.display {
+            Some(UiDisplay::Block) => taffy::Display::Block,
+            Some(UiDisplay::None) => taffy::Display::None,
+            // Explicit Flex AND the unset/default case both become Flex.
+            Some(UiDisplay::Flex) | None => taffy::Display::Flex,
+        },
+        flex_direction: match s.flex_direction {
+            Some(UiFlexDirection::Column) => taffy::FlexDirection::Column,
+            Some(UiFlexDirection::Row) => taffy::FlexDirection::Row,
+            Some(UiFlexDirection::RowReverse) => taffy::FlexDirection::RowReverse,
+            Some(UiFlexDirection::ColumnReverse) => taffy::FlexDirection::ColumnReverse,
+            None => taffy::FlexDirection::Row,
+        },
+        ..Default::default()
     };
 
     if let Some(a) = s.align_items {

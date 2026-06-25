@@ -9,11 +9,11 @@
 //! Run one group:  `cargo bench -p loom-ui --bench chrome_paint -- palette_paint`.
 //! Run one bench:  `cargo bench -p loom-ui --bench chrome_paint -- palette_paint/rows_30`.
 
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use loom_ui::{
     Arena, ElementArenaScope, FluentBuilder, IntoElement, ResolvedTheme, Scene, Styled, deferred,
     div, paint_tree_into_retained, shaper::NullShaper, text,
 };
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use std::cell::RefCell;
 
 /// Build a palette-like tree with `n_rows` selectable rows. Mirrors the

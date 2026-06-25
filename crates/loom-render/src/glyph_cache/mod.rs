@@ -78,11 +78,11 @@ fn resolved_font_order(preferred: ResolvedFont) -> [ResolvedFont; 3] {
         ],
     }
 }
-use loom_config::config::RenderConfig;
 #[cfg(target_os = "linux")]
 use crossfont::{FontDesc, GlyphKey, Rasterize, Rasterizer, Size, Slant, Style, Weight};
 #[cfg(target_os = "linux")]
 use freetype::Library as FtLibrary;
+use loom_config::config::RenderConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -764,19 +764,20 @@ impl GlyphCache {
                     ),
                 };
                 if let Some(font) = font {
-                    if let Some(glyph) = self.coretext.rasterize_char(ch, style, font, try_color) {
-                        if glyph.width > 0 && glyph.height > 0 {
-                            log::debug!(
-                                "CoreText cache: U+{:04X} rasterized via {:?} ({}x{} color={})",
-                                ch as u32,
-                                resolved,
-                                glyph.width,
-                                glyph.height,
-                                glyph.is_color,
-                            );
-                            result = Some(glyph);
-                            break;
-                        }
+                    if let Some(glyph) = self.coretext.rasterize_char(ch, style, font, try_color)
+                        && glyph.width > 0
+                        && glyph.height > 0
+                    {
+                        log::debug!(
+                            "CoreText cache: U+{:04X} rasterized via {:?} ({}x{} color={})",
+                            ch as u32,
+                            resolved,
+                            glyph.width,
+                            glyph.height,
+                            glyph.is_color,
+                        );
+                        result = Some(glyph);
+                        break;
                     }
                 } else {
                     log::debug!(
@@ -887,7 +888,7 @@ impl GlyphCache {
             }
 
             self.cache.insert(key, GlyphEntry::EMPTY);
-            return Some(GlyphEntry::EMPTY);
+            Some(GlyphEntry::EMPTY)
         }
 
         #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1074,7 +1075,7 @@ impl GlyphCache {
                 return Some(GlyphEntry::EMPTY);
             };
             self.glyph_id_cache.insert(key, entry);
-            return Some(entry);
+            Some(entry)
         }
 
         #[cfg(any(target_os = "linux", target_os = "macos"))]

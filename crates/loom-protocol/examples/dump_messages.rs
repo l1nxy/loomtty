@@ -60,9 +60,7 @@ fn main() {
         "types" => emit_types(&registry),
         "fixtures" => emit_fixtures(),
         other => {
-            eprintln!(
-                "usage: dump_messages <schema|types|fixtures>; got {other:?}"
-            );
+            eprintln!("usage: dump_messages <schema|types|fixtures>; got {other:?}");
             std::process::exit(2);
         }
     };
@@ -99,7 +97,10 @@ fn emit_container_spec(fmt: &ContainerFormat) -> String {
     match fmt {
         ContainerFormat::UnitStruct => r#"{ kind: "unit-struct" }"#.to_string(),
         ContainerFormat::NewTypeStruct(inner) => {
-            format!(r#"{{ kind: "newtype-struct", of: {} }}"#, emit_schema_type(inner))
+            format!(
+                r#"{{ kind: "newtype-struct", of: {} }}"#,
+                emit_schema_type(inner)
+            )
         }
         ContainerFormat::TupleStruct(items) => {
             let inner: Vec<String> = items.iter().map(emit_schema_type).collect();
@@ -187,7 +188,9 @@ fn emit_schema_type(fmt: &Format) -> String {
         Format::Str => r#"{ kind: "str" }"#.into(),
         Format::Bytes => r#"{ kind: "bytes" }"#.into(),
         Format::TypeName(n) => format!(r#"{{ kind: "ref", name: {n:?} }}"#),
-        Format::Option(inner) => format!(r#"{{ kind: "option", of: {} }}"#, emit_schema_type(inner)),
+        Format::Option(inner) => {
+            format!(r#"{{ kind: "option", of: {} }}"#, emit_schema_type(inner))
+        }
         Format::Seq(inner) => format!(r#"{{ kind: "seq", of: {} }}"#, emit_schema_type(inner)),
         Format::Tuple(items) => {
             let inner: Vec<String> = items.iter().map(emit_schema_type).collect();
@@ -324,11 +327,9 @@ fn emit_ts_type(fmt: &Format) -> String {
             let parts = (0..*size).map(|_| inner.clone()).collect::<Vec<_>>();
             format!("[{}]", parts.join(", "))
         }
-        Format::Map { key, value } => format!(
-            "Map<{}, {}>",
-            emit_ts_type(key),
-            emit_ts_type(value)
-        ),
+        Format::Map { key, value } => {
+            format!("Map<{}, {}>", emit_ts_type(key), emit_ts_type(value))
+        }
         Format::Variable(_) => unreachable!(),
     }
 }
@@ -616,7 +617,11 @@ fn server_fixtures() -> Vec<(&'static str, String, String)> {
 
 fn encode_pkg_version(v: &str) -> u32 {
     let parts: Vec<&str> = v.split('.').collect();
-    assert_eq!(parts.len(), 3, "CARGO_PKG_VERSION must be major.minor.patch");
+    assert_eq!(
+        parts.len(),
+        3,
+        "CARGO_PKG_VERSION must be major.minor.patch"
+    );
     let major: u32 = parts[0].parse().unwrap();
     let minor: u32 = parts[1].parse().unwrap();
     let patch: u32 = parts[2].parse().unwrap();

@@ -856,7 +856,14 @@ fn session_on_timeout_not_expired_stays() {
 fn session_on_timeout_sticky_never_expires() {
     let mut s = InputSessionState::Leader(LeaderSession {
         mode: InputMode::Sticky,
-        entered_at: Instant::now() - Duration::from_secs(1000),
+        // `checked_sub` avoids the "overflow when subtracting duration from
+        // instant" panic on a freshly-booted CI runner — Windows `Instant` is
+        // QPC-from-boot, so `now - 1000s` underflows when uptime < ~16 min.
+        // Sticky never expires regardless of how long ago it was entered, so
+        // the `now` fallback keeps this assertion valid either way.
+        entered_at: Instant::now()
+            .checked_sub(Duration::from_secs(1000))
+            .unwrap_or_else(Instant::now),
     });
     s.on_timeout(Duration::from_secs(1));
     assert!(s.is_in_leader());
@@ -1115,7 +1122,12 @@ fn check_timeout_does_not_affect_sticky() {
     let mut h = sticky_handler();
     h.session = InputSessionState::Leader(LeaderSession {
         mode: InputMode::Sticky,
-        entered_at: Instant::now() - Duration::from_secs(999),
+        // See `session_on_timeout_sticky_never_expires`: `checked_sub` guards
+        // against the Windows `Instant` underflow panic on a young CI runner;
+        // sticky is unaffected by timeout, so the `now` fallback is harmless.
+        entered_at: Instant::now()
+            .checked_sub(Duration::from_secs(999))
+            .unwrap_or_else(Instant::now),
     });
     h.poll_timeout();
     assert!(h.is_awaiting_action());

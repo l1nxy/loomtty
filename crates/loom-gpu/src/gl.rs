@@ -5,12 +5,20 @@
 //!
 //! Uses `glutin` for EGL context management and `glow` for GL calls.
 
+// On macOS the GL backend never builds a context: the glutin context/surface
+// setup below is `cfg(not(target_os = "macos"))`, and the runtime always picks
+// the blade/Metal backend there. That leaves the GL pipelines' constructors and
+// shader-source constants unused on macOS only — Rust 1.94's stricter dead-code
+// pass now flags them. Allow it module-wide on macOS rather than cfg-gating
+// every individual item.
+#![cfg_attr(target_os = "macos", allow(dead_code))]
+
+use glow::HasContext;
 use loom_config::config::RenderConfig;
 use loom_render::FrameScene;
 use loom_render::glyph_cache::{GlyphCache, GlyphInstance, PaneGlyphRange, PendingUpload};
 use loom_render::rect::{PaneRectRange, Rect};
 use loom_render::sdf_rect::SdfRect;
-use glow::HasContext;
 
 /// Upper bound on SDF chrome rects per frame. See
 /// `blade::MAX_SDF_RECTS` for rationale; kept identical so all
@@ -255,6 +263,7 @@ impl GlBlurPipeline {
         })
     }
 
+    #[allow(clippy::too_many_arguments)] // Clippy 1.94: GL blur pass exposes framebuffer/viewport/direction state.
     unsafe fn pass(
         &self,
         gl: &glow::Context,

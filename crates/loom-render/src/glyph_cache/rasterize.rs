@@ -72,12 +72,7 @@ pub(crate) fn rasterize_glyph_id_ft(
             // `data` shorter than the reported w*h*4. Pad to the full size so a
             // downstream consumer reading w*h*4 (e.g. the GPU texture upload)
             // can never over-read past the Vec.
-            data.resize(
-                (w as usize)
-                    .saturating_mul(h as usize)
-                    .saturating_mul(4),
-                0,
-            );
+            data.resize((w as usize).saturating_mul(h as usize).saturating_mul(4), 0);
             // Scale color bitmap to cell size if needed
             let target_h = cell_height as u32;
             if h != target_h && target_h > 0 {
@@ -264,6 +259,7 @@ pub(crate) fn cache_rasterized_glyph(
 /// Allocate atlas space for a DWrite-measured glyph and queue a D2D render command.
 /// No pixel data — the DX backend renders via D2D DrawGlyphRun at flush time.
 #[cfg(windows)]
+#[allow(clippy::too_many_arguments)] // Clippy 1.94: DWrite atlas plumbing intentionally passes explicit buffers/state.
 pub(crate) fn cache_measured_dwrite_glyph(
     measured: &super::rasterize_dwrite::MeasuredGlyph,
     face: &windows::Win32::Graphics::DirectWrite::IDWriteFontFace,

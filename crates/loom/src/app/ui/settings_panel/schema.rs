@@ -680,7 +680,13 @@ pub static FIELDS: &[FieldMeta] = &[
         label: "Pane Open Style",
         description: "Transition used when a pane opens or closes.",
         kind: FieldKind::Enum {
-            variants: &["fade", "slide-up", "slide-down", "slide-left", "fade-slide-up"],
+            variants: &[
+                "fade",
+                "slide-up",
+                "slide-down",
+                "slide-left",
+                "fade-slide-up",
+            ],
         },
     },
     FieldMeta {
@@ -1491,12 +1497,7 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
             // `None` → write empty string (the writer removes the
             // whole `[font.ui]` table, matching the loader's "no
             // override" resting state).
-            let family = c
-                .font
-                .ui
-                .as_ref()
-                .map(|u| u.family.as_str())
-                .unwrap_or("");
+            let family = c.font.ui.as_ref().map(|u| u.family.as_str()).unwrap_or("");
             w.set_font_ui_family(family);
         }
         SettingsField::UiFontSize => {
@@ -1518,9 +1519,7 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
         SettingsField::LayoutCenterFocusedColumn => {
             w.set_layout_center_focused_column(&read_enum(field, c))
         }
-        SettingsField::LayoutNewPaneSizing => {
-            w.set_layout_new_pane_sizing(&read_enum(field, c))
-        }
+        SettingsField::LayoutNewPaneSizing => w.set_layout_new_pane_sizing(&read_enum(field, c)),
         SettingsField::LayoutNewPaneWidth => w.set_layout_new_pane_width(&read_enum(field, c)),
         SettingsField::LayoutDynamicFullscreenWidth => {
             w.set_layout_dynamic_fullscreen_max_width(c.layout.dynamic_fullscreen_max_width)
@@ -1540,9 +1539,7 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
             w.set_appearance_focus_ring_style(&read_enum(field, c))
         }
         SettingsField::FontCellWidth => w.set_font_cell_width(c.font.adjust_cell_width),
-        SettingsField::FontDisableLigatures => {
-            w.set_font_disable_ligatures(&read_enum(field, c))
-        }
+        SettingsField::FontDisableLigatures => w.set_font_disable_ligatures(&read_enum(field, c)),
         SettingsField::FontUnderlinePosition => {
             w.set_font_underline_position(c.font.adjust_underline_position)
         }
@@ -1555,9 +1552,7 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
         SettingsField::FontStrikethroughThickness => {
             w.set_font_strikethrough_thickness(c.font.adjust_strikethrough_thickness)
         }
-        SettingsField::TerminalCursorShape => {
-            w.set_terminal_cursor_shape(&c.terminal.cursor_shape)
-        }
+        SettingsField::TerminalCursorShape => w.set_terminal_cursor_shape(&c.terminal.cursor_shape),
         SettingsField::TerminalCursorOpacity => {
             w.set_terminal_cursor_opacity(c.terminal.cursor_opacity)
         }
@@ -1567,18 +1562,12 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
         SettingsField::TerminalClearSelectionOnType => {
             w.set_terminal_clear_selection_on_type(c.terminal.clear_selection_on_type)
         }
-        SettingsField::TerminalBellUrgency => {
-            w.set_terminal_bell_urgency(c.terminal.bell_urgency)
-        }
+        SettingsField::TerminalBellUrgency => w.set_terminal_bell_urgency(c.terminal.bell_urgency),
         SettingsField::TerminalPasteWarnThreshold => {
             w.set_terminal_paste_warn_threshold(c.terminal.paste_warn_threshold)
         }
-        SettingsField::TerminalDefaultCols => {
-            w.set_terminal_default_cols(c.terminal.default_cols)
-        }
-        SettingsField::TerminalDefaultRows => {
-            w.set_terminal_default_rows(c.terminal.default_rows)
-        }
+        SettingsField::TerminalDefaultCols => w.set_terminal_default_cols(c.terminal.default_cols),
+        SettingsField::TerminalDefaultRows => w.set_terminal_default_rows(c.terminal.default_rows),
         SettingsField::TerminalNotifyThreshold => {
             w.set_terminal_notify_command_threshold(c.terminal.notify_command_threshold_secs)
         }
@@ -1601,9 +1590,7 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
         SettingsField::AnimationOverviewZoomFit => {
             w.set_animation_overview_zoom_fit(c.animation.overview_zoom_fit)
         }
-        SettingsField::InputLeaderTimeout => {
-            w.set_input_leader_timeout(c.input.leader_timeout_ms)
-        }
+        SettingsField::InputLeaderTimeout => w.set_input_leader_timeout(c.input.leader_timeout_ms),
         SettingsField::InputDoubleTapWindow => {
             w.set_input_double_tap_window(c.input.double_tap_window_ms)
         }
@@ -1614,9 +1601,7 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
         SettingsField::GestureNaturalScroll => {
             w.set_gesture_natural_scroll(c.gesture.natural_scroll)
         }
-        SettingsField::GestureSmoothScroll => {
-            w.set_gesture_smooth_scroll(c.gesture.smooth_scroll)
-        }
+        SettingsField::GestureSmoothScroll => w.set_gesture_smooth_scroll(c.gesture.smooth_scroll),
         SettingsField::GesturePinchSensitivity => {
             w.set_gesture_pinch_sensitivity(c.gesture.pinch_sensitivity)
         }
@@ -1630,9 +1615,7 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
         SettingsField::RenderFrameInterval => {
             w.set_render_frame_interval(c.render.frame_interval_ms)
         }
-        SettingsField::PredictionThreshold => {
-            w.set_prediction_threshold(c.prediction.threshold_ms)
-        }
+        SettingsField::PredictionThreshold => w.set_prediction_threshold(c.prediction.threshold_ms),
         SettingsField::PredictionShowUnderline => {
             w.set_prediction_show_underline(c.prediction.show_underline)
         }
@@ -1642,9 +1625,7 @@ pub fn write_to_disk(field: SettingsField, c: &LoomConfig, w: &mut EditableConfi
         SettingsField::SessionAgentSaveInterval => {
             w.set_session_agent_save_interval(c.session.agent_save_interval_secs)
         }
-        SettingsField::ServerIdleTimeout => {
-            w.set_server_idle_timeout(c.server.idle_timeout_secs)
-        }
+        SettingsField::ServerIdleTimeout => w.set_server_idle_timeout(c.server.idle_timeout_secs),
     }
 }
 

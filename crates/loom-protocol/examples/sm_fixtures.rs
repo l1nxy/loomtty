@@ -13,57 +13,81 @@ use loom_protocol::message::*;
 fn main() {
     let mut cases: Vec<String> = Vec::new();
 
-    cases.push(case("ascii_run", &cells_from(|c| {
-        for ch in "hello, world!".chars() {
-            c.push(plain(ch));
-        }
-    })));
+    cases.push(case(
+        "ascii_run",
+        &cells_from(|c| {
+            for ch in "hello, world!".chars() {
+                c.push(plain(ch));
+            }
+        }),
+    ));
 
-    cases.push(case("repeated_space_run", &cells_from(|c| {
-        for _ in 0..32 {
-            c.push(plain(' '));
-        }
-    })));
+    cases.push(case(
+        "repeated_space_run",
+        &cells_from(|c| {
+            for _ in 0..32 {
+                c.push(plain(' '));
+            }
+        }),
+    ));
 
-    cases.push(case("mixed_colors", &cells_from(|c| {
-        c.push(coloured('R', red(), DEFAULT_BACKGROUND));
-        c.push(coloured('G', green(), DEFAULT_BACKGROUND));
-        c.push(coloured('B', blue(), DEFAULT_BACKGROUND));
-    })));
+    cases.push(case(
+        "mixed_colors",
+        &cells_from(|c| {
+            c.push(coloured('R', red(), DEFAULT_BACKGROUND));
+            c.push(coloured('G', green(), DEFAULT_BACKGROUND));
+            c.push(coloured('B', blue(), DEFAULT_BACKGROUND));
+        }),
+    ));
 
-    cases.push(case("flag_runs", &cells_from(|c| {
-        c.push(with_flags('a', FLAG_BOLD));
-        c.push(with_flags('b', FLAG_BOLD | FLAG_UNDERLINE));
-        c.push(plain('c'));
-    })));
+    cases.push(case(
+        "flag_runs",
+        &cells_from(|c| {
+            c.push(with_flags('a', FLAG_BOLD));
+            c.push(with_flags('b', FLAG_BOLD | FLAG_UNDERLINE));
+            c.push(plain('c'));
+        }),
+    ));
 
-    cases.push(case("multibyte", &cells_from(|c| {
-        c.push(plain('中'));
-        c.push(plain('文'));
-        c.push(plain('\u{1F600}'));
-    })));
+    cases.push(case(
+        "multibyte",
+        &cells_from(|c| {
+            c.push(plain('中'));
+            c.push(plain('文'));
+            c.push(plain('\u{1F600}'));
+        }),
+    ));
 
-    cases.push(case("cjk_repeats", &cells_from(|c| {
-        for _ in 0..10 {
-            c.push(plain('日'));
-        }
-    })));
+    cases.push(case(
+        "cjk_repeats",
+        &cells_from(|c| {
+            for _ in 0..10 {
+                c.push(plain('日'));
+            }
+        }),
+    ));
 
-    cases.push(case("rgb_colors", &cells_from(|c| {
-        let orange = PackedColor::rgb(0xff, 0x88, 0x00);
-        c.push(coloured('x', orange, DEFAULT_BACKGROUND));
-    })));
+    cases.push(case(
+        "rgb_colors",
+        &cells_from(|c| {
+            let orange = PackedColor::rgb(0xff, 0x88, 0x00);
+            c.push(coloured('x', orange, DEFAULT_BACKGROUND));
+        }),
+    ));
 
     // Exercise OP_SET_FG_BG: the encoder only emits that opcode when
     // both fg and bg change in the same step and BOTH are RGB. A
     // single coloured cell here is enough — the encoder's first
     // push() sees fg/bg differ from defaults simultaneously and emits
     // SET_FG_BG rather than two SET_FG / SET_BG opcodes.
-    cases.push(case("rgb_fg_and_bg", &cells_from(|c| {
-        let fg = PackedColor::rgb(0xff, 0x88, 0x00);
-        let bg = PackedColor::rgb(0x11, 0x22, 0x33);
-        c.push(coloured('y', fg, bg));
-    })));
+    cases.push(case(
+        "rgb_fg_and_bg",
+        &cells_from(|c| {
+            let fg = PackedColor::rgb(0xff, 0x88, 0x00);
+            let bg = PackedColor::rgb(0x11, 0x22, 0x33);
+            c.push(coloured('y', fg, bg));
+        }),
+    ));
 
     println!("[\n{}\n]", cases.join(",\n"));
 }

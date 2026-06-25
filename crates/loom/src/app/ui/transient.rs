@@ -79,10 +79,7 @@ impl App {
             return None;
         };
 
-        let Some((_, pane_rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == search.pane_id)
-        else {
-            return None;
-        };
+        let (_, pane_rect, _) = tiles.iter().find(|(pid, _, _)| *pid == search.pane_id)?;
 
         let (_, ch) = self.ui_cell_metrics();
         Some(SearchBarComponent {
@@ -222,9 +219,7 @@ impl App {
         if !self.core.ime.preedit_active || self.core.ime.preedit_text.is_empty() {
             return None;
         }
-        let Some((base_x, base_y)) = self.ime_input_anchor(tiles, cw, ch) else {
-            return None;
-        };
+        let (base_x, base_y) = self.ime_input_anchor(tiles, cw, ch)?;
         let preedit_text = self.core.ime.preedit_text.clone();
         let cursor_cols = self
             .core
@@ -242,6 +237,7 @@ impl App {
         })
     }
 
+    #[allow(clippy::too_many_arguments)] // Clippy 1.94: transient painter passes separate scene buffers by design.
     pub(in crate::app) fn build_transient_ui(
         &mut self,
         tiles: &[(u64, GeoRect, bool)],
@@ -276,6 +272,7 @@ impl App {
         );
     }
 
+    #[allow(clippy::too_many_arguments)] // Clippy 1.94: UI paint bridge keeps viewport, cell metrics, and buffers explicit.
     pub(in crate::app) fn paint_transient_ui_with_metrics(
         &mut self,
         vw: f32,

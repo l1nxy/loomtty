@@ -14,8 +14,8 @@ pub mod ticker;
 pub mod transition;
 
 pub use anim_prop::AnimProp;
+pub use interp::Lerp;
 pub use loom_anim::easing::EasingCurve;
 pub use loom_anim::spring::{Spring, SpringParams};
-pub use interp::Lerp;
 pub use ticker::Ticker;
 pub use transition::Transition;

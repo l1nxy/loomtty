@@ -499,14 +499,13 @@ impl AppModel {
         self.filter_palette();
 
         // Try to restore the previous selection by matching label
-        if let Some(label) = prev_selected_label {
-            if let Some(palette) = &mut self.command_palette {
-                if let Some(pos) = palette.filtered.iter().position(|&i| {
-                    palette.entries[i].kind.is_selectable() && palette.entries[i].label == label
-                }) {
-                    palette.selected_idx = pos;
-                }
-            }
+        if let Some(label) = prev_selected_label
+            && let Some(palette) = &mut self.command_palette
+            && let Some(pos) = palette.filtered.iter().position(|&i| {
+                palette.entries[i].kind.is_selectable() && palette.entries[i].label == label
+            })
+        {
+            palette.selected_idx = pos;
         }
     }
 

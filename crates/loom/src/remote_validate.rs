@@ -238,16 +238,14 @@ fn validate_host(h: &str) -> Result<(), ValidationError> {
     // literal. Otherwise `1`, `1.2`, `999.999.999.999` etc. (almost always
     // typos) would pass RFC 1123 hostname syntax but then fail at DNS time
     // with an unhelpful error — catch them up front.
-    if all_digits {
-        if Ipv4Addr::from_str(h).is_err() {
-            // Distinguish "looks like IPv4 but is malformed" from "bare int
-            // that couldn't possibly be a hostname" for clearer messaging.
-            return Err(if h.contains('.') {
-                ValidationError::InvalidIpv4
-            } else {
-                ValidationError::NumericHostRequiresIpv4
-            });
-        }
+    if all_digits && Ipv4Addr::from_str(h).is_err() {
+        // Distinguish "looks like IPv4 but is malformed" from "bare int
+        // that couldn't possibly be a hostname" for clearer messaging.
+        return Err(if h.contains('.') {
+            ValidationError::InvalidIpv4
+        } else {
+            ValidationError::NumericHostRequiresIpv4
+        });
     }
     Ok(())
 }

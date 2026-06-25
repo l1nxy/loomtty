@@ -277,12 +277,9 @@ impl Pane {
             let cursor_col = cursor.column.0 as u16;
             let cursor_row = cursor.line.0.max(0) as u16;
 
-            let (kitty_result, sixel_placements) = self.parsers.scan_images(
-                chunk,
-                cursor_col,
-                cursor_row,
-                self.images.active_mut(),
-            );
+            let (kitty_result, sixel_placements) =
+                self.parsers
+                    .scan_images(chunk, cursor_col, cursor_row, self.images.active_mut());
             if kitty_result.deleted {
                 self.images.clear_on_delete();
             }
@@ -327,11 +324,7 @@ impl Pane {
             Osc133Event::Done { exit_code } => {
                 self.shell_state.zone = SemanticZone::Prompt;
                 self.shell_state.last_exit_code = exit_code;
-                let duration = self
-                    .shell_state
-                    .command_start
-                    .take()
-                    .map(|s| s.elapsed());
+                let duration = self.shell_state.command_start.take().map(|s| s.elapsed());
                 if let Some(d) = duration {
                     self.events.command_completion = Some(d);
                 }

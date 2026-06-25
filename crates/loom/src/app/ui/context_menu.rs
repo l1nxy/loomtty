@@ -231,8 +231,8 @@ impl ContextMenuComponent {
         match ui_hit_id(&root, cx, mx, my)? {
             HIT_SCROLLBAR_THUMB => Some(ScrollbarHit::Thumb),
             HIT_SCROLLBAR_TRACK => {
-                let thumb_mid = ui_hit_bounds(&root, cx, HIT_SCROLLBAR_THUMB)
-                    .map(|[_, y, _, h]| y + h * 0.5);
+                let thumb_mid =
+                    ui_hit_bounds(&root, cx, HIT_SCROLLBAR_THUMB).map(|[_, y, _, h]| y + h * 0.5);
                 match thumb_mid {
                     Some(mid) if my < mid => Some(ScrollbarHit::TrackAbove),
                     _ => Some(ScrollbarHit::TrackBelow),
@@ -400,10 +400,7 @@ impl ContextMenuComponent {
                                 .h(thumb_h)
                                 .translate(0.0, thumb_top)
                                 .hit_id(HIT_SCROLLBAR_THUMB)
-                                .bg(tokens::tint(
-                                    cx.theme.accent,
-                                    tokens::ALPHA_SCROLL_THUMB,
-                                )),
+                                .bg(tokens::tint(cx.theme.accent, tokens::ALPHA_SCROLL_THUMB)),
                         ),
                 );
             body = body.child(track_col);
@@ -416,13 +413,12 @@ impl ContextMenuComponent {
         // edge-flips when the click point near the bottom-right
         // would extend the menu off-screen. Replaces the manual
         // `.clamp(...)` previously applied at capture time.
-        let root = div().w(cx.viewport[0]).h(cx.viewport[1]).child(anchored(
+
+        div().w(cx.viewport[0]).h(cx.viewport[1]).child(anchored(
             panel,
             [self.x, self.y],
             self.anchor,
-        ));
-
-        root
+        ))
     }
 
     pub(crate) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {

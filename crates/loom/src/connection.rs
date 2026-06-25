@@ -1,7 +1,7 @@
+use crossbeam_channel::{Receiver, Sender};
 use loom_protocol::codec;
 use loom_protocol::message::*;
 use loom_protocol::transport;
-use crossbeam_channel::{Receiver, Sender};
 use std::io;
 use std::sync::{Arc, Mutex};
 use winit::event_loop::EventLoopProxy;
@@ -250,12 +250,8 @@ where
     // Spawn writer task
     let writer_msg_rx = msg_rx;
     let write_handle = tokio::spawn(async move {
-        loop {
+        while let Ok(msg) = tokio::task::block_in_place(|| writer_msg_rx.recv()) {
             // Use blocking recv in a spawned blocking task to avoid busy-waiting
-            let msg = match tokio::task::block_in_place(|| writer_msg_rx.recv()) {
-                Ok(m) => m,
-                Err(_) => break, // sender dropped
-            };
             if let Err(e) = codec::encode_client_msg(&mut writer, &msg).await {
                 log::warn!("write error: {e}");
                 break;
@@ -365,7 +361,7 @@ pub fn connect_or_spawn(
                     #[cfg(windows)]
                     {
                         connect_result = tokio::net::windows::named_pipe::ClientOptions::new()
-                            .open(&transport::server_pipe_name());
+                            .open(transport::server_pipe_name());
                     }
                     if connect_result.is_ok() {
                         break;

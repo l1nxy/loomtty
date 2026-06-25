@@ -48,14 +48,12 @@ impl OverviewComponent {
         // Check action bar on hovered pane first. Pane tiles themselves
         // remain renderer/workspace-domain geometry; this overlay is a
         // regular UI tree and should use the same layout snapshot as paint.
-        if let Some((ws_idx, hovered_id)) = self.hovered_pane {
-            if let Some(bar) = overview_action_bar_data(app, self.hovered_pane) {
-                if let Some(hit) =
-                    overview_action_bar_hit(&bar, ws_idx, hovered_id, mx, my, &app.ui_context())
-                {
-                    return hit;
-                }
-            }
+        if let Some((ws_idx, hovered_id)) = self.hovered_pane
+            && let Some(bar) = overview_action_bar_data(app, self.hovered_pane)
+            && let Some(hit) =
+                overview_action_bar_hit(&bar, ws_idx, hovered_id, mx, my, &app.ui_context())
+        {
+            return hit;
         }
         if let Some((ws_idx, pane_id)) = app.hit_test_overview(mx, my) {
             UiOverviewHit::Pane(ws_idx, pane_id)

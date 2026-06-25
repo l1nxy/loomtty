@@ -199,12 +199,12 @@ pub(crate) async fn handle_client<R, W>(
             // ClientHello and update its URL. SessionSwitched is the same
             // message the live `SwitchSession` path uses, so the client
             // already knows how to handle it.
-            if is_auto {
-                if let Some(frame) = codec::frame_server_msg(&ServerMessage::SessionSwitched {
+            if is_auto
+                && let Some(frame) = codec::frame_server_msg(&ServerMessage::SessionSwitched {
                     session_name: requested_session.clone(),
-                }) {
-                    frames.push(frame);
-                }
+                })
+            {
+                frames.push(frame);
             }
 
             let (sync_msg, pane_syncs, image_events) = session.build_state_sync();

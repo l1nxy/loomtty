@@ -134,10 +134,9 @@ fn open_url_impl(url: &str, pane_cwd: Option<&str>) -> std::io::Result<()> {
         };
         // ShellExecuteW returns > 32 on success.
         if result <= 32 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("ShellExecuteW failed with code {result}"),
-            ));
+            return Err(std::io::Error::other(format!(
+                "ShellExecuteW failed with code {result}"
+            )));
         }
         return Ok(());
     }
@@ -201,10 +200,9 @@ pub(crate) fn open_trusted_path(path: &std::path::Path) -> std::io::Result<()> {
             )
         };
         if result <= 32 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("ShellExecuteW failed with code {result}"),
-            ));
+            return Err(std::io::Error::other(format!(
+                "ShellExecuteW failed with code {result}"
+            )));
         }
         return Ok(());
     }

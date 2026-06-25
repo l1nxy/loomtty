@@ -782,10 +782,8 @@ impl App {
                 self.cached_color_table = loom_render::terminal::ColorTable::new(&self.core.config);
                 self.cached_resolved_theme.reload(&self.core.config.theme);
                 self.reload_input_config();
-                if font_changed {
-                    if !self.apply_font_config_change() {
-                        return;
-                    }
+                if font_changed && !self.apply_font_config_change() {
+                    return;
                 }
                 self.clear_render_caches();
                 for grid in self.core.pane_grids.values_mut() {
@@ -822,7 +820,9 @@ mod tests {
 
     struct ScopedStateHome {
         path: std::path::PathBuf,
-        previous: Option<std::ffi::OsString>,
+        previous_test_state_dir: Option<std::ffi::OsString>,
+        previous_xdg_state_home: Option<std::ffi::OsString>,
+        previous_local_appdata: Option<std::ffi::OsString>,
     }
 
     impl ScopedStateHome {
@@ -834,20 +834,41 @@ mod tests {
                     .unwrap()
                     .as_nanos()
             ));
-            let previous = std::env::var_os("XDG_STATE_HOME");
+            let previous_test_state_dir = std::env::var_os("LOOM_TEST_STATE_DIR");
+            let previous_xdg_state_home = std::env::var_os("XDG_STATE_HOME");
+            let previous_local_appdata = std::env::var_os("LOCALAPPDATA");
             unsafe {
+                std::env::set_var("LOOM_TEST_STATE_DIR", &path);
                 std::env::set_var("XDG_STATE_HOME", &path);
+                if cfg!(windows) {
+                    std::env::set_var("LOCALAPPDATA", &path);
+                }
             }
-            Self { path, previous }
+            Self {
+                path,
+                previous_test_state_dir,
+                previous_xdg_state_home,
+                previous_local_appdata,
+            }
         }
     }
 
     impl Drop for ScopedStateHome {
         fn drop(&mut self) {
             unsafe {
-                match &self.previous {
+                match &self.previous_test_state_dir {
+                    Some(value) => std::env::set_var("LOOM_TEST_STATE_DIR", value),
+                    None => std::env::remove_var("LOOM_TEST_STATE_DIR"),
+                }
+                match &self.previous_xdg_state_home {
                     Some(value) => std::env::set_var("XDG_STATE_HOME", value),
                     None => std::env::remove_var("XDG_STATE_HOME"),
+                }
+                if cfg!(windows) {
+                    match &self.previous_local_appdata {
+                        Some(value) => std::env::set_var("LOCALAPPDATA", value),
+                        None => std::env::remove_var("LOCALAPPDATA"),
+                    }
                 }
             }
             let _ = std::fs::remove_dir_all(&self.path);

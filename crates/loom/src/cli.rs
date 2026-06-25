@@ -11,7 +11,11 @@ const STYLES: Styles = Styles::styled()
     .error(AnsiColor::Red.on_default().effects(Effects::BOLD));
 
 #[derive(Parser, Debug)]
-#[command(name = "loomtty", about = "GPU-accelerated terminal multiplexer")]
+#[command(
+    name = "loomtty",
+    about = "GPU-accelerated terminal multiplexer",
+    version
+)]
 #[command(arg_required_else_help = false, styles = STYLES)]
 pub struct Cli {
     #[command(subcommand)]
@@ -183,10 +187,7 @@ pub enum MsgCommand {
     /// OSC 133;C (output start), and OSC 133;D (done), plus exit code and
     /// duration. Empty when the pane has never observed OSC 133 — that's
     /// the signal that shell integration isn't active in this pane.
-    ListPrompts {
-        session_name: String,
-        pane_id: u64,
-    },
+    ListPrompts { session_name: String, pane_id: u64 },
 }
 
 #[derive(Subcommand, Debug)]

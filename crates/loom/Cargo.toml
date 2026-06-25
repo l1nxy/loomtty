@@ -3,9 +3,26 @@ name = "loomtty"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "loomtty"
+path = "src/lib.rs"
+
+# CLI entry point (console subsystem on Windows).
 [[bin]]
 name = "loomtty"
 path = "src/main.rs"
+
+# GUI entry point. On Windows it's built for the GUI subsystem so Start Menu /
+# desktop shortcuts open the window with no console. Feature-gated so ordinary
+# (non-Windows, or `cargo build`) builds don't link a second copy of the GUI;
+# the Windows release/installer build enables `gui-bin`.
+[[bin]]
+name = "loomtty-gui"
+path = "src/bin/loomtty-gui.rs"
+required-features = ["gui-bin"]
+
+[features]
+gui-bin = []
 
 [dependencies]
 loom-app = { workspace = true }
@@ -45,3 +62,97 @@ winres = "0.1"
 
 [dev-dependencies]
 tempfile = "3"
+
+# ── Linux packaging (cargo-nfpm → .deb / .rpm) ──────────────────────────
+# Build natively, then package from the workspace root:
+#   cargo build --release -p loomtty -p loomtty-server
+#   cargo nfpm package -p loomtty -f deb --no-build   (and -f rpm)
+# `loomtty` (the client) is added automatically at /usr/bin/loomtty; the
+# daemon + assets are listed below. Paths are relative to the workspace root.
+# Built without the `gui-bin` feature, so the Windows-only loomtty-gui binary
+# is neither built nor packaged here.
+[package.metadata.nfpm]
+name = "loomtty"
+license = "AGPL-3.0-only"
+maintainer = "loomtty contributors <noreply@users.noreply.github.com>"
+homepage = "https://github.com/l1nxy/loomtty"
+description = "GPU-accelerated terminal multiplexer with column/workspace layout, remote attach, and a browser client."
+section = "utils"
+priority = "optional"
+
+[package.metadata.nfpm.scripts]
+postinstall = "dist/linux/refresh-caches.sh"
+postremove = "dist/linux/refresh-caches.sh"
+
+[[package.metadata.nfpm.contents]]
+src = "target/release/loomtty-server"
+dst = "/usr/bin/loomtty-server"
+
+[[package.metadata.nfpm.contents]]
+src = "dist/linux/com.github.l1nxy.loom.desktop"
+dst = "/usr/share/applications/com.github.l1nxy.loom.desktop"
+
+[[package.metadata.nfpm.contents]]
+src = "dist/linux/com.github.l1nxy.loom.metainfo.xml"
+dst = "/usr/share/metainfo/com.github.l1nxy.loom.metainfo.xml"
+
+[[package.metadata.nfpm.contents]]
+src = "assets/icons/icon.svg"
+dst = "/usr/share/icons/hicolor/scalable/apps/com.github.l1nxy.loom.svg"
+
+[[package.metadata.nfpm.contents]]
+src = "assets/icons/icon-16x16.png"
+dst = "/usr/share/icons/hicolor/16x16/apps/com.github.l1nxy.loom.png"
+
+[[package.metadata.nfpm.contents]]
+src = "assets/icons/icon-32x32.png"
+dst = "/usr/share/icons/hicolor/32x32/apps/com.github.l1nxy.loom.png"
+
+[[package.metadata.nfpm.contents]]
+src = "assets/icons/icon-48x48.png"
+dst = "/usr/share/icons/hicolor/48x48/apps/com.github.l1nxy.loom.png"
+
+[[package.metadata.nfpm.contents]]
+src = "assets/icons/icon-64x64.png"
+dst = "/usr/share/icons/hicolor/64x64/apps/com.github.l1nxy.loom.png"
+
+[[package.metadata.nfpm.contents]]
+src = "assets/icons/icon-128x128.png"
+dst = "/usr/share/icons/hicolor/128x128/apps/com.github.l1nxy.loom.png"
+
+[[package.metadata.nfpm.contents]]
+src = "assets/icons/icon-256x256.png"
+dst = "/usr/share/icons/hicolor/256x256/apps/com.github.l1nxy.loom.png"
+
+[[package.metadata.nfpm.contents]]
+src = "assets/icons/icon-512x512.png"
+dst = "/usr/share/icons/hicolor/512x512/apps/com.github.l1nxy.loom.png"
+
+[[package.metadata.nfpm.contents]]
+src = "crates/loom-server/shell-integration/loom.bash"
+dst = "/usr/share/loomtty/shell-integration/loom.bash"
+
+[[package.metadata.nfpm.contents]]
+src = "crates/loom-server/shell-integration/loom.zsh"
+dst = "/usr/share/loomtty/shell-integration/loom.zsh"
+
+[[package.metadata.nfpm.contents]]
+src = "crates/loom-server/shell-integration/loom.fish"
+dst = "/usr/share/loomtty/shell-integration/loom.fish"
+
+[[package.metadata.nfpm.contents]]
+src = "LICENSE"
+dst = "/usr/share/doc/loomtty/copyright"
+
+# Runtime deps verified with `readelf -d` on the built binaries: the daemon
+# hard-links GTK3 + libxdo (the system tray); the client links fontconfig; xcb/
+# xkbcommon are needed for any window. The GPU backends, Wayland, and the tray
+# indicator are dlopen'd at runtime, so they're recommends (gtk3/libgtk-3-0
+# pulls gdk-pixbuf/glib/gobject/gio transitively).
+[package.metadata.nfpm.overrides.deb]
+depends = ["libc6", "libfontconfig1", "libgtk-3-0 | libgtk-3-0t64", "libxdo3", "libxkbcommon0", "libxcb1"]
+recommends = ["libvulkan1", "libegl1", "libgl1", "libwayland-client0", "libayatana-appindicator3-1 | libappindicator3-1"]
+
+[package.metadata.nfpm.overrides.rpm]
+depends = ["fontconfig", "gtk3", "libxdo", "libxkbcommon", "libxcb"]
+recommends = ["vulkan-loader", "mesa-libEGL", "mesa-libGL", "libwayland-client", "libappindicator-gtk3"]

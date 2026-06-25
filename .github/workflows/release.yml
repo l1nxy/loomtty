@@ -34,7 +34,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.94.0
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
@@ -47,10 +47,17 @@ jobs:
             pkg-config libfreetype-dev libfontconfig-dev \
             libxcb-shape0-dev libxcb-xfixes0-dev \
             libxkbcommon-dev libwayland-dev \
-            libvulkan-dev libegl-dev
+            libvulkan-dev libegl-dev \
+            libgtk-3-dev libxdo-dev
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
+
+      # The GUI-subsystem launcher is feature-gated so non-Windows builds don't
+      # link a redundant copy of the GUI; build it explicitly on Windows.
+      - name: Build GUI launcher (Windows)
+        if: runner.os == 'Windows'
+        run: cargo build --release --target ${{ matrix.target }} -p loomtty --bin loomtty-gui --features gui-bin
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
@@ -63,22 +70,103 @@ jobs:
           cp -r assets/icons ${{ matrix.artifact }}/ 2>/dev/null || true
           tar czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
 
+      # Apple Silicon only: assemble loomtty.app, ad-hoc sign it, package a .dmg.
+      - name: Build .dmg (macOS arm64)
+        if: matrix.artifact == 'loomtty-macos-aarch64'
+        run: |
+          version="${{ github.ref_name }}"; version="${version#v}"
+          bash dist/macos/make-app.sh --version "$version" \
+            --bindir "target/${{ matrix.target }}/release" --outdir target/macos
+
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path ${{ matrix.artifact }}
           Copy-Item target/${{ matrix.target }}/release/loomtty.exe ${{ matrix.artifact }}/
+          Copy-Item target/${{ matrix.target }}/release/loomtty-gui.exe ${{ matrix.artifact }}/
           Copy-Item target/${{ matrix.target }}/release/loomtty-server.exe ${{ matrix.artifact }}/
+          Copy-Item -Recurse crates/loom-server/shell-integration ${{ matrix.artifact }}/
           Compress-Archive -Path ${{ matrix.artifact }} -DestinationPath ${{ matrix.artifact }}.zip
+
+      - name: Build installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Inno Setup ships on the GitHub windows image; install on miss.
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          dist\windows\build-installer.ps1 -Version $version -BinDir "target\${{ matrix.target }}\release"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.*
 
+      - name: Upload installer (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: loomtty-windows-installer
+          path: target/installer/*.exe
+
+      - name: Upload .dmg (macOS arm64)
+        if: matrix.artifact == 'loomtty-macos-aarch64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: loomtty-macos-dmg
+          path: target/macos/*.dmg
+
+  # ── Linux native packages (.deb / .rpm via cargo-nfpm) ─────────────
+  linux-packages:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.0
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config libfreetype-dev libfontconfig-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libwayland-dev \
+            libvulkan-dev libegl-dev \
+            libgtk-3-dev libxdo-dev
+
+      # Build natively (no --target) so the binaries land in target/release and
+      # cargo-nfpm picks up the host arch (amd64 / arm64) automatically.
+      - name: Build binaries
+        run: cargo build --release -p loomtty -p loomtty-server
+
+      - name: Install cargo-nfpm
+        run: cargo install --locked cargo-nfpm
+
+      - name: Build .deb and .rpm
+        run: |
+          cargo nfpm package -p loomtty -f deb --no-build
+          cargo nfpm package -p loomtty -f rpm --no-build
+          mkdir -p pkgs
+          find target -type f \( -name '*.deb' -o -name '*.rpm' \) -exec cp {} pkgs/ \;
+          ls -la pkgs/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: loomtty-linux-packages-${{ matrix.arch }}
+          path: pkgs/*
+
   release:
-    needs: build
+    needs: [build, linux-packages]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -95,3 +183,7 @@ jobs:
             loomtty-macos-aarch64.tar.gz
             loomtty-macos-x86_64.tar.gz
             loomtty-windows-x86_64.zip
+            loomtty-*-x86_64-setup.exe
+            loomtty-*-macos-arm64.dmg
+            *.deb
+            *.rpm

@@ -108,6 +108,23 @@ mod tests {
         if std::path::Path::new("/bin/sh").exists() {
             "/bin/sh"
         } else {
+            #[cfg(windows)]
+            {
+                static SHELL_PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+                return SHELL_PATH
+                    .get_or_init(|| {
+                        std::env::var_os("PATH")
+                            .and_then(|paths| {
+                                std::env::split_paths(&paths)
+                                    .map(|dir| dir.join("sh.exe"))
+                                    .find(|path| path.is_file())
+                                    .map(|path| path.to_string_lossy().into_owned())
+                            })
+                            .unwrap_or_else(|| "sh".to_string())
+                    })
+                    .as_str();
+            }
+            #[cfg(not(windows))]
             "sh"
         }
     }

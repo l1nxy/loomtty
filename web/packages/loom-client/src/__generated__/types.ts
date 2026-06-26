@@ -33,6 +33,8 @@ export type ClientMessage =
   | { tag: "FocusDown" }
   | { tag: "MovePaneLeft" }
   | { tag: "MovePaneRight" }
+  | { tag: "MovePaneUp" }
+  | { tag: "MovePaneDown" }
   | { tag: "Resize"; cols: number; rows: number; width: number; height: number; cellWidth: number; cellHeight: number }
   | { tag: "SetColumnWidth"; proportion: number; fixedPx: (number | null) }
   | { tag: "AdjustColumnSplit"; delta: number }

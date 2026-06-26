@@ -158,6 +158,46 @@ impl Server {
                     );
                 }
             }
+            ClientMessage::MovePaneUp => {
+                if let Some(session) = self.sessions.get_mut(session_name) {
+                    if session.workspaces.move_pane_up() {
+                        Self::layout_changed(
+                            session,
+                            &mut self.clients,
+                            session_name,
+                            false,
+                            responses,
+                        );
+                    } else {
+                        responses.push(ServerResponse::SendToClient(
+                            client_id,
+                            ServerMessage::BounceEdge {
+                                direction: BounceDirection::Up,
+                            },
+                        ));
+                    }
+                }
+            }
+            ClientMessage::MovePaneDown => {
+                if let Some(session) = self.sessions.get_mut(session_name) {
+                    if session.workspaces.move_pane_down() {
+                        Self::layout_changed(
+                            session,
+                            &mut self.clients,
+                            session_name,
+                            false,
+                            responses,
+                        );
+                    } else {
+                        responses.push(ServerResponse::SendToClient(
+                            client_id,
+                            ServerMessage::BounceEdge {
+                                direction: BounceDirection::Down,
+                            },
+                        ));
+                    }
+                }
+            }
             ClientMessage::FocusPane { pane_id } => {
                 if let Some(session) = self.sessions.get_mut(session_name) {
                     if session.focus_pane(pane_id) {

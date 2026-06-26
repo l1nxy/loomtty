@@ -33,6 +33,8 @@ impl Default for KeybindConfig {
         bindings.insert("j".to_string(), "focus_down".to_string());
         bindings.insert("shift+h".to_string(), "move_pane_left".to_string());
         bindings.insert("shift+l".to_string(), "move_pane_right".to_string());
+        bindings.insert("shift+k".to_string(), "move_pane_up".to_string());
+        bindings.insert("shift+j".to_string(), "move_pane_down".to_string());
         bindings.insert("r".to_string(), "enter_mode:resize".to_string());
         bindings.insert("s".to_string(), "enter_mode:scroll".to_string());
         bindings.insert("m".to_string(), "enter_mode:move".to_string());
@@ -93,8 +95,12 @@ impl Default for KeybindConfig {
         let mut mv = HashMap::new();
         mv.insert("h".to_string(), "move_pane_left".to_string());
         mv.insert("l".to_string(), "move_pane_right".to_string());
+        mv.insert("k".to_string(), "move_pane_up".to_string());
+        mv.insert("j".to_string(), "move_pane_down".to_string());
         mv.insert("Left".to_string(), "move_pane_left".to_string());
         mv.insert("Right".to_string(), "move_pane_right".to_string());
+        mv.insert("Up".to_string(), "move_pane_up".to_string());
+        mv.insert("Down".to_string(), "move_pane_down".to_string());
         modes.insert("move".to_string(), mv);
 
         let mut direct_bindings = HashMap::new();

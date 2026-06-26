@@ -471,6 +471,8 @@ impl Server {
             | ClientMessage::FocusDown
             | ClientMessage::MovePaneLeft
             | ClientMessage::MovePaneRight
+            | ClientMessage::MovePaneUp
+            | ClientMessage::MovePaneDown
             | ClientMessage::FocusPane { .. }
             | ClientMessage::SetColumnWidth { .. }
             | ClientMessage::AdjustColumnSplit { .. }

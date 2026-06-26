@@ -348,6 +348,10 @@ pub enum ClientMessage {
     /// Move pane.
     MovePaneLeft,
     MovePaneRight,
+    /// Move the active pane to the workspace above/below (creating one at the
+    /// edge); focus follows the pane.
+    MovePaneUp,
+    MovePaneDown,
     /// Resize the viewport.
     Resize {
         cols: u16,

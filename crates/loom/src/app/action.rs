@@ -57,6 +57,12 @@ impl App {
             Action::MovePaneRight => {
                 self.send(ClientMessage::MovePaneRight);
             }
+            Action::MovePaneUp => {
+                self.send(ClientMessage::MovePaneUp);
+            }
+            Action::MovePaneDown => {
+                self.send(ClientMessage::MovePaneDown);
+            }
             Action::CyclePresetWidth | Action::CyclePresetWidthReverse => {
                 let reverse = matches!(action, Action::CyclePresetWidthReverse);
                 let presets = self.preset_widths();

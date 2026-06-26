@@ -22,6 +22,8 @@ mode.
 | `focus_down` | | ✓ | Focus the workspace below. |
 | `move_pane_left` | | ✓ | Move the column left within the workspace. |
 | `move_pane_right` | | ✓ | Move the column right within the workspace. |
+| `move_pane_up` | | ✓ | Move the active pane to the workspace above (creates one if at the top). |
+| `move_pane_down` | | ✓ | Move the active pane to the workspace below (creates one if at the bottom). |
 | `consume_into_column` | | | Pull the right neighbor into the column as a tile. |
 | `expel_from_column` | | | Push the active tile out into a new column. |
 

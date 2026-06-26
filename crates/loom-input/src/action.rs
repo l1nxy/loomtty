@@ -17,6 +17,10 @@ pub enum Action {
     /// Shift+H/L: move column position within the workspace.
     MovePaneLeft,
     MovePaneRight,
+    /// Shift+K/J: move the active pane to the workspace above/below (creating
+    /// one at the edge); focus follows the pane.
+    MovePaneUp,
+    MovePaneDown,
     /// Cycle forward through configured width presets.
     CyclePresetWidth,
     /// Cycle backward through configured width presets.
@@ -145,6 +149,8 @@ impl Action {
                 | Action::FocusDown
                 | Action::MovePaneLeft
                 | Action::MovePaneRight
+                | Action::MovePaneUp
+                | Action::MovePaneDown
                 | Action::CyclePresetWidth
                 | Action::CyclePresetWidthReverse
                 | Action::ColumnWidthOneThird
@@ -191,6 +197,8 @@ impl Action {
             (Action::FocusDown, "Focus Down"),
             (Action::MovePaneLeft, "Move Pane Left"),
             (Action::MovePaneRight, "Move Pane Right"),
+            (Action::MovePaneUp, "Move Pane Up"),
+            (Action::MovePaneDown, "Move Pane Down"),
             (Action::CyclePresetWidth, "Cycle Column Width"),
             (
                 Action::CyclePresetWidthReverse,
@@ -248,6 +256,8 @@ fn parse_named_action(name: &str) -> Option<Action> {
         "focus_up" => Some(Action::FocusUp),
         "move_pane_left" => Some(Action::MovePaneLeft),
         "move_pane_right" => Some(Action::MovePaneRight),
+        "move_pane_up" => Some(Action::MovePaneUp),
+        "move_pane_down" => Some(Action::MovePaneDown),
         "cycle_preset_width" => Some(Action::CyclePresetWidth),
         "cycle_preset_width_reverse" => Some(Action::CyclePresetWidthReverse),
         "column_width_one_third" => Some(Action::ColumnWidthOneThird),

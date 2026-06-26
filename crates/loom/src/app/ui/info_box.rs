@@ -39,6 +39,8 @@ pub(super) fn action_short_label(action: &str) -> String {
         "focus_down" => Some("down"),
         "move_pane_left" => Some("move \u{2190}"),
         "move_pane_right" => Some("move \u{2192}"),
+        "move_pane_up" => Some("move \u{2191}"),
+        "move_pane_down" => Some("move \u{2193}"),
         "new_column_right" => Some("new pane"),
         "new_row_below" | "new_workspace_below" | "split_down" => Some("split \u{2193}"),
         "new_tile_below" | "stack_pane" => Some("stack \u{2193}"),

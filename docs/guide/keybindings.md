@@ -41,6 +41,7 @@ Throughout this page, `Alt x` means "leader + x".
 | `Alt j` / `Alt k` | `focus_down` / `focus_up` | Focus workspace down / up |
 | `Alt ←` / `→` / `↓` / `↑` | focus | Arrow-key mirror of `h` / `l` / `j` / `k` |
 | `Alt Shift+h` / `Alt Shift+l` | `move_pane_left` / `move_pane_right` | Move column within the workspace |
+| `Alt Shift+k` / `Alt Shift+j` | `move_pane_up` / `move_pane_down` | Move the pane to the workspace above / below (creates one at the edge) |
 | `Alt r` | `enter_mode:resize` | Enter [resize mode](#resize-mode) |
 | `Alt s` | `enter_mode:scroll` | Enter [scroll mode](#scroll-mode) |
 | `Alt m` | `enter_mode:move` | Enter [move mode](#move-mode) |
@@ -111,11 +112,12 @@ Enter with `Alt s`. Scrolls the focused pane's scrollback.
 
 ### Move mode
 
-Enter with `Alt m`. Reposition the focused column.
+Enter with `Alt m`. Reposition the focused pane.
 
 | Key | Action |
 | --- | ------ |
-| `h` / `l` (or `←` / `→`) | Move column left / right |
+| `h` / `l` (or `←` / `→`) | Move column left / right within the workspace |
+| `k` / `j` (or `↑` / `↓`) | Move the pane to the workspace above / below (creates one at the edge) |
 
 ## Overview mode
 

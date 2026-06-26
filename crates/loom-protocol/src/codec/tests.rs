@@ -1091,6 +1091,8 @@ async fn frame_roundtrip_client_message_variants() {
         ClientMessage::FocusDown,
         ClientMessage::MovePaneLeft,
         ClientMessage::MovePaneRight,
+        ClientMessage::MovePaneUp,
+        ClientMessage::MovePaneDown,
         ClientMessage::Resize {
             cols: 80,
             rows: 24,

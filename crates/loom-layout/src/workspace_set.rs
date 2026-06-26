@@ -3,6 +3,13 @@ use crate::geometry::{Rect, ViewSize};
 use crate::tile::PaneId;
 use crate::workspace::Workspace;
 
+/// Vertical direction for moving the active pane between workspaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    Up,
+    Down,
+}
+
 /// A 2D grid of panes: workspaces × columns.
 /// Each workspace is a horizontal strip of columns (a Workspace).
 /// Vertical axis: workspaces stack downward, each workspace = viewport height.
@@ -99,6 +106,85 @@ impl WorkspaceSet {
             self.workspaces.push(ws);
             self.active_workspace_idx = next;
         }
+    }
+
+    /// Move the active pane to the workspace ABOVE, creating one at the top
+    /// if the active workspace is already first. The pane lands as a new
+    /// rightmost column in the target (keeping its column width) and focus
+    /// follows it there; the source workspace is dropped if the move empties
+    /// it. Returns `false` (a no-op) only when the active pane is the sole
+    /// pane of the sole workspace — there is nowhere to move it.
+    pub fn move_pane_up(&mut self) -> bool {
+        self.move_active_pane(Direction::Up)
+    }
+
+    /// Move the active pane to the workspace BELOW, creating one at the bottom
+    /// if the active workspace is already last. See [`move_pane_up`] for the
+    /// landing/focus/cleanup semantics.
+    ///
+    /// [`move_pane_up`]: Self::move_pane_up
+    pub fn move_pane_down(&mut self) -> bool {
+        self.move_active_pane(Direction::Down)
+    }
+
+    /// Shared body for [`move_pane_up`]/[`move_pane_down`]. Only the active
+    /// *tile* moves: a multi-tile source column keeps its remaining tiles, a
+    /// single-tile column is removed with the pane.
+    ///
+    /// [`move_pane_up`]: Self::move_pane_up
+    /// [`move_pane_down`]: Self::move_pane_down
+    fn move_active_pane(&mut self, dir: Direction) -> bool {
+        let Some(pane_id) = self.active().active_pane_id() else {
+            return false;
+        };
+        let acol = self.active().active_column_idx;
+        // Sole pane of the sole workspace: moving it would just shuffle it
+        // through a throwaway workspace and back. Nothing to do.
+        if self.workspaces.len() == 1
+            && self.active().columns.len() == 1
+            && self.active().columns[acol].tile_count() == 1
+        {
+            return false;
+        }
+
+        let src = self.active_workspace_idx;
+        // Preserve the pane's on-screen width across the move.
+        let width = self.workspaces[src].columns[acol].width;
+        self.workspaces[src].close_pane(pane_id);
+
+        // Resolve the target workspace, creating one at the boundary. Inserting
+        // ABOVE the first workspace shifts the (now stale) source index down by
+        // one, but `cleanup_empty` below rescans for empties so we don't need
+        // to track it.
+        let target = match dir {
+            Direction::Up => {
+                if src == 0 {
+                    self.workspaces
+                        .insert(0, Workspace::new_with_gap(self.view_size, self.column_gap));
+                    0
+                } else {
+                    src - 1
+                }
+            }
+            Direction::Down => {
+                if src + 1 >= self.workspaces.len() {
+                    self.workspaces
+                        .push(Workspace::new_with_gap(self.view_size, self.column_gap));
+                }
+                src + 1
+            }
+        };
+
+        // Land the pane as a new rightmost column in the target, focused.
+        let dst = &mut self.workspaces[target];
+        dst.active_column_idx = dst.columns.len().saturating_sub(1);
+        dst.add_column_right(pane_id, width);
+        self.active_workspace_idx = target;
+
+        // Drop the source workspace if the move emptied it; this also keeps
+        // `active_workspace_idx` pointing at the moved pane.
+        self.cleanup_empty();
+        true
     }
 
     /// Switch to an existing workspace by index.
@@ -598,6 +684,106 @@ mod tests {
     }
 
     // ── Cleanup edge cases ──────────────────────────────────────────
+
+    // ── Move pane across workspaces ─────────────────────────────────
+
+    #[test]
+    fn move_pane_down_into_existing_workspace_follows_and_cleans_up() {
+        let mut ws = wss(); // ws[0]: pane 1
+        ws.add_workspace_below(2); // ws[1]: pane 2, active = 1
+        ws.focus_up(); // back to ws[0], pane 1 active
+
+        assert!(ws.move_pane_down());
+        // Source ws[0] held only pane 1 → emptied and removed; pane 1 now
+        // lives in what was ws[1], and focus followed it.
+        assert_eq!(ws.workspaces.len(), 1);
+        assert_eq!(ws.active_workspace_idx, 0);
+        let ids = ws.all_pane_ids();
+        assert!(ids.contains(&1) && ids.contains(&2));
+        assert_eq!(ws.active().active_pane_id(), Some(1));
+    }
+
+    #[test]
+    fn move_pane_down_at_bottom_creates_new_workspace() {
+        let mut ws = WorkspaceSet::new(ViewSize {
+            width: 1000.0,
+            height: 600.0,
+        });
+        ws.active_mut().add_test_column(1);
+        ws.active_mut().add_test_column(2); // ws[0]: cols [1,2], active = col 2 (pane 2)
+
+        assert!(ws.move_pane_down());
+        // A new workspace was created below and pane 2 moved there; ws[0]
+        // keeps pane 1.
+        assert_eq!(ws.workspaces.len(), 2);
+        assert_eq!(ws.active_workspace_idx, 1);
+        assert_eq!(ws.active().active_pane_id(), Some(2));
+        assert_eq!(ws.workspaces[0].all_pane_ids(), vec![1]);
+    }
+
+    #[test]
+    fn move_pane_up_at_top_creates_new_workspace_above() {
+        let mut ws = WorkspaceSet::new(ViewSize {
+            width: 1000.0,
+            height: 600.0,
+        });
+        ws.active_mut().add_test_column(1);
+        ws.active_mut().add_test_column(2); // ws[0]: cols [1,2], active = pane 2
+
+        assert!(ws.move_pane_up());
+        // New workspace inserted at the top with pane 2; the old workspace
+        // (now below) keeps pane 1.
+        assert_eq!(ws.workspaces.len(), 2);
+        assert_eq!(ws.active_workspace_idx, 0);
+        assert_eq!(ws.active().active_pane_id(), Some(2));
+        assert_eq!(ws.workspaces[1].all_pane_ids(), vec![1]);
+    }
+
+    #[test]
+    fn move_pane_only_moves_active_tile_of_a_stacked_column() {
+        let mut ws = WorkspaceSet::new(ViewSize {
+            width: 1000.0,
+            height: 600.0,
+        });
+        ws.active_mut().add_test_column(1);
+        // Stack pane 2 on top of pane 1 in the same column; pane 2 is active.
+        ws.active_mut()
+            .add_tile_to_active_column(2, ColumnWidth::Proportion(1.0));
+        assert_eq!(ws.active().active_pane_id(), Some(2));
+
+        assert!(ws.move_pane_down());
+        // Only pane 2 moved; pane 1 stays behind in the source workspace.
+        assert_eq!(ws.workspaces.len(), 2);
+        assert_eq!(ws.workspaces[0].all_pane_ids(), vec![1]);
+        assert_eq!(ws.active_workspace_idx, 1);
+        assert_eq!(ws.active().active_pane_id(), Some(2));
+    }
+
+    #[test]
+    fn move_pane_sole_pane_sole_workspace_is_noop() {
+        let mut ws = wss(); // single workspace, single pane
+        assert!(!ws.move_pane_up());
+        assert!(!ws.move_pane_down());
+        assert_eq!(ws.workspaces.len(), 1);
+        assert_eq!(ws.active().active_pane_id(), Some(1));
+    }
+
+    #[test]
+    fn move_pane_up_into_existing_workspace_above() {
+        let mut ws = wss(); // ws[0]: pane 1
+        ws.add_workspace_below(2); // ws[1]: pane 2, active = 1
+        ws.active_mut().add_test_column(3); // ws[1]: cols [2,3], active = pane 3
+
+        assert!(ws.move_pane_up());
+        // Pane 3 moved up into ws[0]; ws[1] keeps pane 2. Both workspaces
+        // remain (ws[1] still non-empty), focus followed up to ws[0].
+        assert_eq!(ws.workspaces.len(), 2);
+        assert_eq!(ws.active_workspace_idx, 0);
+        assert_eq!(ws.active().active_pane_id(), Some(3));
+        assert!(ws.workspaces[0].all_pane_ids().contains(&1));
+        assert!(ws.workspaces[0].all_pane_ids().contains(&3));
+        assert_eq!(ws.workspaces[1].all_pane_ids(), vec![2]);
+    }
 
     #[test]
     fn cleanup_empty_keeps_at_least_one_workspace() {

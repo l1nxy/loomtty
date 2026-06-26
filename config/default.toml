@@ -239,9 +239,11 @@ auth = "token"
 # token = "REPLACE_WITH_OUTPUT_OF_openssl_rand_hex_16"
 token = ""
 # Exact-match Origin allowlist for browser clients (CSRF defense).
-# Empty + loopback bind = permissive (fine for local dev). Empty +
-# non-loopback bind = daemon refuses to start. Non-empty = each
-# inbound upgrade's Origin header must match one of these entries.
+# Empty + loopback bind + auth="token" = permissive (the token gates).
+# Empty + loopback bind + auth="none" = same-origin only (the gateway's
+# own SPA; foreign pages are rejected). Empty + non-loopback bind =
+# daemon refuses to start. Non-empty = each inbound upgrade's Origin
+# header must match one of these entries.
 # Examples: "http://localhost:5173", "https://terminal.example.com",
 # or the literal "null" for file:// / sandboxed origins.
 allowed_origins = []

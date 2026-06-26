@@ -26,10 +26,14 @@ enabled = true
 auth = "none"   # demo mode — loopback only
 ```
 
-The gateway then accepts unauthenticated connections and the browser UI skips
-the login screen — open the URL and you're attached. Demo mode is **only
-honored on a loopback `bind`**; the daemon refuses to start an unauthenticated
-gateway on a reachable interface. Switch back by setting `auth = "token"` (the
+The gateway then skips the token and the browser UI skips the login screen —
+open the URL and you're attached. Demo mode is **only honored on a loopback
+`bind`**; the daemon refuses to start an unauthenticated gateway on a reachable
+interface. Even then the `/ws` data channel still requires a **same-origin**
+upgrade (or an explicit `allowed_origins` match): loopback hides the port from
+the network but not from other pages in your browser, so a tokenless gateway
+only accepts the SPA it served itself, never some other site that tries to
+reach `ws://127.0.0.1:<port>`. Switch back by setting `auth = "token"` (the
 default) with a real `token`.
 
 ## How it works

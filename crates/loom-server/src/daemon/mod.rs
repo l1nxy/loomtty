@@ -307,10 +307,6 @@ pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
     let web_shutdown = Arc::new(Notify::new());
     let _web_shutdown_guard = NotifyOnDrop(web_shutdown.clone());
     if ds.config.web.enabled {
-        // Token: trimmed, zeroized-on-drop, refcounted. The helper enforces
-        // the 16-byte floor and strips a trailing newline so a stray one in
-        // the config does not silently break auth.
-        let token = web::prepare_web_token(&ds.config.web.token)?;
         // `bind` has already passed schema validation (accepts empty or a
         // parseable IpAddr) — empty means "use loopback".
         let parsed_bind: std::net::IpAddr = if ds.config.web.bind.is_empty() {
@@ -334,6 +330,26 @@ pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
                  the gateway."
             );
         }
+        // Token: trimmed, zeroized-on-drop, refcounted. The helper enforces
+        // the 16-byte floor and strips a trailing newline so a stray one in
+        // the config does not silently break auth. `auth = "none"` (demo
+        // mode) skips the token entirely — runtime backstop mirrors the
+        // schema rule: never unauthenticated off-loopback.
+        let token = if ds.config.web.auth_disabled() {
+            if !parsed_bind.is_loopback() {
+                anyhow::bail!(
+                    "[web] auth=\"none\" requires a loopback bind (got {parsed_bind}) — \
+                     set a real token before exposing the gateway."
+                );
+            }
+            log::warn!(
+                "[web] auth=\"none\" — the gateway accepts unauthenticated connections \
+                 from anything on this host; demo/local use only"
+            );
+            None
+        } else {
+            Some(web::prepare_web_token(&ds.config.web.token)?)
+        };
         // Construct the listener from the canonical IpAddr so the logged
         // address and the loopback check agree on one normalised form
         // (matters for IPv6: `::0001` and `::1` parse equal but compare as

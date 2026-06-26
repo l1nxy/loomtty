@@ -126,7 +126,9 @@ pub(crate) fn prepare_web_token(raw: &str) -> Result<SharedToken> {
 /// so `Clone` (required by axum `State`) is a refcount bump.
 #[derive(Clone)]
 pub(crate) struct WebState {
-    token: SharedToken,
+    /// `None` = `auth = "none"` (demo mode): `/ws` skips the token check.
+    /// The daemon only constructs that state on a loopback bind.
+    token: Option<SharedToken>,
     allowed_origins: Arc<Vec<String>>,
     conn_sem: Arc<Semaphore>,
     server: Arc<Mutex<Server>>,
@@ -136,7 +138,7 @@ pub(crate) struct WebState {
 
 impl WebState {
     pub(crate) fn new(
-        token: SharedToken,
+        token: Option<SharedToken>,
         allowed_origins: Arc<Vec<String>>,
         server: Arc<Mutex<Server>>,
         shutdown: Arc<Notify>,
@@ -204,7 +206,9 @@ pub(crate) fn resolve_static_dir(configured: &str) -> Option<PathBuf> {
 /// immediately. The client routes by `?session=` query, not URL path, so
 /// no SPA path-fallback is needed — unknown paths correctly 404.
 pub(crate) fn build_router(state: WebState, static_dir: Option<PathBuf>) -> Router {
-    let mut app = Router::new().route("/ws", get(ws_handler));
+    let mut app = Router::new()
+        .route("/ws", get(ws_handler))
+        .route("/api/auth-mode", get(auth_mode_handler));
 
     if let Some(dir) = static_dir {
         // One ServeDir serves the whole built site: `/` → index.html (via
@@ -228,9 +232,13 @@ pub(crate) fn build_router(state: WebState, static_dir: Option<PathBuf>) -> Rout
 /// mid-deploy) is never pinned in a cache for a year, and the `/ws`
 /// 101/401/503 responses are left untouched.
 async fn set_static_cache_headers(req: Request, next: Next) -> Response {
-    let immutable = req.uri().path().starts_with("/assets/");
+    let path = req.uri().path();
+    // API handlers stamp their own Cache-Control (e.g. `/api/auth-mode`
+    // sets `no-store`); don't overwrite it with the static-shell policy.
+    let api = path.starts_with("/api/");
+    let immutable = path.starts_with("/assets/");
     let mut res = next.run(req).await;
-    if res.status().is_success() {
+    if !api && res.status().is_success() {
         let value = if immutable {
             "public, max-age=31536000, immutable"
         } else {
@@ -265,15 +273,20 @@ async fn ws_handler(
     RawQuery(query): RawQuery,
     ws: WebSocketUpgrade,
 ) -> Response {
-    if !origin_allowed(&headers, &st.allowed_origins) {
-        log::warn!("ws upgrade from {addr} rejected: Origin not in allowlist");
+    if !origin_allowed(&headers, &st.allowed_origins, st.token.is_none()) {
+        log::warn!("ws upgrade from {addr} rejected: Origin not allowed");
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let provided = extract_token(&headers, query.as_deref());
-    let authed = provided
-        .as_deref()
-        .map(|t| bool::from(t.as_bytes().ct_eq(st.token.as_bytes())))
-        .unwrap_or(false);
+    let authed = match st.token.as_ref() {
+        // Demo mode (`auth = "none"`, loopback-only): no token to check. The
+        // same-origin gate enforced above is the only thing standing between
+        // this terminal and any other page in the user's local browser.
+        None => true,
+        Some(expected) => extract_token(&headers, query.as_deref())
+            .as_deref()
+            .map(|t| bool::from(t.as_bytes().ct_eq(expected.as_bytes())))
+            .unwrap_or(false),
+    };
     if !authed {
         log::warn!("ws upgrade from {addr} rejected: bad or missing token");
         return StatusCode::UNAUTHORIZED.into_response();
@@ -308,20 +321,69 @@ async fn ws_handler(
         })
 }
 
-/// Returns true if the request Origin satisfies the policy. Empty
-/// allowlist is permissive (the daemon only permits that on a loopback
-/// bind); a non-empty list requires an exact match.
-fn origin_allowed(headers: &HeaderMap, allowed: &[String]) -> bool {
-    if allowed.is_empty() {
-        return true;
+/// Advertise the gateway's auth mode so the SPA can skip the login card
+/// on a demo (`auth = "none"`) gateway. Deliberately public (like the
+/// static shell): it reveals only whether a token is required, never the
+/// token. `no-store` so a mode flip after restart isn't masked by a cache.
+async fn auth_mode_handler(State(st): State<WebState>) -> Response {
+    let mode = if st.token.is_none() { "none" } else { "token" };
+    (
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        format!("{{\"auth\":\"{mode}\"}}"),
+    )
+        .into_response()
+}
+
+/// Returns true if the request Origin satisfies the policy.
+///
+/// - A non-empty allowlist always requires an exact Origin match; a missing
+///   or unparseable Origin fails.
+/// - An empty allowlist is permissive **only when token auth is enabled**
+///   (`tokenless == false`): there the token is the gate, and the daemon
+///   already refuses an empty allowlist off a loopback bind.
+/// - When token auth is disabled (`auth = "none"` demo mode, `tokenless ==
+///   true`) an empty allowlist instead enforces **same-origin**: the upgrade's
+///   Origin must match its own Host. Loopback binding only hides the port from
+///   the network — any other page in the user's local browser can still open
+///   `ws://127.0.0.1:<port>/ws`, so without this a tokenless gateway would be
+///   drivable cross-origin by an untrusted local page.
+fn origin_allowed(headers: &HeaderMap, allowed: &[String], tokenless: bool) -> bool {
+    if !allowed.is_empty() {
+        let Some(value) = headers.get(header::ORIGIN) else {
+            return false;
+        };
+        let Ok(origin) = value.to_str() else {
+            return false;
+        };
+        return allowed.iter().any(|o| o == origin);
     }
-    let Some(value) = headers.get(header::ORIGIN) else {
+    // Empty allowlist: permissive under token auth (the token gates), but
+    // same-origin-only when tokenless (nothing else gates the data plane).
+    !tokenless || same_origin(headers)
+}
+
+/// True when the request's `Origin` authority equals its `Host` header — i.e.
+/// the page driving the upgrade was served by this same gateway. Gates the
+/// tokenless demo mode: the loomtty SPA is served from the gateway, so its
+/// Origin matches Host, while any other page in the user's browser carries a
+/// foreign Origin. Fails closed on a missing / `null` / unparseable Origin or
+/// a missing Host.
+fn same_origin(headers: &HeaderMap) -> bool {
+    let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) else {
         return false;
     };
-    let Ok(origin) = value.to_str() else {
+    let Some(host) = headers.get(header::HOST).and_then(|v| v.to_str().ok()) else {
         return false;
     };
-    allowed.iter().any(|o| o == origin)
+    // `Origin: scheme://host[:port]`; compare its authority to `Host`. A
+    // schemeless / `null` Origin has no `://` and is rejected.
+    match origin.split_once("://") {
+        Some((_scheme, authority)) => authority == host,
+        None => false,
+    }
 }
 
 /// Pull the bearer token from `Authorization: Bearer <token>` (preferred;
@@ -833,28 +895,71 @@ mod tests {
     }
 
     #[test]
-    fn origin_allowed_empty_allowlist_is_permissive() {
-        assert!(origin_allowed(&HeaderMap::new(), &[]));
+    fn origin_allowed_empty_allowlist_is_permissive_under_token_auth() {
+        // Token mode (`tokenless = false`): the token is the gate, so an empty
+        // allowlist accepts any/no Origin (daemon enforces loopback-only here).
+        assert!(origin_allowed(&HeaderMap::new(), &[], false));
         assert!(origin_allowed(
             &headers(&[("origin", "http://anywhere.example")]),
-            &[]
+            &[],
+            false
         ));
-        assert!(origin_allowed(&headers(&[("origin", "null")]), &[]));
+        assert!(origin_allowed(&headers(&[("origin", "null")]), &[], false));
+    }
+
+    #[test]
+    fn origin_allowed_tokenless_empty_allowlist_requires_same_origin() {
+        // Demo mode (`tokenless = true`): an empty allowlist falls back to a
+        // same-origin check, so only the gateway's own SPA can drive `/ws`.
+        let same = headers(&[
+            ("host", "127.0.0.1:7681"),
+            ("origin", "http://127.0.0.1:7681"),
+        ]);
+        assert!(origin_allowed(&same, &[], true), "same-origin must pass");
+
+        // A foreign page in the same browser (cross-origin) is rejected.
+        let cross = headers(&[
+            ("host", "127.0.0.1:7681"),
+            ("origin", "http://evil.example"),
+        ]);
+        assert!(!origin_allowed(&cross, &[], true), "cross-origin must fail");
+
+        // Missing Origin, `null` Origin, and missing Host all fail closed.
+        assert!(!origin_allowed(
+            &headers(&[("host", "127.0.0.1:7681")]),
+            &[],
+            true
+        ));
+        assert!(!origin_allowed(
+            &headers(&[("host", "127.0.0.1:7681"), ("origin", "null")]),
+            &[],
+            true
+        ));
+        assert!(!origin_allowed(
+            &headers(&[("origin", "http://127.0.0.1:7681")]),
+            &[],
+            true
+        ));
     }
 
     #[test]
     fn origin_allowed_strict_allowlist_requires_match() {
         let allowed = vec!["https://terminal.example.com".to_string()];
-        assert!(origin_allowed(
-            &headers(&[("origin", "https://terminal.example.com")]),
-            &allowed
-        ));
-        assert!(!origin_allowed(
-            &headers(&[("origin", "https://attacker.example.com")]),
-            &allowed
-        ));
-        // Missing Origin under strict policy must fail.
-        assert!(!origin_allowed(&HeaderMap::new(), &allowed));
+        // A non-empty allowlist requires an exact match regardless of mode.
+        for tokenless in [false, true] {
+            assert!(origin_allowed(
+                &headers(&[("origin", "https://terminal.example.com")]),
+                &allowed,
+                tokenless
+            ));
+            assert!(!origin_allowed(
+                &headers(&[("origin", "https://attacker.example.com")]),
+                &allowed,
+                tokenless
+            ));
+            // Missing Origin under strict policy must fail.
+            assert!(!origin_allowed(&HeaderMap::new(), &allowed, tokenless));
+        }
     }
 
     #[test]
@@ -911,7 +1016,22 @@ mod router_tests {
             TerminalColors::default(),
         )));
         WebState::new(
-            prepare_web_token("0123456789abcdef0123456789abcdef").unwrap(),
+            Some(prepare_web_token("0123456789abcdef0123456789abcdef").unwrap()),
+            std::sync::Arc::new(Vec::new()),
+            server,
+            std::sync::Arc::new(tokio::sync::Notify::new()),
+            std::sync::Arc::new(tokio::sync::Notify::new()),
+        )
+    }
+
+    fn test_state_noauth() -> WebState {
+        let server = std::sync::Arc::new(tokio::sync::Mutex::new(Server::new(
+            "",
+            8.0,
+            TerminalColors::default(),
+        )));
+        WebState::new(
+            None,
             std::sync::Arc::new(Vec::new()),
             server,
             std::sync::Arc::new(tokio::sync::Notify::new()),
@@ -931,10 +1051,14 @@ mod router_tests {
     }
 
     fn site_router() -> (tempfile::TempDir, Router) {
+        site_router_with(test_state())
+    }
+
+    fn site_router_with(state: WebState) -> (tempfile::TempDir, Router) {
         let tmp = tempfile::tempdir().unwrap();
         write_site(tmp.path());
         let dir = std::fs::canonicalize(tmp.path()).unwrap();
-        let router = build_router(test_state(), Some(dir));
+        let router = build_router(state, Some(dir));
         (tmp, router)
     }
 
@@ -1051,6 +1175,76 @@ mod router_tests {
         );
 
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn ws_demo_mode_enforces_same_origin() {
+        // Demo mode (`auth = "none"`): a tokenless upgrade succeeds ONLY when
+        // the page is same-origin with the gateway (the SPA we served). A
+        // foreign or missing Origin — any other page in the user's local
+        // browser reaching loopback — must still be rejected.
+        let (_tmp, router) = site_router_with(test_state_noauth());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+        let server = tokio::spawn(serve_web(listener, router, shutdown));
+
+        // `origin` of `None` omits the header entirely.
+        async fn status_line(addr: SocketAddr, origin: Option<&str>) -> String {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+            let origin_line = origin
+                .map(|o| format!("Origin: {o}\r\n"))
+                .unwrap_or_default();
+            let req = format!(
+                "GET /ws HTTP/1.1\r\nHost: {addr}\r\n{origin_line}Connection: Upgrade\r\n\
+                 Upgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+                 Sec-WebSocket-Version: 13\r\n\r\n",
+            );
+            s.write_all(req.as_bytes()).await.unwrap();
+            let mut buf = [0u8; 64];
+            let n = s.read(&mut buf).await.unwrap();
+            String::from_utf8_lossy(&buf[..n])
+                .lines()
+                .next()
+                .unwrap_or("")
+                .to_string()
+        }
+
+        // Same-origin (Origin authority == Host) → 101 Switching Protocols.
+        let same = status_line(addr, Some(&format!("http://{addr}"))).await;
+        assert!(
+            same.contains("101"),
+            "same-origin tokenless upgrade must succeed, got: {same}"
+        );
+        // Foreign Origin → 401, even though no token is required.
+        let cross = status_line(addr, Some("http://evil.example")).await;
+        assert!(
+            cross.contains("401"),
+            "cross-origin upgrade must be rejected, got: {cross}"
+        );
+        // Missing Origin → 401 (fails closed).
+        let none = status_line(addr, None).await;
+        assert!(
+            none.contains("401"),
+            "originless upgrade must be rejected, got: {none}"
+        );
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn auth_mode_endpoint_reports_mode() {
+        let (_tmp, router) = site_router();
+        let (status, headers, body) = get(&router, "/api/auth-mode").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "{\"auth\":\"token\"}");
+        assert_eq!(cache_control(&headers), "no-store");
+
+        let (_tmp2, router) = site_router_with(test_state_noauth());
+        let (status, _, body) = get(&router, "/api/auth-mode").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "{\"auth\":\"none\"}");
     }
 
     #[tokio::test]

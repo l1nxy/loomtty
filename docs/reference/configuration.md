@@ -284,7 +284,8 @@ Browser gateway — disabled by default. The easiest way to enable it is the
 | `enabled` | bool | `false` | Serve the browser SPA + `/ws` gateway. |
 | `bind` | string | `""` | Bind address (IP). Empty = `127.0.0.1`. |
 | `port` | int | `7891` | Listen port. `0` is rejected. |
-| `token` | string | `""` | Shared auth token. **Required** and ≥ 16 bytes when `enabled = true`. Generate with `openssl rand -hex 16`. |
+| `token` | string | `""` | Shared auth token. **Required** and ≥ 16 bytes when `enabled = true` (unless `auth = "none"`). Generate with `openssl rand -hex 16`. |
+| `auth` | string | `"token"` | `"token"` or `"none"`. `"none"` is **demo mode**: no token, the browser UI skips the login screen. Only honored on a loopback `bind`. |
 | `allowed_origins` | string[] | `[]` | Exact-match `Origin` allowlist (CSRF defense). See below. |
 | `static_dir` | string | `""` | Directory the SPA is served from. Empty = `<server-exe-dir>/web`. |
 

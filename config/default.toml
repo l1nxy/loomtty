@@ -223,6 +223,11 @@ enabled = false
 # round-tripped through serde produces no diff.
 bind = ""
 port = 7891
+# Authentication for the /ws data channel: "token" (default) or "none".
+# "none" is demo mode — no token, the browser UI skips the login screen.
+# Only honored on a loopback bind; the daemon refuses to start an
+# unauthenticated gateway on a reachable interface.
+auth = "token"
 # Generate with `openssl rand -hex 16` (32 hex chars) and paste the
 # value between the quotes. Leave as "" while `enabled = false`.
 # Avoid base64-style tokens for query-string clients: characters
@@ -234,9 +239,11 @@ port = 7891
 # token = "REPLACE_WITH_OUTPUT_OF_openssl_rand_hex_16"
 token = ""
 # Exact-match Origin allowlist for browser clients (CSRF defense).
-# Empty + loopback bind = permissive (fine for local dev). Empty +
-# non-loopback bind = daemon refuses to start. Non-empty = each
-# inbound upgrade's Origin header must match one of these entries.
+# Empty + loopback bind + auth="token" = permissive (the token gates).
+# Empty + loopback bind + auth="none" = same-origin only (the gateway's
+# own SPA; foreign pages are rejected). Empty + non-loopback bind =
+# daemon refuses to start. Non-empty = each inbound upgrade's Origin
+# header must match one of these entries.
 # Examples: "http://localhost:5173", "https://terminal.example.com",
 # or the literal "null" for file:// / sandboxed origins.
 allowed_origins = []

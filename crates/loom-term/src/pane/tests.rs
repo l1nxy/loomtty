@@ -354,10 +354,23 @@ fn mouse_input_sgr_format_encoding() {
         pane.send_mouse_input(button, col, row, pressed, mods);
     }
 
-    // Wait for cat to echo back all sequences, then verify each expected
-    // encoding fragment appears in the grid.
+    // Wait for cat to echo back EVERY sequence — not just the first — so a
+    // slow PTY round can't race the assertions below. (This previously waited
+    // only for the first `[<` to appear, then asserted all six were present;
+    // on slower runners — observed on macOS CI — the later sequences hadn't
+    // rendered yet, so the test flaked.) The per-case loop below still reports
+    // exactly which fragment is missing if the 2s budget is genuinely blown.
+    let expected_fragments: Vec<&str> = cases
+        .iter()
+        .map(|&(.., expected)| expected.trim_start_matches('\x1b'))
+        .collect();
     wait_until(&mut pane, Duration::from_secs(2), |p| {
-        grid_contains(p, "[<")
+        let rows = p.term.grid().screen_lines();
+        let grid_text: String = (0..rows as i32)
+            .map(|r| read_grid_row(p, r))
+            .collect::<Vec<_>>()
+            .join("\n");
+        expected_fragments.iter().all(|&f| grid_text.contains(f))
     });
 
     // Collect all grid text for matching

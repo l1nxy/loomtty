@@ -57,6 +57,10 @@ pub(crate) async fn cleanup_client(state: &Arc<Mutex<Server>>, client_id: u64) {
     if s.clients.remove(&client_id).is_some() {
         log::info!("client {client_id} disconnected");
     }
+    // Drop any `run-command --wait` registrations this client owned, so a
+    // never-exiting command doesn't leak a pending entry forever.
+    s.pending_pane_waits
+        .retain(|_, &mut waiter| waiter != client_id);
 }
 
 /// Handle a single client connection (handshake, reader loop, writer task).

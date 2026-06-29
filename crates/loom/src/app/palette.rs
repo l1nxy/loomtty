@@ -104,6 +104,7 @@ impl App {
                     session_name: self.core.session_name.clone(),
                     command,
                     cwd: None,
+                    wait: false,
                 });
             }
             PaletteEntryKind::DirectConnect {

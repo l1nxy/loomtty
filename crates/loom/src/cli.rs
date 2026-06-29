@@ -151,6 +151,13 @@ pub enum MsgCommand {
     RunCommand {
         session_name: String,
         command: String,
+        /// Working directory for the command (default: inherited by the new pane).
+        #[arg(long)]
+        cwd: Option<String>,
+        /// Block until the command's process exits, then print its exit code
+        /// and exit with the same status.
+        #[arg(long)]
+        wait: bool,
     },
     /// Capture a pane's active grid (and optional scrollback) as text to stdout.
     ///
@@ -269,9 +276,13 @@ pub fn resolve(cli: Cli) -> CliCommand {
                 MsgCommand::RunCommand {
                     session_name,
                     command,
+                    cwd,
+                    wait,
                 } => MsgSubcommand::RunCommand {
                     session_name,
                     command,
+                    cwd,
+                    wait,
                 },
                 MsgCommand::CapturePane {
                     session_name,
@@ -411,6 +422,8 @@ pub enum MsgSubcommand {
     RunCommand {
         session_name: String,
         command: String,
+        cwd: Option<String>,
+        wait: bool,
     },
     CapturePane {
         session_name: String,

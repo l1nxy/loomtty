@@ -104,10 +104,13 @@ pub fn run(cli: CliCommand) -> Result<()> {
                 MsgSubcommand::RunCommand {
                     session_name,
                     command,
+                    cwd,
+                    wait,
                 } => ClientMessage::RunCommand {
                     session_name,
                     command,
-                    cwd: None,
+                    cwd,
+                    wait,
                 },
                 MsgSubcommand::CapturePane {
                     session_name,
@@ -132,6 +135,12 @@ pub fn run(cli: CliCommand) -> Result<()> {
                     pane_id,
                 },
             };
+            // `run-command --wait` blocks until the spawned process exits and
+            // propagates its exit code, so it uses the dedicated wait-aware
+            // path (no 10s cap) rather than the one-shot control command.
+            if let ClientMessage::RunCommand { wait: true, .. } = &msg {
+                return control::run_command_wait(msg, json);
+            }
             return control::run_control_command(msg, json);
         }
         CliCommand::Delete { session_name } => {

@@ -120,6 +120,11 @@ pub struct Pane {
 
     dirty: bool,
     exited: bool,
+    /// The spawned process's own exit code, captured from the PTY child when it
+    /// exits. Distinct from `shell_state.last_exit_code` (OSC 133); this answers
+    /// `run-command --wait` for non-interactive `sh -c` panes that lack shell
+    /// integration.
+    process_exit_code: Option<i32>,
 
     parsers: ParserSuite,
     images: ImageStore,
@@ -204,6 +209,7 @@ impl Pane {
             cell_height: DEFAULT_CELL_HEIGHT,
             dirty: true,
             exited: false,
+            process_exit_code: None,
             parsers: ParserSuite::new(),
             images: ImageStore::new(),
             events: PendingEvents::new(),
@@ -376,10 +382,16 @@ impl Pane {
     }
 
     fn check_pty_exit(&mut self) {
-        if !self.exited && self.pty.reader_eof() {
-            self.exited = true;
+        if self.exited {
+            return;
         }
-        if !self.exited && self.pty.try_wait() {
+        // Prefer try_wait: it reaps the child and yields the exit code.
+        if let Some(code) = self.pty.try_wait() {
+            self.exited = true;
+            self.process_exit_code = Some(code);
+        } else if self.pty.reader_eof() {
+            // PTY closed but the child isn't reapable yet; mark exited now and
+            // capture the code later (at cleanup) via `take_process_exit_code`.
             self.exited = true;
         }
     }
@@ -432,6 +444,17 @@ impl Pane {
 
     pub fn last_exit_code(&self) -> Option<i32> {
         self.shell_state.last_exit_code
+    }
+
+    /// The spawned process's own exit code, reaping the child if it just
+    /// exited. Unlike [`last_exit_code`](Self::last_exit_code) (OSC 133 shell
+    /// integration), this works for non-interactive `sh -c` panes. Returns
+    /// `None` if the child can't be reaped yet.
+    pub fn take_process_exit_code(&mut self) -> Option<i32> {
+        if self.process_exit_code.is_none() {
+            self.process_exit_code = self.pty.try_wait();
+        }
+        self.process_exit_code
     }
 
     pub fn cwd(&self) -> Option<&str> {

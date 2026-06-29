@@ -264,7 +264,7 @@ impl App {
                         self.core.anim_mgr.on_pane_created(pane_id, &params);
                         needs_redraw = true;
                     }
-                    ServerEvent::Control(ServerMessage::PaneClosed { pane_id }) => {
+                    ServerEvent::Control(ServerMessage::PaneClosed { pane_id, .. }) => {
                         self.core.expected_pane_ids.remove(&pane_id);
                         log::debug!("PaneClosed: pane_id={pane_id}");
                         // Capture pane rect for close animation before removing

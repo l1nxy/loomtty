@@ -1001,7 +1001,10 @@ async fn frame_roundtrip_server_message_variants() {
             cols: 80,
             rows: 24,
         },
-        ServerMessage::PaneClosed { pane_id: 42 },
+        ServerMessage::PaneClosed {
+            pane_id: 42,
+            exit_code: None,
+        },
         ServerMessage::ServerShutdown,
         ServerMessage::ClipboardStore {
             data: "copied text".to_string(),
@@ -1154,6 +1157,7 @@ async fn frame_roundtrip_client_message_variants() {
             session_name: "main".to_string(),
             command: "ls".to_string(),
             cwd: Some("/tmp".to_string()),
+            wait: false,
         },
         ClientMessage::GetSessionInfo {
             session_name: "main".to_string(),
@@ -1904,7 +1908,10 @@ mod network_edge_cases {
         wire.extend_from_slice(&frame2);
 
         // 3. Another ServerMessage
-        let msg2 = ServerMessage::PaneClosed { pane_id: 1 };
+        let msg2 = ServerMessage::PaneClosed {
+            pane_id: 1,
+            exit_code: None,
+        };
         let frame3 = frame_server_msg(&msg2).unwrap();
         wire.extend_from_slice(&frame3);
 
@@ -1922,7 +1929,7 @@ mod network_edge_cases {
             other => panic!("frame 2: expected FullPaneSync, got {other:?}"),
         }
         match read_frame(&mut cursor).await.unwrap() {
-            Frame::ServerMsg(ServerMessage::PaneClosed { pane_id: 1 }) => {}
+            Frame::ServerMsg(ServerMessage::PaneClosed { pane_id: 1, .. }) => {}
             other => panic!("frame 3: expected PaneClosed, got {other:?}"),
         }
     }

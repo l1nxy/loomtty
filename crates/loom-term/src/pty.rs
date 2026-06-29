@@ -267,15 +267,17 @@ impl Pty {
             .write_all(data)
     }
 
-    /// Check if child has exited (non-blocking).
-    pub fn try_wait(&self) -> bool {
+    /// Reap the child if it has exited (non-blocking), returning its exit code.
+    /// `Some(code)` = exited (from `portable_pty::ExitStatus`); `None` = still
+    /// running or not yet reapable.
+    pub fn try_wait(&self) -> Option<i32> {
         self.child
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .try_wait()
             .ok()
             .flatten()
-            .is_some()
+            .map(|status| status.exit_code() as i32)
     }
 
     /// Get the child shell's PID.

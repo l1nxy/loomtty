@@ -390,6 +390,118 @@ fn run_control_command_inner(msg: ClientMessage, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// `run-command --wait`: send `RunCommand { wait: true, .. }`, then block until
+/// the spawned pane's process exits, print its exit code, and exit this process
+/// with the same status.
+///
+/// There is intentionally NO overall timeout — the command may run for minutes.
+/// The server has no read timeout on its side and holds the deferred reply on
+/// this open connection; it drops the pending wait if this client disconnects,
+/// so `Ctrl-C` (process death) is a clean cancel.
+pub fn run_command_wait(msg: ClientMessage, json: bool) -> Result<()> {
+    use loom_protocol::transport;
+    use std::io::{Read, Write};
+
+    #[cfg(unix)]
+    let stream_result = {
+        let p = transport::server_socket_path();
+        if !p.exists() {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "socket not found",
+            ))
+        } else {
+            std::os::unix::net::UnixStream::connect(&p)
+        }
+    };
+    #[cfg(windows)]
+    let stream_result = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(transport::server_pipe_name());
+
+    let mut stream = match stream_result {
+        Ok(s) => s,
+        Err(_) => {
+            eprintln!("server is not running");
+            std::process::exit(1);
+        }
+    };
+
+    // Handshake. Deliberately no read timeout: we may wait a long time.
+    let hello = build_control_hello();
+    stream.write_all(&hello)?;
+    stream.flush()?;
+    let mut server_hello = [0u8; 8];
+    stream.read_exact(&mut server_hello)?;
+
+    // Send the RunCommand { wait: true } request.
+    let payload =
+        rmp_serde::to_vec(&msg).map_err(|e| anyhow::anyhow!("failed to serialize: {e}"))?;
+    let mut frame = Vec::with_capacity(5 + payload.len());
+    frame.push(0x01); // TAG_CLIENT_MSG
+    frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    frame.extend_from_slice(&payload);
+    stream.write_all(&frame)?;
+    stream.flush()?;
+
+    // Phase 1: the synchronous CommandResult tells us the spawned pane id.
+    // Phase 2: keep reading until that pane's PaneClosed arrives with the code.
+    let mut target_pane: Option<u64> = None;
+    loop {
+        let mut header = [0u8; 5];
+        if stream.read_exact(&mut header).is_err() {
+            break;
+        }
+        let tag = header[0];
+        let len = u32::from_le_bytes([header[1], header[2], header[3], header[4]]) as usize;
+        if len > MAX_FRAME_SIZE {
+            return Err(anyhow::anyhow!(
+                "frame too large ({len} bytes, max {MAX_FRAME_SIZE})"
+            ));
+        }
+        let mut payload = vec![0u8; len];
+        stream.read_exact(&mut payload)?;
+        if tag != 0x10 {
+            continue;
+        }
+        let Ok(server_msg) = rmp_serde::from_slice::<ServerMessage>(&payload) else {
+            continue;
+        };
+        match server_msg {
+            ServerMessage::CommandResult {
+                success,
+                message,
+                pane_id,
+            } => {
+                if !success {
+                    eprintln!("error: {message}");
+                    std::process::exit(1);
+                }
+                target_pane = pane_id;
+            }
+            ServerMessage::PaneClosed { pane_id, exit_code } if Some(pane_id) == target_pane => {
+                if json {
+                    let obj = serde_json::json!({ "pane_id": pane_id, "exit_code": exit_code });
+                    println!("{}", serde_json::to_string_pretty(&obj).unwrap_or_default());
+                } else if let Some(code) = exit_code {
+                    println!("{code}");
+                } else {
+                    eprintln!("loomtty: command exited without a reported exit code");
+                }
+                std::process::exit(exit_code.unwrap_or(1));
+            }
+            ServerMessage::Error { message } => {
+                eprintln!("error: {message}");
+                std::process::exit(1);
+            }
+            _ => continue,
+        }
+    }
+
+    anyhow::bail!("connection closed before the command finished")
+}
+
 /// Check if a session with the given name is currently running on the server.
 /// Returns false if the server is unreachable or the session is not found.
 pub fn session_exists_on_server(name: &str) -> bool {

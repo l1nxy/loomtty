@@ -800,17 +800,24 @@ impl Session {
     pub(crate) fn cleanup_exited_panes(
         &mut self,
         clients: &mut HashMap<u64, ClientState>,
-    ) -> Vec<u64> {
+    ) -> Vec<(u64, Option<i32>)> {
         let dead: Vec<u64> = self
             .panes
             .iter()
             .filter(|(_, p)| p.is_exited())
             .map(|(id, _)| *id)
             .collect();
+        let mut result = Vec::with_capacity(dead.len());
         for &id in &dead {
+            // Capture the process exit code before `close_pane` drops the pane.
+            let code = self
+                .panes
+                .get_mut(&id)
+                .and_then(|p| p.take_process_exit_code());
             self.close_pane(id, clients);
+            result.push((id, code));
         }
-        dead
+        result
     }
 
     /// Build initial StateSync for a new client, including FullPaneSync for each pane.

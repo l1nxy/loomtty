@@ -113,10 +113,11 @@ pub(crate) async fn run_tick_loop(
                     session.resize_all_panes(&mut s.clients);
                     // Build broadcast frames for close + layout update
                     let mut broadcast_frames: Vec<Bytes> = Vec::new();
-                    for &id in &dead {
-                        if let Some(f) =
-                            codec::frame_server_msg(&ServerMessage::PaneClosed { pane_id: id })
-                        {
+                    for &(id, exit_code) in &dead {
+                        if let Some(f) = codec::frame_server_msg(&ServerMessage::PaneClosed {
+                            pane_id: id,
+                            exit_code,
+                        }) {
                             broadcast_frames.push(Bytes::from(f));
                         }
                     }
@@ -135,6 +136,20 @@ pub(crate) async fn run_tick_loop(
                                     );
                                 }
                             }
+                        }
+                    }
+                    // Fulfill `run-command --wait`: reply to any client awaiting
+                    // one of these panes (it may live in a different session,
+                    // e.g. the __control__ CLI client).
+                    for &(id, exit_code) in &dead {
+                        if let Some(client_id) = s.pending_pane_waits.remove(&id)
+                            && let Some(f) = codec::frame_server_msg(&ServerMessage::PaneClosed {
+                                pane_id: id,
+                                exit_code,
+                            })
+                            && let Some(c) = s.clients.get(&client_id)
+                        {
+                            let _ = c.tx.try_send(Bytes::from(f));
                         }
                     }
                 }

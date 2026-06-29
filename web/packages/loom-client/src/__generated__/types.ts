@@ -55,7 +55,7 @@ export type ClientMessage =
   | { tag: "FocusChange"; focused: boolean }
   | { tag: "FocusPane"; paneId: bigint }
   | { tag: "SendKeys"; sessionName: string; paneId: bigint; keys: Uint8Array }
-  | { tag: "RunCommand"; sessionName: string; command: string; cwd: (string | null) }
+  | { tag: "RunCommand"; sessionName: string; command: string; cwd: (string | null); wait: boolean }
   | { tag: "GetSessionInfo"; sessionName: string }
   | { tag: "ListPanes"; sessionName: string }
   | { tag: "FocusPaneById"; sessionName: string; paneId: bigint }
@@ -110,7 +110,7 @@ export type ServerMessage =
   | { tag: "StateSync"; layout: LayoutState; paneIds: (bigint)[] }
   | { tag: "LayoutUpdate"; layout: LayoutState }
   | { tag: "PaneCreated"; paneId: bigint; columnIdx: bigint; cols: number; rows: number }
-  | { tag: "PaneClosed"; paneId: bigint }
+  | { tag: "PaneClosed"; paneId: bigint; exitCode: (number | null) }
   | { tag: "ServerShutdown" }
   | { tag: "ClipboardStore"; data: string }
   | { tag: "SessionList"; sessions: (SessionInfo)[] }

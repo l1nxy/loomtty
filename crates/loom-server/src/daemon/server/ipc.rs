@@ -184,6 +184,7 @@ impl Server {
                 session_name: target,
                 command,
                 cwd,
+                wait,
             } => {
                 if !Self::validate_session_name(&target, client_id, responses) {
                     return;
@@ -197,6 +198,12 @@ impl Server {
                         cwd_path,
                     ) {
                         Ok(id) => {
+                            // `--wait`: remember who to notify when this pane's
+                            // process exits (the client may be in __control__,
+                            // a different session than the pane).
+                            if wait {
+                                self.pending_pane_waits.insert(id, client_id);
+                            }
                             Self::create_pane_and_sync_layout(
                                 &mut session,
                                 &mut self.clients,

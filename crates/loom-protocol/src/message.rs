@@ -444,6 +444,9 @@ pub enum ClientMessage {
         session_name: String,
         command: String,
         cwd: Option<String>,
+        /// When true, the server defers a `PaneClosed { exit_code }` reply to
+        /// the requesting client once the spawned command's process exits.
+        wait: bool,
     },
     /// IPC: Get detailed info about a session.
     GetSessionInfo {
@@ -547,8 +550,13 @@ pub enum ServerMessage {
         cols: u16,
         rows: u16,
     },
-    /// A pane was closed.
-    PaneClosed { pane_id: u64 },
+    /// A pane was closed. `exit_code` carries the process's own exit status
+    /// when known (`Some` from `portable_pty`), `None` if it couldn't be
+    /// reaped or the pane was closed for another reason.
+    PaneClosed {
+        pane_id: u64,
+        exit_code: Option<i32>,
+    },
     /// Server is shutting down.
     ServerShutdown,
     /// OSC 52: TUI app requests clipboard write.

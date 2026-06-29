@@ -319,7 +319,7 @@ fn close_pane_emits_close_then_layout_update() {
     assert!(matches!(
         responses.as_slice(),
         [
-            ServerResponse::BroadcastToSession(first_session, ServerMessage::PaneClosed { pane_id: closed }),
+            ServerResponse::BroadcastToSession(first_session, ServerMessage::PaneClosed { pane_id: closed, .. }),
             ServerResponse::BroadcastToSession(second_session, ServerMessage::LayoutUpdate { .. })
         ] if first_session == &session_name && second_session == &session_name && *closed == pane_id
     ));
@@ -721,7 +721,7 @@ fn session_close_last_pane_leaves_empty_session(mut server_with_session: (Server
 
     let responses = server.handle_message(ClientMessage::ClosePane { pane_id }, 1);
     assert!(responses.iter().any(|r| matches!(r,
-        ServerResponse::BroadcastToSession(_, ServerMessage::PaneClosed { pane_id: id }) if *id == pane_id
+        ServerResponse::BroadcastToSession(_, ServerMessage::PaneClosed { pane_id: id, .. }) if *id == pane_id
     )));
 
     let session = server.sessions.get(session_name).unwrap();

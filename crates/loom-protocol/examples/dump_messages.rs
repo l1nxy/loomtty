@@ -497,6 +497,7 @@ fn client_fixtures() -> Vec<(&'static str, String, String)> {
                 session_name: "main".into(),
                 command: "ls -la".into(),
                 cwd: Some("/home/u".into()),
+                wait: false,
             },
             r#"{ tag: "RunCommand", sessionName: "main", command: "ls -la", cwd: "/home/u" }"#,
         ),

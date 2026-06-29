@@ -104,10 +104,11 @@ pub fn run(cli: CliCommand) -> Result<()> {
                 MsgSubcommand::RunCommand {
                     session_name,
                     command,
+                    cwd,
                 } => ClientMessage::RunCommand {
                     session_name,
                     command,
-                    cwd: None,
+                    cwd,
                 },
                 MsgSubcommand::CapturePane {
                     session_name,

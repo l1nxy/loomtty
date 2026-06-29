@@ -165,7 +165,7 @@ impl Server {
                             session,
                             &mut self.clients,
                             session_name,
-                            false,
+                            true,
                             responses,
                         );
                     } else {
@@ -185,7 +185,7 @@ impl Server {
                             session,
                             &mut self.clients,
                             session_name,
-                            false,
+                            true,
                             responses,
                         );
                     } else {

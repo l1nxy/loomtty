@@ -105,6 +105,11 @@ impl Default for KeybindConfig {
 
         let mut direct_bindings = HashMap::new();
         direct_bindings.insert("ctrl+g".to_string(), "toggle_lock".to_string());
+        // Move the active pane across workspaces / columns without the leader.
+        direct_bindings.insert("alt+shift+h".to_string(), "move_pane_left".to_string());
+        direct_bindings.insert("alt+shift+l".to_string(), "move_pane_right".to_string());
+        direct_bindings.insert("alt+shift+k".to_string(), "move_pane_up".to_string());
+        direct_bindings.insert("alt+shift+j".to_string(), "move_pane_down".to_string());
         #[cfg(target_os = "macos")]
         {
             direct_bindings.insert("super+f".to_string(), "open_search".to_string());

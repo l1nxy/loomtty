@@ -68,6 +68,8 @@ These work at any time, without the leader:
 | `Ctrl+Shift+C` | Copy selection |
 | `Ctrl+Shift+V` | Paste |
 | `Ctrl+G` | Toggle lock |
+| `Alt+Shift+H` / `Alt+Shift+L` | Move the pane left / right within the workspace |
+| `Alt+Shift+K` / `Alt+Shift+J` | Move the pane to the workspace above / below (creates one at the edge) |
 
 ::: tip macOS
 On macOS the clipboard/search bindings use `Cmd` instead of `Ctrl+Shift`:

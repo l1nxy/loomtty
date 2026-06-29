@@ -193,6 +193,11 @@ tab = "exit_overview"
 "ctrl+shift+f" = "open_search"
 "ctrl+shift+c" = "clipboard_copy"
 "ctrl+shift+v" = "clipboard_paste"
+# Move the active pane across workspaces / columns without the leader.
+"alt+shift+h" = "move_pane_left"
+"alt+shift+l" = "move_pane_right"
+"alt+shift+k" = "move_pane_up"
+"alt+shift+j" = "move_pane_down"
 
 [keys.search_bindings]
 escape = "close_search"

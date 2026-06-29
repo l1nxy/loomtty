@@ -24,9 +24,6 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: loomtty-macos-aarch64
-          - os: macos-13
-            target: x86_64-apple-darwin
-            artifact: loomtty-macos-x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: loomtty-windows-x86_64
@@ -181,7 +178,6 @@ jobs:
             loomtty-linux-x86_64.tar.gz
             loomtty-linux-aarch64.tar.gz
             loomtty-macos-aarch64.tar.gz
-            loomtty-macos-x86_64.tar.gz
             loomtty-windows-x86_64.zip
             loomtty-*-x86_64-setup.exe
             loomtty-*-macos-arm64.dmg

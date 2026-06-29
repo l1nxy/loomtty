@@ -45,7 +45,7 @@ JSON.
 | Command | Args | Output |
 | --- | --- | --- |
 | `send-keys` | `<session> <pane_id> <keys>` | `CommandResult` (text `ok (pane N)` / `--json`) |
-| `run-command` | `<session> <command> [--cwd DIR]` | `CommandResult` with the **new** pane's id |
+| `run-command` | `<session> <command> [--cwd DIR] [--wait]` | `CommandResult` with the new pane's id; with `--wait`, blocks until exit and returns the code |
 | `capture-pane` | `<session> <pane_id> [flags]` | raw pane text on stdout (or `--json`) |
 | `list-panes` | `<session>` | pane table / `--json` array |
 | `info` | `<session>` | session summary / `--json` |
@@ -96,6 +96,19 @@ shell exits and the pane closes. `--cwd <dir>` sets the working directory
 want a clean, dedicated pane for a process rather than typing into an existing
 shell.
 
+With `--wait`, the call **blocks until the command's process exits**, prints the
+exit code, and exits with that same status — so an agent can run a command and
+get its result synchronously:
+
+```sh
+loomtty msg run-command work 'cargo test' --wait          # blocks; prints e.g. 0, exits 0
+loomtty msg run-command work 'cargo test' --wait --json   # {"pane_id":N,"exit_code":0}
+```
+
+There is no timeout (the command may run for minutes); `Ctrl-C` cancels cleanly.
+The exit code comes from the process itself (not OSC 133), so `--wait` works
+even without shell integration.
+
 ### capture-pane — read what's on screen / in scrollback
 
 ```sh
@@ -143,14 +156,19 @@ loomtty msg send-keys work 3 $'ls -la\n'
 loomtty msg capture-pane work 3 --scrollback-rows 200
 ```
 
-**Run a command and know when it finished + its exit code** (requires shell
-integration in that pane):
+**Run a command and block until it finishes, with its exit code** — simplest is
+`run-command --wait` (works without shell integration):
+
+```sh
+loomtty msg run-command work 'make build' --wait   # blocks; exits with make's code
+```
+
+To instead watch a command typed into an **existing** shell, poll OSC 133
+prompt marks (requires shell integration in that pane):
 
 ```sh
 loomtty msg send-keys work 3 $'make build\n'
-# poll until a new prompt boundary appears with a done line + exit code:
-loomtty msg list-prompts work 3 --json
-# the newest entry's exit_code tells you pass/fail; duration_ms how long it took.
+loomtty msg list-prompts work 3 --json   # newest entry's exit_code = pass/fail
 ```
 
 **Spin up a dedicated process pane and watch it:**
@@ -181,6 +199,6 @@ loomtty msg capture-pane work "$pid" --scrollback-rows 300
 - **`send-keys` ≠ submit.** Append `\n` (or `\r`) to actually run a typed command.
 - **No key-name syntax.** Control keys are raw bytes (`$'\x03'` for Ctrl-C, `$'\x1b'` for Esc).
 - **`get-layout` is always JSON**, even without `--json`. Capture-pane writes raw text (no `--json` needed for plain reads).
-- **Capture is point-in-time**, and there's no built-in "wait for command to finish" — poll `capture-pane` for output, or `list-prompts` for completion + exit code (the reliable signal, if shell integration is on).
+- **To wait for a command, use `run-command --wait`** (blocks on process exit, returns the code, no shell integration needed). `send-keys` has no wait — poll `capture-pane` for output, or `list-prompts` for completion (needs shell integration). `capture-pane` itself is point-in-time.
 - **Errors go to stderr + exit 1.** Check the exit status; don't only parse stdout.
 - **Pane IDs are per-session u64s** from `list-panes` / the `pane_id` returned by `run-command`/`create-pane`. They are not stable across closes.

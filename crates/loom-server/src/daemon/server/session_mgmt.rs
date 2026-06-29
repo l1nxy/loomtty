@@ -184,10 +184,20 @@ impl Server {
         target: &str,
         responses: &mut Vec<ServerResponse>,
     ) {
+        // Capture pane ids before removal so we can unblock any
+        // `run-command --wait` clients waiting on panes in this session.
+        let wait_panes: Vec<u64> = self
+            .sessions
+            .get(target)
+            .map(|s| s.panes.keys().copied().collect())
+            .unwrap_or_default();
         let existed = self.sessions.remove(target).is_some();
         let _ = loom_session::restore::delete_session(target, &transport::state_dir());
         if existed {
             self.finalize_session_removal(target, responses);
+        }
+        for pane_id in wait_panes {
+            self.fulfill_wait_on_close(pane_id, responses);
         }
         // Notify the requester (idempotent if they were also attached).
         responses.push(ServerResponse::SendToClient(

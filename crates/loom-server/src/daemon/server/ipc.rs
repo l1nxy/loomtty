@@ -114,6 +114,7 @@ impl Server {
                             pane_id,
                             responses,
                         );
+                        self.fulfill_wait_on_close(pane_id, responses);
                         responses.push(ServerResponse::SendToClient(
                             client_id,
                             ServerMessage::CommandResult {

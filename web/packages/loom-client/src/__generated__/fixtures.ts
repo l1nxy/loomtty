@@ -45,7 +45,7 @@ export const CLIENT_FIXTURES: Fixture<ClientMessage>[] = [
   { name: "SetColumnWidth (None)", hex: "81ae536574436f6c756d6e576964746892cb3fe8000000000000c0", value: { tag: "SetColumnWidth", proportion: 0.75, fixedPx: null } },
   { name: "MouseInput (bool + bytes)", hex: "81aa4d6f757365496e7075749607000c05c304", value: { tag: "MouseInput", paneId: 7n, button: 0, col: 12, row: 5, pressed: true, modifiers: 4 } },
   { name: "Ping u64s", hex: "81a450696e679209cf00060a24181e4000", value: { tag: "Ping", seq: 9n, clientTimeUs: 1700000000000000n } },
-  { name: "RunCommand (string + Option<string>)", hex: "81aa52756e436f6d6d616e6494a46d61696ea66c73202d6c61a72f686f6d652f75c2", value: { tag: "RunCommand", sessionName: "main", command: "ls -la", cwd: "/home/u" } },
+  { name: "RunCommand (string + Option<string>)", hex: "81aa52756e436f6d6d616e6494a46d61696ea66c73202d6c61a72f686f6d652f75c2", value: { tag: "RunCommand", sessionName: "main", command: "ls -la", cwd: "/home/u", wait: false } },
 ];
 
 export const SERVER_FIXTURES: Fixture<ServerMessage>[] = [

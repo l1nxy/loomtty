@@ -71,6 +71,8 @@ impl Server {
                         responses,
                     );
                 });
+                // Unblock any `run-command --wait` client waiting on this pane.
+                self.fulfill_wait_on_close(pane_id, responses);
             }
             ClientMessage::FocusLeft => {
                 self.handle_focus_direction(

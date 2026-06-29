@@ -319,6 +319,27 @@ impl Server {
         (state.sent, true)
     }
 
+    /// Notify any `run-command --wait` client waiting on `pane_id` that the
+    /// pane went away through an **external** close (user/GUI `close-pane`, or
+    /// `kill-session`) rather than a natural process exit — otherwise the CLI
+    /// would block forever. The exit code is unknown on this path (`None`).
+    /// The natural-exit path is handled in the tick loop instead.
+    pub(super) fn fulfill_wait_on_close(
+        &mut self,
+        pane_id: u64,
+        responses: &mut Vec<ServerResponse>,
+    ) {
+        if let Some(cid) = self.pending_pane_waits.remove(&pane_id) {
+            responses.push(ServerResponse::SendToClient(
+                cid,
+                ServerMessage::PaneClosed {
+                    pane_id,
+                    exit_code: None,
+                },
+            ));
+        }
+    }
+
     pub(super) fn close_pane_and_sync_layout(
         session: &mut Session,
         clients: &mut HashMap<u64, ClientState>,

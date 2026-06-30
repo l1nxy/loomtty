@@ -104,7 +104,20 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyGuiExeName}"; IconFile
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyGuiExeName}"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyGuiExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+; Launch via Explorer rather than running the GUI directly. Setup.exe runs with
+; the "Redirection Guard" process mitigation (EnforceRedirectionTrust) that
+; Windows applies to installer-class processes; that policy is INHERITED by any
+; child we spawn here — including the daemon and, transitively, the shells it
+; opens in its pseudo-consoles. With it active, CreateProcess fails with
+; ERROR_UNTRUSTED_MOUNT_POINT (448) for any target reached through an untrusted
+; junction/reparse point — e.g. a scoop-shimmed shell at
+; ...\scoop\apps\<tool>\current\<tool>.exe (`current` is a junction). The first
+; pane's shell then can't start, the only pane closes, and the window vanishes
+; ("won't open"). Bouncing through Explorer.exe (the shell, unmitigated) starts
+; loomtty in a fresh process tree without the inherited policy, matching a normal
+; Start-Menu launch. Verified: Explorer-launched daemon reports
+; EnforceRedirectionTrust=False and junction-pathed shells spawn fine.
+Filename: "{win}\explorer.exe"; Parameters: """{app}\{#MyGuiExeName}"""; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 ; NOTE: We intentionally do NOT run `loomtty kill-server` on uninstall.
 ; The control connection has no read timeout on Windows (named-pipe reads

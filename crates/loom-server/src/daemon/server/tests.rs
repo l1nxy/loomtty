@@ -275,6 +275,31 @@ fn resolve_auto_session_ignores_dunder_sessions() {
 }
 
 #[test]
+fn get_or_create_session_revives_a_zombie_empty_session() {
+    // The tick loop only reaps a session once its last pane exit wakes it —
+    // it blocks on `input_notify` rather than polling — so a session can
+    // sit in `self.sessions` with zero panes for a while after its last
+    // pane died. A client reattaching to that name in that window must
+    // still get a live pane, not silently attach to (and shortly get
+    // evicted from) an empty shell of a session.
+    let mut server = Server::new("", 8.0, TerminalColors::default());
+    server.get_or_create_session("alpha");
+    assert_eq!(server.sessions["alpha"].panes.len(), 1);
+
+    // Simulate the pane having exited without the tick loop having reaped
+    // the now-empty session yet.
+    server.sessions.get_mut("alpha").unwrap().panes.clear();
+    assert!(server.sessions["alpha"].panes.is_empty());
+
+    server.get_or_create_session("alpha");
+    assert_eq!(
+        server.sessions["alpha"].panes.len(),
+        1,
+        "reattaching to a zombie empty session must produce a live pane"
+    );
+}
+
+#[test]
 #[cfg_attr(
     windows,
     ignore = "ConPTY + PowerShell prompt rendering eats the second printf in a small pane; see 9e5d317"

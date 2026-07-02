@@ -37,6 +37,25 @@ impl Server {
 
             self.sessions.insert(session_name.to_string(), session);
         }
+
+        // A session can also already exist in `self.sessions` with zero
+        // panes: the tick loop only reaps empty sessions when something
+        // wakes it (it blocks on `input_notify`, it isn't polled), so a
+        // session whose last pane just exited can sit around "running but
+        // empty" until the next wake-up. A client that attaches to it in
+        // that window would otherwise get 0 panes and no fallback — and
+        // then get evicted moments later once the tick loop catches up and
+        // reaps it. Give it a live pane now instead of leaving it a zombie.
+        if self
+            .sessions
+            .get(session_name)
+            .is_some_and(|s| s.panes.is_empty())
+        {
+            let mut session = self.sessions.remove(session_name).unwrap();
+            Self::init_default_workspace(&mut session, &mut self.next_pane_id, &mut self.clients);
+            self.sessions.insert(session_name.to_string(), session);
+        }
+
         self.sessions.get_mut(session_name).unwrap()
     }
 

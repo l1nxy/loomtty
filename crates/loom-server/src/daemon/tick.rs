@@ -170,10 +170,21 @@ pub(crate) async fn run_tick_loop(
 
                 // If session has no panes left, mark for removal
                 if session.panes.is_empty() {
-                    let _ = loom_session::restore::delete_session(
+                    // A failed delete leaves the saved-session file on disk,
+                    // which makes a future reconnect under this name look
+                    // "restorable" even though the live session is gone —
+                    // logged (not just swallowed) so that class of failure
+                    // is diagnosable instead of surfacing only as a client
+                    // that mysteriously refuses to reattach.
+                    if let Err(e) = loom_session::restore::delete_session(
                         session_name,
                         &transport::state_dir(),
-                    );
+                    ) {
+                        log::warn!(
+                            "session '{}': failed to delete saved-session file: {e}",
+                            session_name
+                        );
+                    }
                     log::info!(
                         "session '{}': all panes exited, removing session",
                         session_name

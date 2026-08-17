@@ -10,6 +10,7 @@ mod types;
 #[cfg(test)]
 mod tests;
 
+pub use link::looks_like_file_path;
 pub use types::{LinkMatch, ScrollbackRow};
 
 /// Client-side pane grid with split storage: scrollback VecDeque + flat viewport.

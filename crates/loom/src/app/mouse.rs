@@ -336,8 +336,13 @@ impl App {
                 let shift = self.modifiers.shift_key();
                 if let Some((pane_id, col, buf_row)) = self.pixel_to_cell(mx, my) {
                     let passthrough = self.pane_prefers_mouse_passthrough(pane_id);
-                    if !shift
-                        && !passthrough
+                    // Link activation is gated on the modifier and on the
+                    // click not being forwarded to the application. Shift
+                    // is deliberately *not* excluded: it is the escape
+                    // hatch that turns passthrough off, so Ctrl+Shift+click
+                    // (Cmd+Shift on macOS) is the only way to open a link
+                    // inside a mouse-reporting program such as vim/lazygit.
+                    if !passthrough
                         && self.link_activation_modifier_active()
                         && let Some(url) = self.hovered_link_url_at(pane_id, col, buf_row)
                     {

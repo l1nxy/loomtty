@@ -77,6 +77,26 @@ On macOS the clipboard/search bindings use `Cmd` instead of `Ctrl+Shift`:
 close pane, and `Cmd+Q` quit.
 :::
 
+## Mouse
+
+| Gesture | Action |
+| ------- | ------ |
+| Click / drag | Focus pane, select text (double-click word, triple-click line) |
+| `Shift`+drag | Select text even when the program in the pane captures the mouse |
+| `Ctrl`+click a link (`Cmd` on macOS) | Open the URL in the browser, or the file path in `$EDITOR` |
+| `Ctrl+Shift`+click a link | Same, inside programs that capture the mouse (vim, lazygit, …) |
+| Right-click | Context menu — includes **Open Link** / **Copy Link** when over a link |
+
+Links are detected in plain output (`http://`, `https://`, `www.`, and file
+paths such as `src/main.rs:42`, `Program.cs(12,5)` or a quoted
+`"C:\Program Files\x\y.rs"`) as well as explicit OSC 8 hyperlinks, and are
+underlined on hover. Text glued to either side — markdown `[]()`, backticks,
+CJK prose or punctuation — is left out, and links that soft-wrap onto the
+next row are opened whole. File-path links open in `$VISUAL`/`$EDITOR` (with
+`--goto`/`+line` for VS Code, Cursor, vim, nvim and helix); when neither is
+set they are refused rather than handed to the OS, since terminal output could
+name an executable.
+
 ## Modes
 
 Modes are temporary key tables you enter from the leader. In **sticky** input,

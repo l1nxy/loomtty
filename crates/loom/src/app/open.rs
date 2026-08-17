@@ -22,8 +22,8 @@ impl App {
                 Some(super::HoveredLink {
                     pane_id,
                     url: link.url,
-                    start: (link.start_col, buffer_row),
-                    end: (link.end_col, buffer_row),
+                    start: (link.start_col, link.start_row),
+                    end: (link.end_col, link.end_row),
                 })
             });
         if self.core.hovered_link == next {
@@ -218,37 +218,18 @@ pub(crate) fn open_trusted_path(path: &std::path::Path) -> std::io::Result<()> {
 }
 
 /// Check if a link string looks like a file path rather than a URL.
+///
+/// Delegates to the same detector that produced the link, so whatever
+/// `link_at` highlights as a path is routed to `$EDITOR` here. The old
+/// hand-rolled copy of the rules had drifted: it never accepted bare
+/// filenames (`Cargo.toml`, `main.rs`), so those highlighted but were
+/// then refused as an "untrusted scheme" URL.
 fn is_file_path_link(s: &str) -> bool {
     let lower = s.to_ascii_lowercase();
     if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("www.") {
         return false;
     }
-    // Strip :line:col suffix for path analysis
-    let (path, _, _) = parse_file_location(s);
-    // Unix absolute, relative, home
-    if path.starts_with('/')
-        || path.starts_with("./")
-        || path.starts_with("../")
-        || path.starts_with("~/")
-    {
-        return true;
-    }
-    // Windows absolute: C:\ or C:/
-    if path.len() >= 3
-        && path.as_bytes()[0].is_ascii_alphabetic()
-        && path.as_bytes()[1] == b':'
-        && (path.as_bytes()[2] == b'\\' || path.as_bytes()[2] == b'/')
-    {
-        return true;
-    }
-    // Bare path with separator — must also have a file extension to avoid
-    // false positives (consistent with detect_file_path in grid.rs).
-    if (path.contains('/') || path.contains('\\')) && !path.contains("://") {
-        // Require a dot in the last path component (file extension)
-        let file_name = path.rsplit(['/', '\\']).next().unwrap_or(path);
-        return file_name.contains('.');
-    }
-    false
+    loom_app::grid::looks_like_file_path(s)
 }
 
 /// Open a file path, optionally at a specific line:col.
@@ -307,45 +288,143 @@ fn open_file_path(path_with_loc: &str, pane_cwd: Option<&str>) -> std::io::Resul
     })?;
     let resolved = canonical.to_string_lossy();
 
-    // Try $EDITOR first (supports line numbers)
-    if let Ok(editor) = std::env::var("EDITOR") {
+    // Try $VISUAL, then $EDITOR (supports line numbers). $VISUAL is the
+    // conventional override for a full-screen/GUI editor and is what many
+    // users set instead of $EDITOR — honouring only the latter left their
+    // file-path links refusing to open with no visible reason.
+    let editor = std::env::var("VISUAL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            std::env::var("EDITOR")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        });
+    if let Some(editor) = editor {
+        // `$EDITOR` is frequently "code --wait" or a quoted path with
+        // spaces, and on Windows the VS Code / Cursor launchers on PATH
+        // are `code.cmd` / `cursor.cmd`, which `Command::new("code")`
+        // cannot find. Split into program + leading args and resolve the
+        // program through PATH/PATHEXT so those setups work too.
+        let (program, mut args) = split_editor_command(&editor);
+        let program = resolve_program(&program);
         let editor_lower = editor.to_ascii_lowercase();
         if editor_lower.contains("code") || editor_lower.contains("cursor") {
             let mut loc = resolved.to_string();
             if let Some(l) = line {
                 loc = format!("{loc}:{l}");
             }
-            return Command::new(&editor)
-                .args(["--goto", &loc])
-                .spawn()
-                .map(|_| ());
-        }
-        if editor_lower.contains("vim")
+            args.push("--goto".to_string());
+            args.push(loc);
+        } else if editor_lower.contains("vim")
             || editor_lower.contains("nvim")
             || editor_lower.contains("hx")
         {
-            let mut args = Vec::new();
             if let Some(l) = line {
                 args.push(format!("+{l}"));
             }
             args.push(resolved.to_string());
-            return Command::new(&editor).args(&args).spawn().map(|_| ());
+        } else {
+            args.push(resolved.to_string());
         }
-        return Command::new(&editor)
-            .arg(resolved.as_ref())
+        return Command::new(&program)
+            .args(&args)
             .spawn()
-            .map(|_| ());
+            .map(|_| ())
+            .map_err(|e| {
+                std::io::Error::new(
+                    e.kind(),
+                    format!("failed to launch editor '{program}' (from $VISUAL/$EDITOR): {e}"),
+                )
+            });
     }
 
-    // No $EDITOR set — refuse to open file paths via OS handler.
+    // No $VISUAL/$EDITOR set — refuse to open file paths via OS handler.
     // OS handlers (cmd /C start, open, xdg-open) can execute arbitrary
     // binaries (.exe, .bat, .app), which is unsafe for untrusted paths
     // from terminal output. URLs are fine (browser is sandboxed), but
     // file paths need an explicit editor.
     Err(std::io::Error::new(
         std::io::ErrorKind::PermissionDenied,
-        "set $EDITOR to open file paths (OS handler refused for safety)",
+        "set $VISUAL or $EDITOR to open file paths (OS handler refused for safety)",
     ))
+}
+
+/// Split an `$EDITOR`-style command line into `(program, leading args)`.
+///
+/// If the whole string names an existing file (e.g. a full path with
+/// spaces) it is the program. Otherwise the string is split on whitespace,
+/// honouring double quotes, so `code --wait` and
+/// `"C:\Program Files\Editor\ed.exe" -n` both work. Args are only ever
+/// passed as argv elements — never through a shell.
+fn split_editor_command(editor: &str) -> (String, Vec<String>) {
+    let trimmed = editor.trim();
+    if std::path::Path::new(trimmed).is_file() {
+        return (trimmed.to_string(), Vec::new());
+    }
+    let mut words: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_quotes = false;
+    let mut has_word = false;
+    for ch in trimmed.chars() {
+        match ch {
+            '"' => {
+                in_quotes = !in_quotes;
+                has_word = true;
+            }
+            c if c.is_whitespace() && !in_quotes => {
+                if has_word {
+                    words.push(std::mem::take(&mut cur));
+                    has_word = false;
+                }
+            }
+            c => {
+                cur.push(c);
+                has_word = true;
+            }
+        }
+    }
+    if has_word {
+        words.push(cur);
+    }
+    let mut it = words.into_iter();
+    let program = it.next().unwrap_or_else(|| trimmed.to_string());
+    (program, it.collect())
+}
+
+/// Resolve a bare program name through `PATH`, honouring `PATHEXT` on
+/// Windows. Needed because `Command::new` only appends `.exe` when
+/// searching PATH, so `code` / `cursor` — installed as `code.cmd` /
+/// `cursor.cmd` — would fail with "program not found". Returning the full
+/// path to the `.cmd` lets std spawn it (via its batch-file handling, which
+/// escapes arguments safely). Non-Windows and already-qualified programs
+/// are returned unchanged.
+fn resolve_program(program: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        use std::path::Path;
+        let p = Path::new(program);
+        if p.extension().is_some() || p.components().count() > 1 {
+            return program.to_string();
+        }
+        let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+        let exts: Vec<String> = pathext
+            .split(';')
+            .filter(|e| !e.is_empty())
+            .map(|e| e.to_string())
+            .collect();
+        if let Some(paths) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&paths) {
+                for ext in &exts {
+                    let candidate = dir.join(format!("{program}{ext}"));
+                    if candidate.is_file() {
+                        return candidate.to_string_lossy().into_owned();
+                    }
+                }
+            }
+        }
+    }
+    program.to_string()
 }
 
 /// Parse `path:line:col` into `(path, Option<line>, Option<col>)`.
@@ -368,4 +447,80 @@ fn parse_file_location(s: &str) -> (&str, Option<u32>, Option<u32>) {
         }
     }
     (s, None, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_file_path_link, parse_file_location, split_editor_command};
+
+    #[test]
+    fn split_editor_command_bare_program() {
+        assert_eq!(split_editor_command("nvim"), ("nvim".to_string(), vec![]));
+        assert_eq!(split_editor_command("  hx  "), ("hx".to_string(), vec![]));
+    }
+
+    #[test]
+    fn split_editor_command_program_with_args() {
+        assert_eq!(
+            split_editor_command("code --wait"),
+            ("code".to_string(), vec!["--wait".to_string()])
+        );
+        assert_eq!(
+            split_editor_command("nvim -u NONE   -n"),
+            (
+                "nvim".to_string(),
+                vec!["-u".to_string(), "NONE".to_string(), "-n".to_string()]
+            )
+        );
+    }
+
+    #[test]
+    fn split_editor_command_honours_double_quotes() {
+        assert_eq!(
+            split_editor_command(r#""C:\Program Files\Editor\ed.exe" -n"#),
+            (
+                r"C:\Program Files\Editor\ed.exe".to_string(),
+                vec!["-n".to_string()]
+            )
+        );
+        // Quotes may wrap only part of a word.
+        assert_eq!(
+            split_editor_command(r#"ed --title="a b""#),
+            ("ed".to_string(), vec!["--title=a b".to_string()])
+        );
+    }
+
+    #[test]
+    fn parse_file_location_variants() {
+        assert_eq!(
+            parse_file_location("src/main.rs"),
+            ("src/main.rs", None, None)
+        );
+        assert_eq!(
+            parse_file_location("src/main.rs:12"),
+            ("src/main.rs", Some(12), None)
+        );
+        assert_eq!(
+            parse_file_location("src/main.rs:12:3"),
+            ("src/main.rs", Some(12), Some(3))
+        );
+        // Drive letters are not line numbers.
+        assert_eq!(
+            parse_file_location(r"C:\x\y.rs:7"),
+            (r"C:\x\y.rs", Some(7), None)
+        );
+    }
+
+    #[test]
+    fn urls_are_not_file_paths() {
+        assert!(!is_file_path_link("https://example.com/a.rs"));
+        assert!(!is_file_path_link("HTTPS://EXAMPLE.COM/x"));
+        assert!(!is_file_path_link("www.example.com/x.html"));
+        assert!(is_file_path_link("src/main.rs:12"));
+        assert!(is_file_path_link(r"C:\x\y.rs"));
+        // Bare filenames are links too — previously refused at open time.
+        assert!(is_file_path_link("Cargo.toml"));
+        assert!(is_file_path_link("main.rs"));
+        assert!(is_file_path_link("Program.cs:12:5"));
+    }
 }

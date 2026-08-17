@@ -82,11 +82,14 @@ impl AppModel {
 
     pub fn hovered_link_url_at(&self, pane_id: u64, col: u16, buffer_row: usize) -> Option<String> {
         self.hovered_link.as_ref().and_then(|link| {
-            (link.pane_id == pane_id
-                && link.start.1 == buffer_row
-                && col >= link.start.0
-                && col <= link.end.0)
-                .then(|| link.url.clone())
+            // Row-major inclusive range check: a link may span several
+            // soft-wrapped rows (see `LinkMatch`), so compare (row, col)
+            // pairs rather than requiring a single row.
+            let (start_col, start_row) = link.start;
+            let (end_col, end_row) = link.end;
+            let after_start = (buffer_row, col) >= (start_row, start_col);
+            let before_end = (buffer_row, col) <= (end_row, end_col);
+            (link.pane_id == pane_id && after_start && before_end).then(|| link.url.clone())
         })
     }
 

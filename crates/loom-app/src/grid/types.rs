@@ -21,11 +21,19 @@ impl ScrollbackRow {
     }
 }
 
+/// A detected link and the screen cells it occupies. `start`/`end` are
+/// inclusive; the span may cross soft-wrapped rows (`start_row < end_row`),
+/// in which case it covers `start_col..` on the first row, every column of
+/// the rows between, and `..=end_col` on the last.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkMatch {
     pub url: String,
     pub start_col: u16,
+    /// Absolute buffer row of the first cell.
+    pub start_row: usize,
     pub end_col: u16,
+    /// Absolute buffer row of the last cell.
+    pub end_row: usize,
 }
 
 #[derive(Clone, Copy)]

@@ -82,7 +82,8 @@ Set `[input] mode = "prefix"` for tmux-style tap-leader-then-key.
 | `Alt /` | Keybindings help |
 
 Direct (no leader): `Ctrl+Shift+F` search · `Ctrl+Shift+C` copy ·
-`Ctrl+Shift+V` paste (`Cmd` instead of `Ctrl+Shift` on macOS).
+`Ctrl+Shift+V` paste · `Ctrl`+click open link (on macOS `Cmd` replaces
+`Ctrl+Shift`, and links open with `Cmd`+click).
 
 ## Configuration
 

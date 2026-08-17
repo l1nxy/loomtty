@@ -1089,22 +1089,40 @@ impl App {
         if let Some(link) = &self.core.hovered_link
             && link.pane_id == pane_id
             && let Some(grid) = self.core.pane_grids.get(&pane_id)
-            && let Some(viewport_row) = grid.buffer_to_viewport_row(link.start.1)
         {
             let (cw, ch) = self.cell_dimensions();
             let underline_h = (zoom.max(1.0)).clamp(1.0, 2.0);
-            let sx = inner_x + link.start.0 as f32 * cw * zoom;
-            let sy = inner_y + (viewport_row as f32 + 1.0) * ch * zoom - underline_h - zoom;
-            let sw = (link.end.0 - link.start.0 + 1) as f32 * cw * zoom;
-            let src = GeoRect::new(sx, sy, sw, underline_h);
-            if let Some(c) = src.intersection(tr) {
-                bg_rects.push(Rect {
-                    x: c.x,
-                    y: c.y,
-                    w: c.w,
-                    h: c.h,
-                    color: paint.link_color,
-                });
+            let (start_col, start_row) = link.start;
+            let (end_col, end_row) = link.end;
+            // A link may continue across soft-wrapped rows: underline
+            // `start_col..` on the first row, the full width of any rows
+            // between, and `..=end_col` on the last.
+            for buf_row in start_row..=end_row {
+                let Some(viewport_row) = grid.buffer_to_viewport_row(buf_row) else {
+                    continue;
+                };
+                let first = if buf_row == start_row { start_col } else { 0 };
+                let last = if buf_row == end_row {
+                    end_col
+                } else {
+                    grid.cols.saturating_sub(1)
+                };
+                if last < first {
+                    continue;
+                }
+                let sx = inner_x + first as f32 * cw * zoom;
+                let sy = inner_y + (viewport_row as f32 + 1.0) * ch * zoom - underline_h - zoom;
+                let sw = (last - first + 1) as f32 * cw * zoom;
+                let src = GeoRect::new(sx, sy, sw, underline_h);
+                if let Some(c) = src.intersection(tr) {
+                    bg_rects.push(Rect {
+                        x: c.x,
+                        y: c.y,
+                        w: c.w,
+                        h: c.h,
+                        color: paint.link_color,
+                    });
+                }
             }
         }
     }

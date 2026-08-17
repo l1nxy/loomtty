@@ -1,4 +1,4 @@
-use super::link::{detect_file_path, split_path_line_col};
+use super::link::{detect_file_path, looks_like_file_path, split_path_line_col};
 use super::*;
 
 fn grid_with_line(text: &str) -> ClientPaneGrid {
@@ -36,7 +36,9 @@ fn link_at_detects_https_url() {
         Some(LinkMatch {
             url: "https://example.com/docs".to_string(),
             start_col: 3,
+            start_row: 0,
             end_col: 26,
+            end_row: 0,
         })
     );
 }
@@ -49,7 +51,9 @@ fn link_at_trims_wrapping_punctuation() {
         Some(LinkMatch {
             url: "https://example.com/path".to_string(),
             start_col: 1,
+            start_row: 0,
             end_col: 24,
+            end_row: 0,
         })
     );
     assert_eq!(grid.link_at(0, 0), None);
@@ -64,7 +68,9 @@ fn link_at_normalizes_www_urls() {
         Some(LinkMatch {
             url: "https://www.example.com/test".to_string(),
             start_col: 6,
+            start_row: 0,
             end_col: 25,
+            end_row: 0,
         })
     );
 }
@@ -1877,4 +1883,464 @@ fn search_chinese_case_insensitive_with_ascii() {
     let grid = grid_with_wide_line("Hello你好World");
     let results = grid.search("hello你好world");
     assert_eq!(results.len(), 1);
+}
+
+// ─── URL scanner: URLs glued to surrounding text ────────────────
+//
+// The scanner locates a scheme anywhere in the line and extends it by
+// URL-character class, so text stuck to either side of the URL no
+// longer prevents detection or leaks into the opened address.
+
+/// Column of the first char of `needle` in `text` (chars, not bytes).
+fn col_of(text: &str, needle: &str) -> u16 {
+    let byte = text.find(needle).expect("needle present");
+    text[..byte].chars().count() as u16
+}
+
+fn url_at(text: &str, needle: &str) -> Option<String> {
+    let grid = grid_with_line(text);
+    grid.link_at(col_of(text, needle), 0).map(|m| m.url)
+}
+
+#[test]
+fn link_at_markdown_link_yields_only_the_url() {
+    let text = "[docs](https://example.com/guide)";
+    assert_eq!(
+        url_at(text, "example"),
+        Some("https://example.com/guide".into())
+    );
+    // Hovering the link *text* is not hovering the URL, and the token
+    // must not fall through to the file-path heuristic either.
+    assert_eq!(url_at(text, "docs"), None);
+}
+
+#[test]
+fn link_at_markdown_autolink_splits_the_two_urls() {
+    // `[https://a](https://a)` — the `]` has no `[` inside the URL, so it
+    // ends the first one instead of being swallowed along with the second.
+    let text = "[https://example.com](https://example.com)";
+    let grid = grid_with_line(text);
+    let first = grid.link_at(3, 0).unwrap();
+    assert_eq!(first.url, "https://example.com");
+    assert_eq!((first.start_col, first.end_col), (1, 19));
+    let second = grid.link_at(25, 0).unwrap();
+    assert_eq!(second.url, "https://example.com");
+    assert_eq!((second.start_col, second.end_col), (22, 40));
+    // The `](` between them belongs to neither.
+    assert_eq!(grid.link_at(20, 0), None);
+    assert_eq!(grid.link_at(21, 0), None);
+}
+
+#[test]
+fn link_at_url_glued_to_cjk_prose() {
+    assert_eq!(
+        url_at("请访问https://example.com查看", "example"),
+        Some("https://example.com".into())
+    );
+    assert_eq!(
+        url_at("链接：https://example.com", "example"),
+        Some("https://example.com".into())
+    );
+    assert_eq!(
+        url_at("详见https://example.com/foo，谢谢", "example"),
+        Some("https://example.com/foo".into())
+    );
+    // Hovering the prose in front of the URL is not a link (and must not
+    // become a bogus "file path" containing `://`).
+    assert_eq!(url_at("链接：https://example.com", "链接"), None);
+}
+
+#[test]
+fn link_at_strips_fullwidth_and_typographic_punctuation() {
+    for (text, want) in [
+        ("https://example.com/path）", "https://example.com/path"),
+        ("（https://example.com/path）", "https://example.com/path"),
+        ("https://example.com/a。", "https://example.com/a"),
+        ("https://example.com/a…", "https://example.com/a"),
+        ("→https://example.com/a→", "https://example.com/a"),
+        ("“https://example.com/a”", "https://example.com/a"),
+    ] {
+        assert_eq!(url_at(text, "example"), Some(want.into()), "{text}");
+    }
+}
+
+#[test]
+fn link_at_url_inside_markdown_emphasis_and_code() {
+    assert_eq!(
+        url_at("**https://example.com/a**", "example"),
+        Some("https://example.com/a".into())
+    );
+    assert_eq!(
+        url_at("`https://example.com/a`", "example"),
+        Some("https://example.com/a".into())
+    );
+    assert_eq!(
+        url_at("|https://example.com/a|", "example"),
+        Some("https://example.com/a".into())
+    );
+    // `*` and `|` only terminate when the URL was introduced by them.
+    assert_eq!(
+        url_at("https://example.com/a|b", "example"),
+        Some("https://example.com/a|b".into())
+    );
+}
+
+#[test]
+fn link_at_url_after_key_value_prefix() {
+    assert_eq!(
+        url_at("url=https://example.com/x", "example"),
+        Some("https://example.com/x".into())
+    );
+    assert_eq!(
+        url_at("see:https://example.com/a", "example"),
+        Some("https://example.com/a".into())
+    );
+    assert_eq!(
+        url_at("\"url\":\"https://example.com/\"", "example"),
+        Some("https://example.com/".into())
+    );
+    assert_eq!(
+        url_at("foo(https://example.com/foo)", "example"),
+        Some("https://example.com/foo".into())
+    );
+}
+
+#[test]
+fn link_at_bracket_balance_is_tracked_while_extending() {
+    assert_eq!(
+        url_at("(https://example.com/wiki/Foo_(bar))", "example"),
+        Some("https://example.com/wiki/Foo_(bar)".into())
+    );
+    assert_eq!(
+        url_at("https://example.com/a)b", "example"),
+        Some("https://example.com/a".into())
+    );
+    assert_eq!(
+        url_at("http://[::1]:8080/x", "::1"),
+        Some("http://[::1]:8080/x".into())
+    );
+    assert_eq!(
+        url_at("{https://example.com/a}", "example"),
+        Some("https://example.com/a".into())
+    );
+}
+
+#[test]
+fn link_at_quotes_terminate_unless_wrapped_by_other_quote() {
+    assert_eq!(
+        url_at("https://example.com/a\"b", "example"),
+        Some("https://example.com/a".into())
+    );
+    assert_eq!(
+        url_at("\"https://example.com/a?q='x'\"", "example"),
+        Some("https://example.com/a?q='x'".into())
+    );
+    assert_eq!(
+        url_at("'https://example.com/a',", "example"),
+        Some("https://example.com/a".into())
+    );
+}
+
+#[test]
+fn link_at_url_scheme_is_case_insensitive() {
+    assert_eq!(
+        url_at("HTTPS://EXAMPLE.COM/x", "EXAMPLE"),
+        Some("HTTPS://EXAMPLE.COM/x".into())
+    );
+    assert_eq!(
+        url_at("WWW.EXAMPLE.COM/x", "EXAMPLE"),
+        Some("https://WWW.EXAMPLE.COM/x".into())
+    );
+}
+
+#[test]
+fn link_at_www_needs_a_token_boundary() {
+    assert_eq!(url_at("wwww.example.com", "example"), None);
+    assert_eq!(url_at("foo.www.example.com", "example"), None);
+}
+
+#[test]
+fn link_at_bare_scheme_is_not_a_link() {
+    assert_eq!(url_at("https://", "https"), None);
+    assert_eq!(url_at("https://.", "https"), None);
+    assert_eq!(url_at("https://)", "https"), None);
+}
+
+#[test]
+fn link_at_hovering_gap_between_words_is_not_a_link() {
+    // Previously the token expansion from a space swallowed both
+    // neighbours and offered "see main.rs" as a path.
+    let grid = grid_with_line("see main.rs");
+    assert_eq!(grid.link_at(3, 0), None);
+    assert_eq!(grid.link_at(6, 0).map(|m| m.url), Some("main.rs".into()));
+}
+
+#[test]
+fn link_at_token_with_scheme_is_never_a_file_path() {
+    // `detect_file_path` used to accept anything with a `/` and an
+    // extension-looking tail; that made unopenable pseudo-paths out of
+    // URL-bearing tokens.
+    assert_eq!(detect_file_path("链接：https://example.com"), None);
+    assert_eq!(detect_file_path("foo://bar/baz.rs"), None);
+}
+
+// ─── URL scanner: soft-wrapped rows ─────────────────────────────
+
+/// Build a `cols`-wide grid whose rows hold `lines` (each padded with
+/// spaces to `cols`); rows listed in `wrapped` get `FLAG_WRAPLINE` on
+/// their last cell, i.e. they soft-continue onto the next row.
+fn grid_with_rows(cols: u16, lines: &[&str], wrapped: &[usize]) -> ClientPaneGrid {
+    let mut grid = ClientPaneGrid::new(cols, lines.len() as u16, 0);
+    for (r, line) in lines.iter().enumerate() {
+        for (c, ch) in line.chars().enumerate() {
+            grid.viewport[r * cols as usize + c] = PackedCell::with_ch(ch);
+        }
+        if wrapped.contains(&r) {
+            let last = &mut grid.viewport[r * cols as usize + cols as usize - 1];
+            last.flags = (last.flags_u16() | FLAG_WRAPLINE).to_le_bytes();
+        }
+    }
+    grid
+}
+
+#[test]
+fn link_at_joins_soft_wrapped_rows_into_one_url() {
+    // 20 cols: "https://example.com/" fills row 0 exactly and wraps.
+    let grid = grid_with_rows(20, &["https://example.com/", "very/long/file.rs ok"], &[0]);
+    let want = "https://example.com/very/long/file.rs";
+    // Hovering the first row…
+    let m = grid.link_at(5, 0).unwrap();
+    assert_eq!(m.url, want);
+    assert_eq!((m.start_col, m.start_row), (0, 0));
+    assert_eq!((m.end_col, m.end_row), (16, 1));
+    // …and the continuation on the second row give the same span.
+    assert_eq!(grid.link_at(3, 1), Some(m));
+    // Past the URL on the second row: nothing.
+    assert_eq!(grid.link_at(18, 1), None);
+}
+
+#[test]
+fn link_at_does_not_join_hard_line_breaks() {
+    // Same layout, but row 0 is not flagged as wrapped: the second row is
+    // an unrelated line and must not be appended to the URL.
+    let grid = grid_with_rows(20, &["https://example.com/", "very/long/file.rs ok"], &[]);
+    assert_eq!(
+        grid.link_at(5, 0).map(|m| m.url),
+        Some("https://example.com/".into())
+    );
+    assert_eq!(
+        grid.link_at(3, 1).map(|m| m.url),
+        Some("very/long/file.rs".into()) // file-path fallback, this row only
+    );
+}
+
+#[test]
+fn link_at_wrapped_url_hovered_from_middle_row() {
+    let grid = grid_with_rows(10, &["go https:/", "/example.c", "om/x now  "], &[0, 1]);
+    let m = grid.link_at(4, 1).unwrap();
+    assert_eq!(m.url, "https://example.com/x");
+    assert_eq!((m.start_col, m.start_row), (3, 0));
+    assert_eq!((m.end_col, m.end_row), (3, 2));
+    // Hovering the trailing prose on the last row is outside the link.
+    assert_eq!(grid.link_at(6, 2), None);
+}
+
+// ─── File-path scanner: paths glued to surrounding text ─────────
+
+#[test]
+fn link_at_path_inside_markdown_code_and_emphasis() {
+    assert_eq!(url_at("`src/main.rs`", "main"), Some("src/main.rs".into()));
+    assert_eq!(
+        url_at("**src/main.rs**", "main"),
+        Some("src/main.rs".into())
+    );
+    // Markdown link to a file: hovering the target yields just the path.
+    let grid = grid_with_line("[src/main.rs](src/main.rs)");
+    let m = grid.link_at(5, 0).unwrap();
+    assert_eq!(m.url, "src/main.rs");
+    assert_eq!((m.start_col, m.end_col), (1, 11));
+    let m = grid.link_at(18, 0).unwrap();
+    assert_eq!(m.url, "src/main.rs");
+    assert_eq!((m.start_col, m.end_col), (14, 24));
+    assert_eq!(
+        url_at("[docs](docs/guide.md)", "guide"),
+        Some("docs/guide.md".into())
+    );
+}
+
+#[test]
+fn link_at_path_glued_to_cjk_prose() {
+    for (text, needle, want) in [
+        ("请看src/main.rs文件", "main", "src/main.rs"),
+        ("文件：src/main.rs", "main", "src/main.rs"),
+        ("修改了src/main.rs，然后", "main", "src/main.rs"),
+        ("src/main.rs。", "main", "src/main.rs"),
+        ("（src/main.rs）", "main", "src/main.rs"),
+        ("看C:\\Users\\x\\y.rs", "y.rs", "C:\\Users\\x\\y.rs"),
+        ("see main.rs文件", "main", "main.rs"),
+    ] {
+        assert_eq!(url_at(text, needle), Some(want.into()), "{text}");
+    }
+}
+
+#[test]
+fn link_at_keeps_cjk_that_is_part_of_the_path() {
+    for text in [
+        "桌面/main.rs",
+        "src/中文.md",
+        "中文.md",
+        "C:\\Users\\linxy\\桌面\\test.rs",
+        "docs/说明/readme.md",
+    ] {
+        let grid = grid_with_line(text);
+        let m = grid.link_at(0, 0).unwrap_or_else(|| panic!("{text}"));
+        assert_eq!(m.url, text, "{text}");
+    }
+}
+
+#[test]
+fn link_at_msvc_and_tsc_location_suffix() {
+    assert_eq!(
+        url_at("Program.cs(12,5): error CS1002", "Program"),
+        Some("Program.cs:12:5".into())
+    );
+    assert_eq!(
+        url_at("src/app.ts(3,7): error TS2304", "app"),
+        Some("src/app.ts:3:7".into())
+    );
+    assert_eq!(
+        url_at("foo.cpp(9): warning", "foo"),
+        Some("foo.cpp:9".into())
+    );
+    // A balanced pair that is not a location stays part of the name.
+    assert_eq!(url_at("open foo (1).txt", "1"), None); // space breaks the token…
+    assert_eq!(url_at("open foo(1).txt", "foo"), Some("foo(1).txt".into())); // …but this is one file
+}
+
+#[test]
+fn link_at_path_after_key_value_and_shell_operators() {
+    assert_eq!(
+        url_at("--file=src/main.rs", "main"),
+        Some("src/main.rs".into())
+    );
+    assert_eq!(
+        url_at("path='src/main.rs'", "main"),
+        Some("src/main.rs".into())
+    );
+    assert_eq!(
+        url_at("src/main.rs|grep x", "main"),
+        Some("src/main.rs".into())
+    );
+    assert_eq!(
+        url_at("cat src/main.rs>out", "main"),
+        Some("src/main.rs".into())
+    );
+    assert_eq!(url_at("cat src/main.rs>out", "out"), None);
+}
+
+#[test]
+fn link_at_quoted_path_with_spaces() {
+    let text = "\"C:\\Program Files\\x\\y.rs\"";
+    let grid = grid_with_line(text);
+    // Hovering the space inside the quotes still yields the whole path.
+    let m = grid.link_at(11, 0).unwrap();
+    assert_eq!(m.url, "C:\\Program Files\\x\\y.rs");
+    assert_eq!((m.start_col, m.end_col), (1, 23));
+    // The quotes themselves are not part of the link.
+    assert_eq!(grid.link_at(0, 0), None);
+    assert_eq!(grid.link_at(24, 0), None);
+
+    assert_eq!(
+        url_at("'/home/u/my dir/a.rs'", "a.rs"),
+        Some("/home/u/my dir/a.rs".into())
+    );
+    // Prose in quotes is not a path, and does not stop the bare token
+    // inside from being found.
+    assert_eq!(
+        url_at("echo \"hello src/main.rs world\"", "main"),
+        Some("src/main.rs".into())
+    );
+    assert_eq!(url_at("echo \"hello src/main.rs world\"", "hello"), None);
+}
+
+#[test]
+fn link_at_bare_filename_extension_coverage() {
+    for name in [
+        "go.mod",
+        ".env",
+        "main.cs",
+        "foo.vue",
+        "app.dart",
+        "index.mjs",
+        ".gitattributes",
+    ] {
+        assert_eq!(
+            url_at(name, name.trim_start_matches('.')),
+            Some(name.into()),
+            "{name}"
+        );
+    }
+    // Prose with a dot is still not a file.
+    for text in [
+        "e.g. it",
+        "i.e. that",
+        "9 a.m. sharp",
+        "v1.2.3",
+        "Ph.D student",
+    ] {
+        let grid = grid_with_line(text);
+        for col in 0..text.chars().count() as u16 {
+            assert_eq!(grid.link_at(col, 0), None, "{text} @ {col}");
+        }
+    }
+}
+
+#[test]
+fn link_at_bracketed_path_variants() {
+    assert_eq!(
+        url_at("at src/main.rs:12:5)", "main"),
+        Some("src/main.rs:12:5".into())
+    );
+    assert_eq!(
+        url_at("(src/main.rs:12:5)", "main"),
+        Some("src/main.rs:12:5".into())
+    );
+    assert_eq!(
+        url_at("src/main.rs:12:5:", "main"),
+        Some("src/main.rs:12:5".into())
+    );
+    assert_eq!(url_at("src/[id].tsx", "id"), Some("src/[id].tsx".into()));
+    assert_eq!(
+        url_at("include(src/main.rs)", "main"),
+        Some("src/main.rs".into())
+    );
+    // Hovering an unmatched bracket itself is not a link.
+    assert_eq!(url_at("[text](src/main.rs)", "]"), None);
+}
+
+#[test]
+fn link_at_joins_soft_wrapped_rows_for_paths_too() {
+    let grid = grid_with_rows(
+        20,
+        &[
+            "error --> crates/loo",
+            "m-app/src/grid/link.",
+            "rs:12:5 here        ",
+        ],
+        &[0, 1],
+    );
+    let m = grid.link_at(12, 0).unwrap();
+    assert_eq!(m.url, "crates/loom-app/src/grid/link.rs:12:5");
+    assert_eq!((m.start_col, m.start_row), (10, 0));
+    assert_eq!((m.end_col, m.end_row), (6, 2));
+    assert_eq!(grid.link_at(3, 1), Some(m));
+}
+
+#[test]
+fn looks_like_file_path_matches_detector() {
+    assert!(looks_like_file_path("Cargo.toml"));
+    assert!(looks_like_file_path("src/main.rs:12:5"));
+    assert!(looks_like_file_path("C:\\x\\y.rs"));
+    assert!(!looks_like_file_path("https://example.com/a.rs"));
+    assert!(!looks_like_file_path("hello"));
 }

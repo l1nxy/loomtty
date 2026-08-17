@@ -751,33 +751,32 @@ impl DxAtlasLayer {
         })
     }
 
-    unsafe fn flush_uploads(
-        &self,
-        ctx: &ID3D11DeviceContext,
-        pending: &mut Vec<PendingUpload>,
-        pending_clear: bool,
-    ) {
-        if pending_clear {
-            let zeros = vec![0u8; (self.atlas_size * self.atlas_size * self.bpp) as usize];
-            let row_pitch = self.atlas_size * self.bpp;
-            let box_ = D3D11_BOX {
-                left: 0,
-                top: 0,
-                front: 0,
-                right: self.atlas_size,
-                bottom: self.atlas_size,
-                back: 1,
-            };
-            ctx.UpdateSubresource(
-                &self.texture,
-                0,
-                Some(&box_),
-                zeros.as_ptr() as *const _,
-                row_pitch,
-                0,
-            );
-        }
+    /// Wipe the whole atlas texture to transparent. The *only* place the
+    /// atlas is cleared — it must run before any of this frame's uploads
+    /// or D2D glyph draws touch the texture, so `draw_frame` calls it
+    /// once per layer, first thing.
+    unsafe fn clear_texture(&self, ctx: &ID3D11DeviceContext) {
+        let zeros = vec![0u8; (self.atlas_size * self.atlas_size * self.bpp) as usize];
+        let row_pitch = self.atlas_size * self.bpp;
+        let box_ = D3D11_BOX {
+            left: 0,
+            top: 0,
+            front: 0,
+            right: self.atlas_size,
+            bottom: self.atlas_size,
+            back: 1,
+        };
+        ctx.UpdateSubresource(
+            &self.texture,
+            0,
+            Some(&box_),
+            zeros.as_ptr() as *const _,
+            row_pitch,
+            0,
+        );
+    }
 
+    unsafe fn flush_uploads(&self, ctx: &ID3D11DeviceContext, pending: &mut Vec<PendingUpload>) {
         for upload in pending.drain(..) {
             // The producer (loom-render) guarantees `data.len() == w*h*bpp`;
             // UpdateSubresource below reads `row_pitch * h` bytes straight from
@@ -815,26 +814,21 @@ impl DxAtlasLayer {
     }
 
     /// Render pending DWrite glyphs to the atlas via D2D DrawGlyphRun.
-    unsafe fn flush_dwrite_glyphs(
-        &self,
-        pending: &mut Vec<PendingDwriteGlyph>,
-        pending_clear: bool,
-    ) {
-        if pending.is_empty() && !pending_clear {
+    ///
+    /// Draws only — it never clears. This used to also `Clear` the render
+    /// target when the cache flagged a pending clear, but `draw_frame`
+    /// runs it *after* `flush_uploads`, so on every clear frame the D2D
+    /// clear wiped the CPU-rasterized colour glyphs (emoji, inline images)
+    /// that had just been uploaded. Their cache entries stayed valid and
+    /// pointed at transparent texels, so those glyphs rendered as nothing
+    /// until the next atlas clear — the "emoji in the tab title sometimes
+    /// vanish" bug. The single clear now lives in `clear_texture`.
+    unsafe fn flush_dwrite_glyphs(&self, pending: &mut Vec<PendingDwriteGlyph>) {
+        if pending.is_empty() {
             return;
         }
 
         self.d2d_rt.BeginDraw();
-
-        if pending_clear {
-            let clear_color = D2D1_COLOR_F {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 0.0,
-            };
-            self.d2d_rt.Clear(Some(&clear_color));
-        }
 
         for glyph in pending.drain(..) {
             let white = D2D1_COLOR_F {
@@ -2057,15 +2051,29 @@ impl Renderer {
 
         unsafe {
             let upload_start = std::time::Instant::now();
-            // Flush pending glyph uploads (CPU path, used when D2D is off)
+            // Atlas maintenance, strictly in this order per layer:
+            //   1. clear the texture if the cache flagged a pending clear
+            //      (font/DPI change, atlas overflow, first frame);
+            //   2. upload this frame's CPU-rasterized bitmaps — colour
+            //      glyphs (emoji) and inline images always take this path,
+            //      alpha glyphs only when D2D direct rendering is off;
+            //   3. draw this frame's D2D glyph runs straight into the atlas.
+            // The clear must be the only wipe and must come first: anything
+            // clearing after step 2 erases the just-uploaded emoji while
+            // their cache entries live on, so they render as blank until
+            // the next clear.
             let (mut ap, mut cp, ac, cc) = cache.take_pending();
-            atlas_gpu.alpha.flush_uploads(&self.ctx, &mut ap, ac);
-            atlas_gpu.color.flush_uploads(&self.ctx, &mut cp, cc);
-
-            // Flush DWrite glyph render commands via D2D direct-to-atlas
             let (mut dwa, mut dwc) = cache.take_dwrite_pending();
-            atlas_gpu.alpha.flush_dwrite_glyphs(&mut dwa, ac);
-            atlas_gpu.color.flush_dwrite_glyphs(&mut dwc, cc);
+            if ac {
+                atlas_gpu.alpha.clear_texture(&self.ctx);
+            }
+            if cc {
+                atlas_gpu.color.clear_texture(&self.ctx);
+            }
+            atlas_gpu.alpha.flush_uploads(&self.ctx, &mut ap);
+            atlas_gpu.color.flush_uploads(&self.ctx, &mut cp);
+            atlas_gpu.alpha.flush_dwrite_glyphs(&mut dwa);
+            atlas_gpu.color.flush_dwrite_glyphs(&mut dwc);
 
             // Set render target
             self.ctx

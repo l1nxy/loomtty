@@ -209,6 +209,36 @@ impl CoreTextRasterizer {
         style: FontStyle,
         try_color: bool,
     ) -> Option<RasterizedGlyph> {
+        // Terminal text is shaped once against the Regular face, so glyph
+        // IDs index Regular's glyph order. Native Bold/Italic faces (e.g.
+        // Menlo-Bold) are separate fonts whose order only coincides for
+        // ASCII — Regular's U+276F '❯' is an Arabic letter in Menlo-Bold.
+        // Map the ID across by glyph name; if the styled face lacks the
+        // glyph, draw it from Regular with synthetic styling.
+        let regular = self.primary_font(FontStyle::Regular);
+        if style != FontStyle::Regular
+            && std::ptr::eq(font, self.primary_font(style))
+            && font.postscript_name() != regular.postscript_name()
+        {
+            match translate_glyph(regular, font, glyph_id as u16) {
+                Some(g) => {
+                    return self.rasterize_glyph_inner(
+                        font,
+                        g,
+                        self.primary_synth[style as usize],
+                        try_color,
+                    );
+                }
+                None => {
+                    let synth = SyntheticStyle {
+                        bold: matches!(style, FontStyle::Bold | FontStyle::BoldItalic),
+                        italic: matches!(style, FontStyle::Italic | FontStyle::BoldItalic),
+                    };
+                    return self.rasterize_glyph_inner(regular, glyph_id as u16, synth, try_color);
+                }
+            }
+        }
+
         let synth = if std::ptr::eq(font, self.primary_font(style)) {
             self.primary_synth[style as usize]
         } else {
@@ -273,6 +303,44 @@ impl CoreTextRasterizer {
 /// Delegates to the shared `load_ct_font_from_path` which correctly handles TTC face indices.
 fn load_font_from_file(path: &str, index: u32, size: f64) -> Option<CTFont> {
     crate::shaper::load_ct_font_from_path(path, index, size)
+}
+
+/// Map `glyph` from `from`'s glyph order to `to`'s via the glyph's
+/// PostScript name. `None` when the glyph is unnamed or `to` lacks it.
+fn translate_glyph(from: &CTFont, to: &CTFont, glyph: u16) -> Option<u16> {
+    use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
+    use core_foundation::string::{CFString, CFStringRef};
+    use core_graphics::font::CGGlyph;
+    use core_text::font::CTFontRef;
+
+    unsafe extern "C" {
+        fn CTFontCopyGraphicsFont(font: CTFontRef, attributes: *mut CFTypeRef) -> CFTypeRef;
+        fn CGFontCopyGlyphNameForGlyph(font: CFTypeRef, glyph: CGGlyph) -> CFStringRef;
+        fn CGFontGetGlyphWithGlyphName(font: CFTypeRef, name: CFStringRef) -> CGGlyph;
+    }
+
+    unsafe {
+        let from_cg = CTFontCopyGraphicsFont(from.as_concrete_TypeRef(), std::ptr::null_mut());
+        let to_cg = CTFontCopyGraphicsFont(to.as_concrete_TypeRef(), std::ptr::null_mut());
+        if from_cg.is_null() || to_cg.is_null() {
+            for cg in [from_cg, to_cg] {
+                if !cg.is_null() {
+                    CFRelease(cg);
+                }
+            }
+            return None;
+        }
+        let raw_name = CGFontCopyGlyphNameForGlyph(from_cg, glyph);
+        let mapped = if raw_name.is_null() {
+            0
+        } else {
+            let name = CFString::wrap_under_create_rule(raw_name);
+            CGFontGetGlyphWithGlyphName(to_cg, name.as_concrete_TypeRef())
+        };
+        CFRelease(from_cg);
+        CFRelease(to_cg);
+        (mapped != 0).then_some(mapped)
+    }
 }
 
 /// Load a font by family name from the system.

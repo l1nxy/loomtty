@@ -57,6 +57,43 @@ fn get_pw_shell() -> Option<String> {
     None
 }
 
+/// `$SHELL`, else the passwd login shell, else `/bin/sh`.
+fn default_shell() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        // `or_else` keeps the passwd lookup lazy: only fall back to
+        // `get_pw_shell()` when `$SHELL` is unset/empty. `or(..)` would
+        // run the (possibly NSS/LDAP-blocking) lookup on every pane
+        // spawn even when `$SHELL` is already valid.
+        .or_else(get_pw_shell)
+        .unwrap_or_else(|| "/bin/sh".to_string())
+}
+
+/// UTF-8 `LANG` for the user's macOS locale (e.g. `zh_CN.UTF-8`), falling
+/// back to `en_US.UTF-8` when the system locale has no UTF-8 variant
+/// installed (e.g. `en_CN`). Resolved once per process.
+#[cfg(target_os = "macos")]
+fn macos_utf8_lang() -> &'static str {
+    static LANG: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    LANG.get_or_init(|| {
+        std::process::Command::new("/usr/bin/defaults")
+            .args(["read", "-g", "AppleLocale"])
+            .output()
+            .ok()
+            .and_then(|out| String::from_utf8(out.stdout).ok())
+            // "zh-Hans_CN" / "en_US@rg=cnzzzz" → "zh_CN" / "en_US".
+            .and_then(|raw| {
+                let raw = raw.trim().split('@').next()?;
+                let lang = raw.split(['-', '_']).next()?;
+                let region = raw.rsplit('_').next().filter(|r| *r != raw)?;
+                Some(format!("{lang}_{region}.UTF-8"))
+            })
+            .filter(|l| std::path::Path::new("/usr/share/locale").join(l).is_dir())
+            .unwrap_or_else(|| "en_US.UTF-8".to_string())
+    })
+}
+
 impl Pty {
     pub fn spawn(cols: u16, rows: u16, shell: &str) -> Result<Self> {
         Self::spawn_with_opts(cols, rows, shell, None, None)
@@ -121,22 +158,40 @@ impl Pty {
                 b.arg(c);
                 b
             }
+        } else if cfg!(target_os = "macos") && (shell.is_empty() || shell.contains('/')) {
+            // macOS terminals start the shell as a login shell (Terminal.app,
+            // iTerm2, Alacritty all do). An app launched from Finder/Dock
+            // inherits launchd's bare environment — PATH is just
+            // /usr/bin:/bin:/usr/sbin:/sbin — and only login-time config
+            // (/etc/zprofile's path_helper, `brew shellenv` in ~/.zprofile or
+            // fish's config) fills it in. `new_default_prog` runs `$SHELL`
+            // with a `-`-prefixed argv0, the conventional login-shell marker.
+            let shell_path = if shell.is_empty() {
+                default_shell()
+            } else {
+                shell.to_string()
+            };
+            let mut b = CommandBuilder::new_default_prog();
+            b.env("SHELL", shell_path);
+            b
         } else if !shell.is_empty() {
             CommandBuilder::new(shell)
         } else if cfg!(windows) {
             CommandBuilder::new("cmd.exe")
         } else {
-            let shell_path = std::env::var("SHELL")
-                .ok()
-                .filter(|s| !s.is_empty())
-                // `or_else` keeps the passwd lookup lazy: only fall back to
-                // `get_pw_shell()` when `$SHELL` is unset/empty. `or(..)` would
-                // run the (possibly NSS/LDAP-blocking) lookup on every pane
-                // spawn even when `$SHELL` is already valid.
-                .or_else(get_pw_shell)
-                .unwrap_or_else(|| "/bin/sh".to_string());
-            CommandBuilder::new(shell_path)
+            CommandBuilder::new(default_shell())
         };
+
+        // launchd hands GUI apps no locale, so shells fall back to the "C"
+        // locale and mangle non-ASCII input/output. Mirror Terminal.app and
+        // derive a UTF-8 LANG from the system locale when none is set.
+        #[cfg(target_os = "macos")]
+        if ["LANG", "LC_ALL", "LC_CTYPE"]
+            .iter()
+            .all(|k| std::env::var_os(k).is_none_or(|v| v.is_empty()))
+        {
+            cmd.env("LANG", macos_utf8_lang());
+        }
 
         // Ensure child knows its terminal type.
         cmd.env("TERM", "xterm-256color");

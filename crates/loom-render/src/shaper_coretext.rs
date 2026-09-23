@@ -8,6 +8,7 @@ use core_foundation::base::{CFRange, TCFType};
 use core_foundation::string::CFString;
 use core_text::font::CTFont;
 use core_text::line::CTLine;
+use core_text::run::CTRun;
 use core_text::string_attributes::kCTFontAttributeName;
 
 use crate::shaper::Ligature;
@@ -32,6 +33,26 @@ fn create_ct_line(font: &CTFont, text: &str) -> CTLine {
     CTLine::new_with_attributed_string(attr_string.as_concrete_TypeRef())
 }
 
+/// Whether CoreText laid `run` out with `font` itself. CTLine applies the
+/// system cascade list, so characters `font` can't render come back in runs
+/// using a substitute font (e.g. PingFang for CJK in Menlo). Those glyph IDs
+/// index the substitute, not `font`; rasterizing them with `font` draws
+/// unrelated glyphs, so callers must skip such runs and let the next font in
+/// loom's own fallback chain handle the characters.
+fn run_uses_font(run: &CTRun, font: &CTFont) -> bool {
+    let Some(attrs) = run.attributes() else {
+        return true;
+    };
+    let key = unsafe { CFString::wrap_under_get_rule(kCTFontAttributeName) };
+    let Some(value) = attrs.find(&key) else {
+        return true;
+    };
+    let Some(run_font) = value.downcast::<CTFont>() else {
+        return true;
+    };
+    run_font.postscript_name() == font.postscript_name()
+}
+
 /// Shape a single character and return its glyph ID.
 ///
 /// Returns `None` if the font has no glyph for this character (glyph ID = 0).
@@ -42,6 +63,9 @@ pub(crate) fn ct_shape_char(font: &CTFont, ch: char) -> Option<u32> {
 
     // Search all runs for the first non-zero glyph
     for run in runs.iter() {
+        if !run_uses_font(&run, font) {
+            continue;
+        }
         let glyphs = run.glyphs();
         if let Some(&g) = glyphs.iter().find(|&&g| g != 0) {
             log::debug!(
@@ -79,6 +103,9 @@ pub(crate) fn ct_shape_grapheme(font: &CTFont, cluster: &str) -> Option<u32> {
     let mut total_glyphs: usize = 0;
     let mut first_nonzero_glyph: Option<u32> = None;
     for run in runs.iter() {
+        if !run_uses_font(&run, font) {
+            continue;
+        }
         let glyphs = run.glyphs();
         total_glyphs += glyphs.len();
         if first_nonzero_glyph.is_none()
@@ -145,6 +172,9 @@ pub(crate) fn ct_detect_ligatures(font: &CTFont, text: &str, font_id: fontdb::ID
     );
 
     for run in runs.iter() {
+        if !run_uses_font(&run, font) {
+            continue;
+        }
         let glyph_count = run.glyph_count() as usize;
         if glyph_count == 0 {
             continue;
@@ -232,6 +262,9 @@ pub(crate) fn ct_shape_run(
 
     let mut out = Vec::new();
     for run in runs.iter() {
+        if !run_uses_font(&run, font) {
+            continue;
+        }
         let glyph_count = run.glyph_count() as usize;
         if glyph_count == 0 {
             continue;

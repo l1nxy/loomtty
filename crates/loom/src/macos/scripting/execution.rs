@@ -308,6 +308,12 @@ impl MacApplication {
                         request_id: token,
                     },
                 )?;
+                if source == Source::AppIntents {
+                    if let Some(window) = &app.window {
+                        native::focus_window(window);
+                    }
+                    self.active = Some(object.window_id);
+                }
                 self.automation(source).waiting.push(Waiting {
                     token,
                     tab,
@@ -331,20 +337,8 @@ impl MacApplication {
                     app.focus_workspace_pane_local(workspace, pane_id);
                     app.schedule_redraw();
                 }
-                if let Some(window) = app
-                    .window
-                    .as_ref()
-                    .and_then(|window| native::native_window(window))
-                {
-                    if window.isMiniaturized() {
-                        window.deminiaturize(None);
-                    }
-                    window.makeKeyAndOrderFront(None);
-                    let mtm =
-                        objc2::MainThreadMarker::new().expect("scripting runs on the main thread");
-                    #[allow(deprecated)]
-                    objc2_app_kit::NSApplication::sharedApplication(mtm)
-                        .activateIgnoringOtherApps(true);
+                if let Some(window) = &app.window {
+                    native::focus_window(window);
                 }
                 self.active = Some(object.window_id);
             }

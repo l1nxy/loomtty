@@ -209,6 +209,23 @@ pub fn native_window(window: &Window) -> Option<Retained<NSWindow>> {
     view.window()
 }
 
+/// Called for user-visible actions, never merely because the process starts.
+pub(super) fn activate() {
+    let mtm = MainThreadMarker::new().expect("macOS activation runs on the main thread");
+    #[allow(deprecated)]
+    NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
+}
+
+pub(super) fn focus_window(window: &Window) {
+    if let Some(window) = native_window(window) {
+        if window.isMiniaturized() {
+            window.deminiaturize(None);
+        }
+        window.makeKeyAndOrderFront(None);
+        activate();
+    }
+}
+
 pub fn join_tab(parent: &Window, child: &Window) {
     if let (Some(parent), Some(child)) = (native_window(parent), native_window(child)) {
         parent.addTabbedWindow_ordered(&child, NSWindowOrderingMode::Above);

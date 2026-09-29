@@ -57,14 +57,18 @@ enum TerminalLocation: String, AppEnum {
 
 @available(macOS 13.0, *)
 struct NewTerminalIntent: AppIntent {
+  // Rust activates only the explicit window/focus action. Keep entity queries
+  // and input from requesting a separate foreground launch or Dock reopen.
+  static let openAppWhenRun = false
+  #if compiler(>=6.2)
+    @available(macOS 26.0, *)
+    static var supportedModes: IntentModes { .background }
+  #endif
   static let authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication
   static let title: LocalizedStringResource = "New Terminal"
   static let description = IntentDescription(
     "Create a terminal window, native tab, or split. Returns the connected terminal for the next action."
   )
-  // The Rust action explicitly brings the created window forward. Asking
-  // AppKit to reopen the app too can cause an extra Dock-reopen window.
-  static let openAppWhenRun = false
   @Parameter(title: "Location", default: .window) var location: TerminalLocation
   @Parameter(title: "Parent Terminal", description: "Optional for a tab; required for a split.")
   var parent: TerminalEntity?
@@ -110,6 +114,13 @@ struct NewTerminalIntent: AppIntent {
 
 @available(macOS 13.0, *)
 struct FindTerminalsIntent: AppIntent {
+  // Rust activates only the explicit window/focus action. Keep entity queries
+  // and input from requesting a separate foreground launch or Dock reopen.
+  static let openAppWhenRun = false
+  #if compiler(>=6.2)
+    @available(macOS 26.0, *)
+    static var supportedModes: IntentModes { .background }
+  #endif
   static let authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication
   static let title: LocalizedStringResource = "Find Terminals"
   static let description = IntentDescription(
@@ -127,6 +138,13 @@ struct FindTerminalsIntent: AppIntent {
 
 @available(macOS 13.0, *)
 struct FocusTerminalIntent: AppIntent {
+  // Rust activates only the explicit window/focus action. Keep entity queries
+  // and input from requesting a separate foreground launch or Dock reopen.
+  static let openAppWhenRun = false
+  #if compiler(>=6.2)
+    @available(macOS 26.0, *)
+    static var supportedModes: IntentModes { .background }
+  #endif
   static let authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication
   static let title: LocalizedStringResource = "Focus Terminal"
   @Parameter(title: "Terminal") var terminal: TerminalEntity
@@ -140,6 +158,13 @@ struct FocusTerminalIntent: AppIntent {
 
 @available(macOS 13.0, *)
 struct InputTextIntent: AppIntent {
+  // Rust activates only the explicit window/focus action. Keep entity queries
+  // and input from requesting a separate foreground launch or Dock reopen.
+  static let openAppWhenRun = false
+  #if compiler(>=6.2)
+    @available(macOS 26.0, *)
+    static var supportedModes: IntentModes { .background }
+  #endif
   static let authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication
   static let title: LocalizedStringResource = "Send Text to Terminal"
   static let description = IntentDescription(
@@ -165,6 +190,13 @@ struct InputTextIntent: AppIntent {
 
 @available(macOS 13.0, *)
 struct CloseTerminalIntent: AppIntent {
+  // Rust activates only the explicit window/focus action. Keep entity queries
+  // and input from requesting a separate foreground launch or Dock reopen.
+  static let openAppWhenRun = false
+  #if compiler(>=6.2)
+    @available(macOS 26.0, *)
+    static var supportedModes: IntentModes { .background }
+  #endif
   static let authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication
   static let title: LocalizedStringResource = "Close Terminal"
   static let description = IntentDescription("Close a terminal pane and end its process.")

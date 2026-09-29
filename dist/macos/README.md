@@ -309,6 +309,8 @@ They queue work on the Rust event loop and share the AppleScript creation/input
 engine. No Apple Events, subprocess shell commands, or extra IPC server are used.
 Non-default AppKit launches (such as Services/automation) defer the default
 window to the requested action and leave saved desktop restoration data intact.
+Startup does not force activation over another app. Normal launches and explicit
+new-window/focus actions activate loomtty; background queries and input do not.
 App Intents requires macOS 13+; earlier systems retain the normal native client.
 The `.app` needs Xcode-generated `Metadata.appintents` to expose these actions in
 Shortcuts. A bare Cargo binary or `--without-app-intents` bundle does not include
@@ -360,7 +362,9 @@ cargo test -p loomtty --lib --features macos-app-intents macos::scripting
   entities, cancellation, disabled configuration and a stalled connection. Run
   with loomtty already open, closed, and with no windows; check that cold launch
   does not create an unintended extra window. Confirm Siri discovers New Terminal
-  and requires unlocking this Mac when it is locked.
+  and requires unlocking this Mac when it is locked. Run Find Terminals and Send
+  Text while another app is focused; they must not steal focus. New Terminal and
+  Focus Terminal should activate loomtty, including a minimized or hidden window.
 - With VoiceOver, navigate between terminal panes and native tabs. Read Chinese,
   combining accents, and emoji; select and copy them. Read scrollback, resize
   the window, and check character bounds on Retina/external displays. Verify

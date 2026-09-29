@@ -439,6 +439,10 @@ fn create_event_loop() -> Result<EventLoop<()>> {
     {
         use winit::platform::macos::EventLoopBuilderExtMacOS;
         builder.with_default_menu(false);
+        // AppKit may launch us in the background for an App Intent query.
+        // Foreground activation belongs to MacApplication's launch/action
+        // handling, after it knows why the application was launched.
+        builder.with_activate_ignoring_other_apps(false);
     }
     Ok(builder.build()?)
 }

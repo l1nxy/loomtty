@@ -260,7 +260,8 @@ impl MacApplication {
         app.core.remote_config = remote;
         app.core.recent_hosts = crate::recent_hosts::load();
         app.resumed(event_loop);
-        if let Some(window) = &app.window {
+        let window = app.window.clone();
+        if let Some(window) = &window {
             if tab && let Some(parent) = parent_window {
                 native::join_tab(&parent, window);
             }
@@ -268,6 +269,9 @@ impl MacApplication {
         }
         self.launched_sessions.push(name);
         self.windows.push(app);
+        if let Some(window) = window {
+            native::focus_window(&window);
+        }
     }
 
     fn close_window(&mut self, id: WindowId, event_loop: &ActiveEventLoop) {
@@ -383,10 +387,6 @@ impl MacApplication {
             }
             Command::OpenDirectory { directory, tab } => {
                 self.create_window(event_loop, tab, false, Some(directory));
-                #[allow(deprecated)]
-                objc2_app_kit::NSRunningApplication::currentApplication().activateWithOptions(
-                    objc2_app_kit::NSApplicationActivationOptions::ActivateIgnoringOtherApps,
-                );
             }
             Command::Reopen => {
                 let normal = self
@@ -399,9 +399,7 @@ impl MacApplication {
                     });
                 if let Some(i) = normal {
                     if let Some(window) = &self.windows[i].window {
-                        window.set_minimized(false);
-                        window.set_visible(true);
-                        window.focus_window();
+                        native::focus_window(window);
                         self.active = Some(window.id());
                     }
                 } else {
@@ -629,7 +627,7 @@ impl MacApplication {
             .find(|(index, _, minimized)| Some(*index) == snapshot.active_group && !minimized)
             .or_else(|| selected_windows.iter().find(|(_, _, minimized)| !minimized))
         {
-            window.focus_window();
+            native::focus_window(window);
             self.active = Some(window.id());
         }
     }
@@ -950,6 +948,9 @@ impl ApplicationHandler for MacApplication {
         }
         for command in queued {
             self.dispatch(command, event_loop);
+        }
+        if self.explicit_window || native::is_default_launch() {
+            native::activate();
         }
         self.update_native_state();
     }

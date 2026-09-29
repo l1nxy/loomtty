@@ -48,6 +48,7 @@ impl ClientPaneGrid {
     /// SM data is decoded directly into the viewport buffer (no intermediate alloc).
     /// Scrollback is decoded into a temporary buffer, then sliced into rows.
     pub fn apply_full_sync(&mut self, sync: &FullPaneSyncBorrowed) {
+        self.content_revision = self.content_revision.wrapping_add(1);
         let old_cols = self.cols as usize;
         let old_scrollback_rows = self.scrollback.len();
         let old_grapheme_map = std::mem::take(&mut self.grapheme_map);
@@ -195,6 +196,7 @@ impl ClientPaneGrid {
     /// Apply incremental CellDelta: patch the live viewport directly using flat buffer indexing.
     /// Kept for use with non-borrowed CellDelta (e.g. tests, offline replay).
     pub fn apply_delta(&mut self, delta: &CellDelta) {
+        self.content_revision = self.content_revision.wrapping_add(1);
         self.cursor_line = delta.cursor_line;
         self.cursor_col = delta.cursor_col;
         self.cursor_shape = delta.cursor_shape;
@@ -230,6 +232,7 @@ impl ClientPaneGrid {
     /// Apply incremental CellDeltaBorrowed (SM-decoded): decode opcode streams
     /// directly into the viewport flat buffer. Only marks individual dirty rows.
     pub fn apply_delta_borrowed(&mut self, delta: &CellDeltaBorrowed) {
+        self.content_revision = self.content_revision.wrapping_add(1);
         // Track if cursor moved (old and new cursor rows need redraw)
         let old_cursor_line = self.cursor_line;
         let old_mode_flags = self.mode_flags;

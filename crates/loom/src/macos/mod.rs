@@ -1,5 +1,6 @@
 //! macOS application shell: one client core/renderer per native window or tab,
 //! a single AppKit menu bar, and process-wide input/lifecycle integration.
+mod accessibility;
 mod lookup;
 mod menu;
 mod native;
@@ -24,6 +25,8 @@ use crate::app::{App, RemoteConnectionConfig, Selection};
 
 #[derive(Clone, Debug)]
 enum Command {
+    Accessibility(accessibility::Action),
+    AccessibilityRefresh,
     Script(u64),
     Menu(muda::MenuId),
     Action(Action),
@@ -80,6 +83,7 @@ pub(crate) struct MacApplication {
     hotkey_manager: Option<GlobalHotKeyManager>,
     hotkey_registration: quick_terminal::hotkey::Registration,
     scripting: scripting::Bridge,
+    accessibility: accessibility::Bridge,
 }
 
 impl MacApplication {
@@ -145,6 +149,7 @@ impl MacApplication {
             secure_input: native::SecureInput::default(),
             manual_secure_input: false,
             scripting: scripting::Bridge::default(),
+            accessibility: accessibility::Bridge::default(),
             view_hooks: std::collections::HashMap::new(),
         }
     }
@@ -266,6 +271,7 @@ impl MacApplication {
             return;
         };
         let mut app = self.windows.remove(index);
+        self.accessibility.remove(id);
         self.directories.remove(&id);
         self.view_hooks.remove(&id);
         self.normal_frames.remove(&id);
@@ -315,6 +321,8 @@ impl MacApplication {
 
     fn dispatch(&mut self, command: Command, event_loop: &ActiveEventLoop) {
         match command {
+            Command::Accessibility(action) => self.handle_accessibility(action),
+            Command::AccessibilityRefresh => {}
             Command::Script(token) => self.execute_script(token, event_loop),
             Command::Menu(id) => {
                 if let Some(command) = self.menu.as_ref().and_then(|menu| menu.command(&id)) {
@@ -526,6 +534,7 @@ impl MacApplication {
             .into_iter()
             .chain(save)
             .chain(self.scripting.deadline())
+            .chain(self.accessibility.deadline())
             .min()
     }
 
@@ -815,6 +824,7 @@ impl MacApplication {
                             .is_some_and(|grid| grid.password_input)))
         });
         self.secure_input.update(password);
+        self.accessibility.begin_update();
         for app in &self.windows {
             if let Some(window) = &app.window {
                 if let std::collections::hash_map::Entry::Vacant(entry) =
@@ -822,6 +832,15 @@ impl MacApplication {
                     && let Some(hooks) = lookup::ViewHooks::install(window)
                 {
                     entry.insert(hooks);
+                }
+                if let Some(hooks) = self.view_hooks.get(&window.id()) {
+                    let visible = !app.native_quick_terminal
+                        || self
+                            .quick_terminal
+                            .as_ref()
+                            .is_some_and(|quick| quick.visible);
+                    self.accessibility
+                        .update(app, hooks.view(), visible, application_active);
                 }
                 // A remote cwd must never be represented as a local file URL.
                 let cwd = if app.core.remote_config.is_none() {

@@ -49,6 +49,7 @@ impl ViewHooks {
         let class = AnyClass::get(c"LoomTerminalView").unwrap_or_else(|| {
             let mut class = ClassBuilder::new(c"LoomTerminalView", original_class)
                 .expect("register terminal view extension");
+            super::accessibility::install(&mut class);
             // SAFETY: AppKit's quickLookWithEvent: ABI; no additional ivars.
             unsafe {
                 class.add_method(
@@ -103,6 +104,10 @@ impl ViewHooks {
             self.view
                 .convertPoint_fromView(window.mouseLocationOutsideOfEventStream(), None),
         )
+    }
+
+    pub fn view(&self) -> &NSView {
+        &self.view
     }
 
     pub fn show(&self, text: &str, point: NSPoint) {

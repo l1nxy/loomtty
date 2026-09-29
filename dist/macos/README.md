@@ -250,13 +250,35 @@ getters/specifiers. It requires no Xcode installation and opens no UI. The
 normal Rust/server tests cover identity invalidation, backpressure, and atomic
 split targeting. GUI Apple-event execution still needs the manual checks below.
 
+### Accessibility
+
+Each visible terminal pane exposes an AppKit text area for VoiceOver, with its
+session/title, focus, text, cursor line, selection, and character bounds. Text
+ranges use UTF-16, preserving Chinese wide characters, surrogate pairs,
+combining marks, and emoji sequences. Assistive selection focuses the named
+pane and uses the same selection as Copy; stale selections are rejected after
+output or reflow changes their meaning.
+
+The accessible text includes the visible viewport and up to 2,048 recent rows
+ending at that viewport, capped at 256 Ki UTF-16 units. Scroll the terminal to
+read older history. Output notifications are coalesced; password-input panes
+are cleared immediately and concealed cells are exposed as spaces. Hidden
+Quick Terminal panes are removed from the accessibility tree.
+
 This does **not** claim full [Ghostty feature parity](https://ghostty.org/docs/features).
-App Intents and VoiceOver terminal content remain outstanding. Terminal splits
-and settings use loom's GPU UI; the native shell and server session model
-remain integrated with it.
+App Intents and accessible controls for GPU settings/overlays remain
+outstanding. The terminal text adapter still needs live VoiceOver acceptance
+testing. Terminal splits and settings use loom's GPU UI; the native shell and
+server session model remain integrated with it.
 
 ### Manual regression checks
 
+- With VoiceOver, navigate between terminal panes and native tabs. Read Chinese,
+  combining accents, and emoji; select and copy them. Read scrollback, resize
+  the window, and check character bounds on Retina/external displays. Verify
+  cursor/selection announcements during output and focus changes. A password
+  prompt must expose no text, and hidden Quick Terminal panes must disappear.
+  Close/reconnect panes and verify old accessibility elements become invalid.
 - In Script Editor, run the example above, query `every terminal`, then move
   tabs between windows and resolve the saved IDs again. Try scripts while
   another client switches focus; splits and input must still reach the named
@@ -309,13 +331,16 @@ remain integrated with it.
 
 ### Validation for this implementation
 
-On Apple Silicon macOS, `cargo test --workspace` passed **1,617 tests**
-(12 documentation examples ignored). Coverage includes Quick Terminal geometry,
+On Apple Silicon macOS, `cargo test --workspace` passed **1,638 tests**
+(12 documentation examples and one bundle-only test ignored). A subsequent
+focused run added a passing scrollback accessibility regression test. Coverage includes Quick Terminal geometry,
 animation reversal, shortcut replacement, session exclusion, appearance
 switching, user color overrides, dictionary query bounds and password/modal
 exclusion, restoration locking/atomic saves, corrupt records, disconnected
-displays, and configuration validation. After adding Finder directory services, all **312 client tests** passed,
-including literal-path handling and startup-session persistence.
+displays, configuration validation, Finder literal-path handling, scripting
+identity/backpressure, and accessibility Unicode/range/geometry handling.
+The accessibility cache tests also verify that renderer damage cannot cause
+idle polling and that password state clears cached text without delay.
 `cargo clippy --workspace --all-targets` completed with existing warnings;
 `cargo fmt`, plist validation, script syntax validation, and ad-hoc bundle
 signature verification also completed.

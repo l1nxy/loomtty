@@ -149,6 +149,15 @@ impl ClientPaneGrid {
                 if row_data[col].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {
                     continue;
                 }
+                let grapheme = buf_row
+                    .checked_mul(self.cols as usize)
+                    .and_then(|index| index.checked_add(col))
+                    .and_then(|index| u32::try_from(index).ok())
+                    .and_then(|index| self.grapheme_map.get(&index));
+                if let Some(grapheme) = grapheme {
+                    line.push_str(grapheme);
+                    continue;
+                }
                 let c = row_data[col].ch();
                 if c != '\0' {
                     line.push(c);

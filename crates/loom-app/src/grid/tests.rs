@@ -2344,3 +2344,41 @@ fn looks_like_file_path_matches_detector() {
     assert!(!looks_like_file_path("https://example.com/a.rs"));
     assert!(!looks_like_file_path("hello"));
 }
+
+#[test]
+fn content_revision_is_independent_of_renderer_damage_consumption() {
+    let mut grid = ClientPaneGrid::new(2, 1, 0);
+    let before = grid.content_revision();
+    grid.apply_delta(&CellDelta {
+        pane_id: 1,
+        generation: 1,
+        cursor_line: 0,
+        cursor_col: 1,
+        cursor_shape: CURSOR_BLOCK,
+        mode_flags: 0,
+        regions: vec![],
+    });
+    let after = grid.content_revision();
+    assert_ne!(before, after);
+    grid.clear_dirty();
+    assert_eq!(grid.content_revision(), after);
+    grid.mark_row_dirty(0);
+    assert_eq!(
+        grid.content_revision(),
+        after,
+        "render-only damage must not invalidate native text"
+    );
+}
+
+#[test]
+fn selection_copy_preserves_combining_characters_and_emoji_graphemes() {
+    let mut grid = ClientPaneGrid::new(4, 1, 0);
+    grid.viewport[0].set_ch('e');
+    grid.grapheme_map.insert(0, "e\u{301}".into());
+    grid.viewport[1].set_ch('👩');
+    grid.viewport[1].flags = FLAG_WIDE_CHAR.to_le_bytes();
+    grid.viewport[2].flags = FLAG_WIDE_CHAR_SPACER.to_le_bytes();
+    grid.grapheme_map.insert(1, "👩\u{200d}💻".into());
+    assert_eq!(grid.text_in_range((0, 0), (2, 0)), "e\u{301}👩\u{200d}💻");
+    assert_eq!(grid.text_in_range((2, 0), (2, 0)), "👩\u{200d}💻");
+}

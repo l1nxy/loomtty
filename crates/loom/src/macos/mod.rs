@@ -1,5 +1,6 @@
 //! macOS application shell: one client core/renderer per native window or tab,
 //! a single AppKit menu bar, and process-wide input/lifecycle integration.
+mod lookup;
 mod menu;
 mod native;
 pub(crate) use native::system_dark_appearance;
@@ -37,6 +38,12 @@ enum Command {
     ToggleTabBar,
     ToggleQuickTerminal,
     ToggleFullscreen,
+    ToggleSecureInput,
+    LookUp,
+    LookUpAt {
+        id: WindowId,
+        point: objc2_foundation::NSPoint,
+    },
     Hotkey(GlobalHotKeyEvent),
 }
 
@@ -48,6 +55,8 @@ pub(crate) struct MacApplication {
     menu: Option<menu::MenuBar>,
     _delegate: native::Delegate,
     secure_input: native::SecureInput,
+    manual_secure_input: bool,
+    view_hooks: std::collections::HashMap<WindowId, lookup::ViewHooks>,
     last_config: LoomConfig,
     last_session: String,
     last_remote: Option<RemoteConnectionConfig>,
@@ -99,6 +108,8 @@ impl MacApplication {
             menu: None,
             _delegate: delegate,
             secure_input: native::SecureInput::default(),
+            manual_secure_input: false,
+            view_hooks: std::collections::HashMap::new(),
         }
     }
 
@@ -177,6 +188,7 @@ impl MacApplication {
         };
         let mut app = self.windows.remove(index);
         self.directories.remove(&id);
+        self.view_hooks.remove(&id);
         if app.native_quick_terminal {
             self.quick_terminal = None;
         } else {
@@ -227,6 +239,17 @@ impl MacApplication {
                     self.dispatch(command, event_loop);
                 }
             }
+            Command::ToggleSecureInput => {
+                self.manual_secure_input = !self.manual_secure_input;
+            }
+            Command::LookUp => {
+                if let Some(id) = self.active
+                    && let Some(point) = self.view_hooks.get(&id).and_then(|view| view.pointer())
+                {
+                    self.look_up(id, point, true);
+                }
+            }
+            Command::LookUpAt { id, point } => self.look_up(id, point, false),
             Command::ToggleFullscreen => {
                 let Some(i) = self.active_index() else {
                     return;
@@ -373,6 +396,22 @@ impl MacApplication {
                 }
                 app.schedule_redraw();
             }
+        }
+    }
+
+    fn look_up(&mut self, id: WindowId, point: objc2_foundation::NSPoint, selection: bool) {
+        let Some(app) = self.windows.iter().find(|app| {
+            app.window_focused && app.window.as_ref().is_some_and(|window| window.id() == id)
+        }) else {
+            return;
+        };
+        let Some(text) = lookup::text_at(app, point, selection) else {
+            return;
+        };
+        if let Some(view) = self.view_hooks.get_mut(&id)
+            && view.allow_lookup()
+        {
+            view.show(&text, point);
         }
     }
 
@@ -532,19 +571,26 @@ impl MacApplication {
             let app = &self.windows[i];
             application_active
                 && app.window_focused
-                && app.core.config.window.macos_secure_input
                 && !app.modal_captures_keyboard()
-                && app
-                    .core
-                    .workspaces
-                    .active()
-                    .active_pane_id()
-                    .and_then(|pid| app.core.pane_grids.get(&pid))
-                    .is_some_and(|grid| grid.password_input)
+                && (self.manual_secure_input
+                    || (app.core.config.window.macos_secure_input
+                        && app
+                            .core
+                            .workspaces
+                            .active()
+                            .active_pane_id()
+                            .and_then(|pid| app.core.pane_grids.get(&pid))
+                            .is_some_and(|grid| grid.password_input)))
         });
         self.secure_input.update(password);
         for app in &self.windows {
             if let Some(window) = &app.window {
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    self.view_hooks.entry(window.id())
+                    && let Some(hooks) = lookup::ViewHooks::install(window)
+                {
+                    entry.insert(hooks);
+                }
                 // A remote cwd must never be represented as a local file URL.
                 let cwd = if app.core.remote_config.is_none() {
                     app.core
@@ -570,6 +616,7 @@ impl MacApplication {
                 .update(manager, &config.window.macos_quick_terminal.shortcut);
         }
         if let Some(menu) = &mut self.menu {
+            menu.update_secure_input(self.manual_secure_input, self.secure_input.is_enabled());
             menu.update_quick_terminal(
                 self.hotkey_registration.label().as_deref(),
                 self.hotkey_registration.error.as_deref(),
@@ -667,6 +714,22 @@ impl ApplicationHandler for MacApplication {
                 .is_some_and(|quick| quick.defer_resize(std::time::Instant::now()))
         {
             return;
+        }
+        if let WindowEvent::TouchpadPressure { stage, .. } = &event {
+            let point = self.view_hooks.get_mut(&id).and_then(|view| {
+                view.pressure_changed(*stage)
+                    .then(|| view.pointer())
+                    .flatten()
+            });
+            if let Some(point) = point {
+                self.look_up(id, point, false);
+            }
+            return;
+        }
+        if matches!(event, WindowEvent::Focused(false))
+            && let Some(view) = self.view_hooks.get_mut(&id)
+        {
+            view.pressure_changed(0);
         }
         if is_quick && matches!(event, WindowEvent::CloseRequested) {
             self.hide_quick_terminal(true);

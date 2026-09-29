@@ -28,7 +28,7 @@ thread_local! {
     static CALLBACKS: RefCell<Option<DelegateState>> = const { RefCell::new(None) };
 }
 
-fn dispatch(command: Command) {
+pub(super) fn dispatch(command: Command) {
     CALLBACKS.with(|state| {
         if let Some(state) = &*state.borrow() {
             let _ = state.tx.send(command);
@@ -167,6 +167,10 @@ pub struct SecureInput {
 }
 
 impl SecureInput {
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
     pub fn update(&mut self, wanted: bool) {
         if self.enabled == wanted {
             return;

@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use loom_config::keys::KeybindConfig;
 use loom_input::action::Action;
-use muda::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu, accelerator::Accelerator};
+use muda::{
+    AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu,
+    accelerator::Accelerator,
+};
 
 use super::Command;
 
@@ -16,6 +19,7 @@ struct Entry {
 pub struct MenuBar {
     _menu: Menu,
     entries: Vec<Entry>,
+    secure_input: CheckMenuItem,
     bindings: Option<HashMap<String, String>>,
 }
 
@@ -25,6 +29,7 @@ impl MenuBar {
         let mut this = Self {
             _menu: menu.clone(),
             entries: Vec::new(),
+            secure_input: CheckMenuItem::new("Secure Keyboard Entry", true, false, None),
             bindings: None,
         };
         let app = Submenu::new("loomtty", true);
@@ -50,6 +55,7 @@ impl MenuBar {
             Command::Reload,
             Some("Super+Shift+Comma"),
         )?;
+        app.append(&this.secure_input)?;
         app.append_items(&[
             &PredefinedMenuItem::separator(),
             &PredefinedMenuItem::services(None),
@@ -110,6 +116,7 @@ impl MenuBar {
         this.add(&edit, "Select All", Command::SelectAll, Some("Super+A"))?;
         edit.append(&PredefinedMenuItem::separator())?;
         this.add(&edit, "Find…", Command::Action(Action::OpenSearch), None)?;
+        this.add(&edit, "Look Up", Command::LookUp, Some("Control+Super+D"))?;
 
         let view = Submenu::new("View", true);
         this.add(&view, "Quick Terminal", Command::ToggleQuickTerminal, None)?;
@@ -238,7 +245,32 @@ impl MenuBar {
         }
     }
 
+    pub fn update_secure_input(&self, manual: bool, enabled: bool) {
+        let text = if enabled && !manual {
+            "Secure Keyboard Entry (Automatic)"
+        } else if manual && !enabled {
+            "Secure Keyboard Entry (Inactive)"
+        } else {
+            "Secure Keyboard Entry"
+        };
+        if self.secure_input.text() != text {
+            self.secure_input.set_text(text);
+        }
+        if self.secure_input.is_checked() != (manual || enabled) {
+            self.secure_input.set_checked(manual || enabled);
+        }
+        // Automatic protection is a status indicator during password input.
+        // The user can manually enable it before/after that prompt.
+        let selectable = manual || !enabled;
+        if self.secure_input.is_enabled() != selectable {
+            self.secure_input.set_enabled(selectable);
+        }
+    }
+
     pub fn command(&self, id: &muda::MenuId) -> Option<Command> {
+        if self.secure_input.id() == id {
+            return Some(Command::ToggleSecureInput);
+        }
         self.entries
             .iter()
             .find(|entry| entry.item.id() == id)
@@ -283,7 +315,7 @@ impl MenuBar {
                 Command::Action(Action::ToggleSettings | Action::ToggleHelp) => true,
                 Command::Action(Action::ClipboardCopy) => has_window && can_copy && !modal,
                 Command::Action(Action::ClipboardPaste) => has_window,
-                Command::Action(_) | Command::SelectAll => has_window && !modal,
+                Command::Action(_) | Command::SelectAll | Command::LookUp => has_window && !modal,
                 _ => has_window,
             };
             if entry.item.is_enabled() != enabled {

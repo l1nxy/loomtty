@@ -58,6 +58,7 @@ inside it. New windows/tabs inherit the active window's remote connection.
 | Cmd+Q | Quit all client windows; leave server sessions running |
 | Cmd+, / Cmd+Shift+, | Settings / reload configuration in every window |
 | Cmd+C / Cmd+V / Cmd+F | Copy / guarded paste / find |
+| Ctrl+Cmd+D | Look up selected text or the word under the pointer |
 | Cmd+A | Select the active terminal's scrollback and screen |
 | Cmd+= / Cmd+- / Cmd+0 | Increase / decrease / reset font size (temporary) |
 | Cmd+Shift+[ / Cmd+Shift+] | Previous / next native tab |
@@ -89,13 +90,26 @@ Option retains native text entry. Secure Event Input is enabled only while a
 focused terminal is marked as reading a password by the server; it is released
 on focus loss, modal UI, password completion, window close, and application
 exit. This relies on the existing terminal password detection, not on matching
-prompt text. The native titlebar follows the configured terminal background's
+prompt text. The loomtty → Secure Keyboard Entry menu can keep protection on
+manually. The checkmark shows enabled/requested protection; automatic password
+protection is labelled and cannot be unchecked during that prompt. Manual
+protection is still released when the app loses focus or shows modal UI and
+resumes when terminal input regains focus. The native titlebar follows the configured terminal background's
 light/dark contrast.
 
 Default interactive shells start as login shells on macOS so Finder launches
 load PATH and login configuration. Explicit commands and configured shell
 programs retain their arguments. A bundled launch from `/` starts in the home directory;
 CLI working directories are preserved.
+
+### Look Up
+
+Use the macOS three-finger Look Up gesture, Force Touch, or Edit → Look Up
+(Ctrl+Cmd+D) for a native dictionary popover. Gestures query the word under
+the pointer; the menu prefers selected text. Pointer coordinates account for
+Retina scale and the current pane viewport. Queries leave the terminal
+selection unchanged and are disabled for password input, overview, and modal
+UI. The system Trackpad setting determines which physical gesture is available.
 
 ### System appearance
 
@@ -157,8 +171,8 @@ launch creates a new Quick Terminal session. This follows loom's persistent
 server model rather than terminating the shell when the app quits.
 
 This does **not** claim full [Ghostty feature parity](https://ghostty.org/docs/features).
-Quick Look/Force Touch, AppleScript/App Intents, Finder Services providers,
-VoiceOver terminal content and OS window geometry restoration remain future work. Terminal splits and the settings
+AppleScript/App Intents, Finder Services providers,
+VoiceOver terminal content and OS window geometry restoration remain outstanding in this adaptation. Terminal splits and the settings
 panel still use loom's GPU UI. Session restoration is provided by the existing
 loom server/session layer.
 
@@ -173,6 +187,11 @@ loom server/session layer.
 - Use menu Copy/Paste/Find, paste into search/palette, and verify large-paste
   confirmation. Drag paths containing spaces/apostrophes into the terminal;
   an open modal must not let a drop type into a hidden terminal.
+- Look up words with three-finger tap, Force Touch, and Ctrl+Cmd+D. Repeat on
+  Retina/external displays and scrolled panes. Test selected Unicode text,
+  password prompts, and modal overlays. Verify one popover per force click.
+- Toggle Secure Keyboard Entry manually, change focus, and quit. Check both
+  the native checkmark and `ioreg` ownership before/after every transition.
 - Compose Chinese/Japanese text, cancel composition, switch windows, and type
   again. Verify Option-key modes and candidate placement on Retina displays.
 - Exercise a password prompt, switch away/back, and close its window; inspect
@@ -198,7 +217,9 @@ loom server/session layer.
 On Apple Silicon macOS, `cargo test --workspace` passed **1,611 tests**
 (12 documentation examples ignored). This includes the Quick Terminal geometry, animation reversal, shortcut
 replacement, session exclusion, appearance switching, user color overrides,
-and configuration validation tests.
+and configuration validation tests. After adding Look Up and manual Secure
+Keyboard Entry, all **306 client tests** passed, including Unicode/query bounds
+and password/modal exclusion checks.
 `cargo clippy --workspace --all-targets` completed with existing warnings;
 `cargo fmt`, plist validation, script syntax validation, and ad-hoc bundle
 signature verification also completed.

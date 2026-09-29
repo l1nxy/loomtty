@@ -435,6 +435,12 @@ impl ApplicationHandler for App {
         {
             use winit::platform::macos::WindowAttributesExtMacOS;
             attrs = attrs.with_titlebar_transparent(true);
+            if self.native_quick_terminal {
+                attrs = crate::macos::quick_terminal::attributes(
+                    attrs,
+                    &self.core.config.window.macos_quick_terminal,
+                );
+            }
         }
 
         let window = Arc::new(
@@ -447,6 +453,9 @@ impl ApplicationHandler for App {
         #[cfg(target_os = "macos")]
         {
             super::apply_macos_window_config(&window, &self.core.config);
+            if self.native_quick_terminal {
+                crate::macos::quick_terminal::configure_window(&window);
+            }
         }
         let dpi_scale = window.scale_factor();
         let mut renderer = loom_gpu::Renderer::new(window.clone(), &self.core.config.render)

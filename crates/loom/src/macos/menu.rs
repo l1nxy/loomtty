@@ -112,6 +112,7 @@ impl MenuBar {
         this.add(&edit, "Find…", Command::Action(Action::OpenSearch), None)?;
 
         let view = Submenu::new("View", true);
+        this.add(&view, "Quick Terminal", Command::ToggleQuickTerminal, None)?;
         this.add(
             &view,
             "Command Palette…",
@@ -144,7 +145,12 @@ impl MenuBar {
             Some("Super+Digit0"),
         )?;
         view.append(&PredefinedMenuItem::separator())?;
-        view.append(&PredefinedMenuItem::fullscreen(None))?;
+        this.add(
+            &view,
+            "Toggle Full Screen",
+            Command::ToggleFullscreen,
+            Some("Control+Super+F"),
+        )?;
 
         let window = Submenu::new("Window", true);
         window.append_items(&[
@@ -214,6 +220,24 @@ impl MenuBar {
         Ok(())
     }
 
+    pub fn update_quick_terminal(&self, shortcut: Option<&str>, error: Option<&str>) {
+        if let Some(entry) = self
+            .entries
+            .iter()
+            .find(|entry| matches!(entry.command, Command::ToggleQuickTerminal))
+        {
+            let title = match (shortcut, error) {
+                (Some(shortcut), Some(_)) => format!("Quick Terminal ({shortcut}; reload failed)"),
+                (Some(shortcut), None) => format!("Quick Terminal ({shortcut})"),
+                (None, Some(_)) => "Quick Terminal (shortcut unavailable)".to_string(),
+                (None, None) => "Quick Terminal".to_string(),
+            };
+            if entry.item.text() != title {
+                entry.item.set_text(title);
+            }
+        }
+    }
+
     pub fn command(&self, id: &muda::MenuId) -> Option<Command> {
         self.entries
             .iter()
@@ -221,15 +245,41 @@ impl MenuBar {
             .map(|entry| entry.command.clone())
     }
 
-    pub fn update(&mut self, keys: &KeybindConfig, has_window: bool, can_copy: bool, modal: bool) {
+    pub fn update(
+        &mut self,
+        keys: &KeybindConfig,
+        has_window: bool,
+        can_copy: bool,
+        modal: bool,
+        quick: bool,
+    ) {
         let changed = self.bindings.as_ref() != Some(&keys.direct_bindings);
         for entry in &self.entries {
+            if matches!(entry.command, Command::ToggleFullscreen) {
+                let title = if quick {
+                    "Toggle Fill Screen"
+                } else {
+                    "Toggle Full Screen"
+                };
+                if entry.item.text() != title {
+                    entry.item.set_text(title);
+                }
+            }
             if changed && let Some(action) = &entry.action {
                 let accelerator = action_accelerator(&keys.direct_bindings, action);
                 let _ = entry.item.set_accelerator(accelerator);
             }
             let enabled = match entry.command {
-                Command::NewWindow | Command::NewTab | Command::Quit | Command::Reload => true,
+                Command::NewWindow
+                | Command::NewTab
+                | Command::Quit
+                | Command::Reload
+                | Command::ToggleQuickTerminal => true,
+                Command::NextTab
+                | Command::PreviousTab
+                | Command::MoveTabToWindow
+                | Command::MergeWindows
+                | Command::ToggleTabBar => has_window && !quick,
                 Command::Action(Action::ToggleSettings | Action::ToggleHelp) => true,
                 Command::Action(Action::ClipboardCopy) => has_window && can_copy && !modal,
                 Command::Action(Action::ClipboardPaste) => has_window,

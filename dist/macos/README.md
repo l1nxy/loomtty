@@ -81,6 +81,7 @@ interpreted as local files.
 macos_option_as_alt = "left" # "none", "left", "right", or "both"
 macos_secure_input = true
 macos_quit_after_last_window_closed = false
+macos_initial_window = true
 ```
 
 These settings hot reload. By default left Option sends terminal Alt and right
@@ -96,12 +97,50 @@ load PATH and login configuration. Explicit commands and configured shell
 programs retain their arguments. A bundled launch from `/` starts in the home directory;
 CLI working directories are preserved.
 
+### Quick Terminal
+
+View → Quick Terminal opens a separate local terminal over the current
+application. It keeps its connection and grid while hidden, supports all four
+screen edges and multiple displays, and respects the menu bar, Dock, and camera
+housing. Ctrl+Cmd+F fills the available screen without entering a fullscreen
+Space. It does not participate in native tab groups.
+
+```toml
+[window]
+macos_initial_window = false # optional: start in the Dock with no regular window
+
+[window.macos_quick_terminal]
+shortcut = "Control+Super+Backquote" # global; empty (default) disables registration
+position = "top"                    # top, bottom, left, right
+screen = "mouse"                    # mouse or main (menu-bar display)
+width = 1.0                         # fraction of usable display, 0.1–1.0
+height = 0.4                        # fraction of usable display, 0.1–1.0
+animation_ms = 180                  # 0–1000; Reduce Motion uses zero
+autohide = true                    # hide when another window/app receives focus
+```
+
+`Super` means Command. The global shortcut is opt-in and does not need
+Accessibility permission. An invalid or conflicting replacement keeps the
+previous working registration; the View menu indicates the failure. Explicit
+shortcut/menu dismissal returns focus to the previous application or loom
+window; automatic dismissal never takes focus back. Animation frames do not
+resize the shell; only the final dimensions are sent to the server.
+
+`macos_initial_window` applies on the next default launch; explicit CLI session
+commands still create windows. The other Quick Terminal settings hot reload;
+position and dimensions apply on the next show. Closing the popup hides it;
+quitting the application detaches it like other loom windows. Its `quick-*`
+session remains available in the session list for an explicit attach, but is
+excluded from automatic normal-window session selection. A later application
+launch creates a new Quick Terminal session. This follows loom's persistent
+server model rather than terminating the shell when the app quits.
+
 This does **not** claim full [Ghostty feature parity](https://ghostty.org/docs/features).
-Quick Terminal/global hotkeys, Quick Look/Force Touch, AppleScript/App Intents,
-Finder Services providers, VoiceOver terminal content, automatic terminal theme
-switching, and OS window geometry restoration remain future work. Terminal
-splits and the settings panel still use loom's GPU UI. Session restoration is
-provided by the existing loom server/session layer.
+Quick Look/Force Touch, AppleScript/App Intents, Finder Services providers,
+VoiceOver terminal content, automatic terminal theme switching, and OS window
+geometry restoration remain future work. Terminal splits and the settings
+panel still use loom's GPU UI. Session restoration is provided by the existing
+loom server/session layer.
 
 ### Manual regression checks
 
@@ -121,11 +160,21 @@ provided by the existing loom server/session layer.
 - Test fullscreen/Spaces, minimize, Hide/Show, resize and move between displays.
   Test Finder launch, shell PATH, a custom theme, and live config reload.
 
+- Set a global Quick Terminal shortcut; invoke it from another application and
+  over a fullscreen Space. Toggle repeatedly during animation and check focus
+  restoration. Click another app to test autohide. Repeat on all display edges,
+  with the pointer on each display, an auto-hidden menu bar/Dock, and Reduce Motion.
+- Run `stty size` in the popup before/after hiding. It must keep its final grid
+  size. Test Ctrl+Cmd+F, disabling/rebinding the shortcut, and a conflicting
+  shortcut. Launch with `macos_initial_window = false`, use the View menu, then
+  open a normal window from the Dock. A normal default launch must not attach
+  to a saved `quick-*` session automatically.
+
 ### Validation for this implementation
 
-On Apple Silicon macOS, `cargo test --workspace` passed **1,601 tests**
-(12 documentation examples ignored). The affected client/config tests were
-rerun after the last window-tabbing and shortcut adjustments.
+On Apple Silicon macOS, `cargo test --workspace` passed **1,608 tests**
+(12 documentation examples ignored). This includes the Quick Terminal geometry, animation reversal, shortcut
+replacement, session exclusion, and configuration validation tests.
 `cargo clippy --workspace --all-targets` completed with existing warnings;
 `cargo fmt`, plist validation, script syntax validation, and ad-hoc bundle
 signature verification also completed.

@@ -160,6 +160,8 @@ pub(crate) struct App {
 
     // --- Shell-only fields (GPU / windowing / platform) ---
     pub window: Option<Arc<Window>>,
+    #[cfg(target_os = "macos")]
+    pub native_quick_terminal: bool,
     pub renderer: Option<Renderer>,
     pub glyph_cache: Option<GlyphCache>,
     pub glyph_atlas_gpu: Option<GlyphAtlasGpu>,
@@ -548,6 +550,8 @@ impl App {
         App {
             core,
             window: None,
+            #[cfg(target_os = "macos")]
+            native_quick_terminal: false,
             renderer: None,
             glyph_cache: None,
             glyph_atlas_gpu: None,

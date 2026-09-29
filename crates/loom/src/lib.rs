@@ -48,6 +48,7 @@ pub fn init_logging() {
 /// Run a resolved CLI command: dispatch non-GUI subcommands, otherwise launch
 /// the GUI client (local session or remote attach).
 pub fn run(cli: CliCommand) -> Result<()> {
+    let explicit_window = !matches!(&cli, CliCommand::Default);
     // Handle non-GUI commands first
     match cli {
         CliCommand::Init => {
@@ -255,7 +256,7 @@ pub fn run(cli: CliCommand) -> Result<()> {
         });
         // Recent-host recording is deferred to connect_remote_session()
         // so that only successfully initiated connections get persisted.
-        run_gui(event_loop, app)?;
+        run_gui(event_loop, app, explicit_window)?;
         return Ok(());
     }
 
@@ -284,7 +285,7 @@ pub fn run(cli: CliCommand) -> Result<()> {
     let mut app = App::new(config, session_name);
     app.event_loop_proxy = Some(event_loop.create_proxy());
     app.core.recent_hosts = recent_hosts::load();
-    run_gui(event_loop, app)?;
+    run_gui(event_loop, app, explicit_window)?;
     Ok(())
 }
 
@@ -328,7 +329,10 @@ fn resolve_session_launch(cli: CliCommand) -> SessionLaunchChoice {
 fn choose_default_session() -> SessionLaunchChoice {
     let state_dir = loom_protocol::transport::state_dir();
     let saved = loom_session::restore::list_sessions(&state_dir).unwrap_or_default();
-    if let Some(name) = control::query_active_sessions().into_iter().next() {
+    if let Some(name) = control::query_active_sessions()
+        .into_iter()
+        .find(|name| default_session_candidate(&state_dir, name))
+    {
         log::info!("attaching to most recent session: {name}");
         return SessionLaunchChoice {
             session_name: name,
@@ -337,7 +341,8 @@ fn choose_default_session() -> SessionLaunchChoice {
     }
 
     if let Some(name) = read_last_session().filter(|name| {
-        saved.iter().any(|saved_name| saved_name == name) || session_is_running(name)
+        default_session_candidate(&state_dir, name)
+            && (saved.iter().any(|saved_name| saved_name == name) || session_is_running(name))
     }) {
         log::info!("attaching to last local session: {name}");
         return SessionLaunchChoice {
@@ -352,6 +357,15 @@ fn choose_default_session() -> SessionLaunchChoice {
         session_name,
         remembers_last_session: true,
     }
+}
+
+fn default_session_candidate(_state_dir: &std::path::Path, _name: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        !macos::quick_terminal::session::is_quick_session(_state_dir, _name)
+    }
+    #[cfg(not(target_os = "macos"))]
+    true
 }
 
 fn choose_new_session() -> SessionLaunchChoice {
@@ -421,11 +435,11 @@ fn create_event_loop() -> Result<EventLoop<()>> {
     Ok(builder.build()?)
 }
 
-fn run_gui(event_loop: EventLoop<()>, app: App) -> Result<()> {
+fn run_gui(event_loop: EventLoop<()>, app: App, _explicit_window: bool) -> Result<()> {
     #[cfg(target_os = "macos")]
     macos::prepare_launch_directory();
     #[cfg(target_os = "macos")]
-    let mut app = macos::MacApplication::new(app, event_loop.create_proxy());
+    let mut app = macos::MacApplication::new(app, event_loop.create_proxy(), _explicit_window);
     #[cfg(not(target_os = "macos"))]
     let mut app = app;
     event_loop.run_app(&mut app)?;

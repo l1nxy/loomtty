@@ -2,8 +2,10 @@
 //! a single AppKit menu bar, and process-wide input/lifecycle integration.
 mod menu;
 mod native;
+pub(crate) mod quick_terminal;
 
 use crossbeam_channel::Receiver;
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager};
 use loom_config::config::LoomConfig;
 use loom_input::action::Action;
 use loom_protocol::message::ClientMessage;
@@ -32,6 +34,9 @@ enum Command {
     MergeWindows,
     MoveTabToWindow,
     ToggleTabBar,
+    ToggleQuickTerminal,
+    ToggleFullscreen,
+    Hotkey(GlobalHotKeyEvent),
 }
 
 pub(crate) struct MacApplication {
@@ -48,24 +53,44 @@ pub(crate) struct MacApplication {
     launched_sessions: Vec<String>,
     directories: std::collections::HashMap<WindowId, Option<String>>,
     system_terminate_pending: bool,
+    quick_terminal: Option<quick_terminal::QuickTerminal>,
+    show_initial_window: bool,
+    hotkey_manager: Option<GlobalHotKeyManager>,
+    hotkey_registration: quick_terminal::hotkey::Registration,
 }
 
 impl MacApplication {
-    pub fn new(app: App, proxy: EventLoopProxy<()>) -> Self {
+    pub fn new(app: App, proxy: EventLoopProxy<()>, explicit_window: bool) -> Self {
         let (tx, commands) = crossbeam_channel::unbounded();
         let delegate = native::Delegate::install(tx.clone(), proxy.clone());
         let menu_proxy = proxy.clone();
+        let hotkey_proxy = proxy.clone();
+        let hotkey_tx = tx.clone();
+        GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {
+            let _ = hotkey_tx.send(Command::Hotkey(event));
+            let _ = hotkey_proxy.send_event(());
+        }));
         muda::MenuEvent::set_event_handler(Some(move |event: muda::MenuEvent| {
             let _ = tx.send(Command::Menu(event.id));
             let _ = menu_proxy.send_event(());
         }));
         Self {
+            show_initial_window: explicit_window || app.core.config.window.macos_initial_window,
             last_config: app.core.config.clone(),
             last_session: app.core.session_name.clone(),
             last_remote: app.core.remote_config.clone(),
             launched_sessions: vec![app.core.session_name.clone()],
             directories: std::collections::HashMap::new(),
             system_terminate_pending: false,
+            quick_terminal: None,
+            hotkey_manager: match GlobalHotKeyManager::new() {
+                Ok(manager) => Some(manager),
+                Err(error) => {
+                    log::warn!("global hotkey initialization failed: {error}");
+                    None
+                }
+            },
+            hotkey_registration: quick_terminal::hotkey::Registration::default(),
             windows: vec![app],
             active: None,
             proxy,
@@ -91,9 +116,14 @@ impl MacApplication {
 
     fn active_index(&self) -> Option<usize> {
         self.active.and_then(|id| {
-            self.windows
-                .iter()
-                .position(|app| app.window.as_ref().is_some_and(|window| window.id() == id))
+            self.windows.iter().position(|app| {
+                app.window.as_ref().is_some_and(|window| window.id() == id)
+                    && (!app.native_quick_terminal
+                        || self
+                            .quick_terminal
+                            .as_ref()
+                            .is_some_and(|quick| quick.visible))
+            })
         })
     }
 
@@ -118,7 +148,9 @@ impl MacApplication {
             }
             loom_session::names::unique_name(&names)
         };
-        let parent_window = parent.and_then(|app| app.window.clone());
+        let parent_window = parent
+            .filter(|app| !app.native_quick_terminal)
+            .and_then(|app| app.window.clone());
         let mut app = App::new(config, name.clone());
         app.event_loop_proxy = Some(self.proxy.clone());
         app.core.remote_config = remote;
@@ -144,9 +176,13 @@ impl MacApplication {
         };
         let mut app = self.windows.remove(index);
         self.directories.remove(&id);
-        self.last_config = app.core.config.clone();
-        self.last_session = app.core.session_name.clone();
-        self.last_remote = app.core.remote_config.clone();
+        if app.native_quick_terminal {
+            self.quick_terminal = None;
+        } else {
+            self.last_config = app.core.config.clone();
+            self.last_session = app.core.session_name.clone();
+            self.last_remote = app.core.remote_config.clone();
+        }
         // A red close button detaches the client. It never closes PTYs or
         // kills a server session. Drop GPU resources before their NSWindow.
         app.send(ClientMessage::Detach);
@@ -164,7 +200,9 @@ impl MacApplication {
                 .map(|w| w.id());
         }
         self.secure_input.update(false);
-        if self.windows.is_empty() && self.last_config.window.macos_quit_after_last_window_closed {
+        if self.windows.iter().all(|app| app.native_quick_terminal)
+            && self.last_config.window.macos_quit_after_last_window_closed
+        {
             event_loop.exit();
         }
     }
@@ -188,23 +226,69 @@ impl MacApplication {
                     self.dispatch(command, event_loop);
                 }
             }
+            Command::ToggleFullscreen => {
+                let Some(i) = self.active_index() else {
+                    return;
+                };
+                let app = &self.windows[i];
+                if let Some(window) = &app.window {
+                    if app.native_quick_terminal {
+                        if let Some(quick) = &mut self.quick_terminal {
+                            quick.toggle_fullscreen(
+                                window,
+                                &app.core.config.window.macos_quick_terminal,
+                            );
+                        }
+                    } else {
+                        window.set_fullscreen(if window.fullscreen().is_some() {
+                            None
+                        } else {
+                            Some(winit::window::Fullscreen::Borderless(None))
+                        });
+                    }
+                }
+                self.advance_quick_terminal();
+            }
+            Command::Hotkey(event) => {
+                if self.hotkey_registration.pressed(event) {
+                    self.toggle_quick_terminal(event_loop);
+                }
+            }
+            Command::ToggleQuickTerminal => self.toggle_quick_terminal(event_loop),
             Command::NewWindow | Command::NewTab => {
                 self.create_window(event_loop, matches!(command, Command::NewTab), false);
             }
             Command::Reopen => {
-                if self.windows.is_empty() {
+                let normal = self
+                    .active_index()
+                    .filter(|i| !self.windows[*i].native_quick_terminal)
+                    .or_else(|| {
+                        self.windows
+                            .iter()
+                            .position(|app| !app.native_quick_terminal)
+                    });
+                if let Some(i) = normal {
+                    if let Some(window) = &self.windows[i].window {
+                        window.set_minimized(false);
+                        window.set_visible(true);
+                        window.focus_window();
+                        self.active = Some(window.id());
+                    }
+                } else {
                     self.create_window(event_loop, false, true);
-                } else if let Some(i) = self.active_index()
-                    && let Some(window) = &self.windows[i].window
-                {
-                    window.set_minimized(false);
-                    window.set_visible(true);
-                    window.focus_window();
                 }
             }
             Command::CloseWindow => {
                 if let Some(id) = self.active {
-                    self.close_window(id, event_loop);
+                    if self
+                        .quick_terminal
+                        .as_ref()
+                        .is_some_and(|quick| quick.id == id)
+                    {
+                        self.hide_quick_terminal(true);
+                    } else {
+                        self.close_window(id, event_loop);
+                    }
                 }
             }
             Command::Quit | Command::SystemQuit => {
@@ -230,7 +314,7 @@ impl MacApplication {
                 }
             }
             Command::Action(Action::ToggleSettings | Action::ToggleHelp)
-                if self.windows.is_empty() =>
+                if self.active_index().is_none() =>
             {
                 self.create_window(event_loop, false, true);
                 self.dispatch(command, event_loop);
@@ -266,7 +350,9 @@ impl MacApplication {
                         app.core.config.font.size = size;
                         app.apply_font_config_change();
                     }
-                    Command::MergeWindows | Command::MoveTabToWindow | Command::ToggleTabBar => {
+                    Command::MergeWindows | Command::MoveTabToWindow | Command::ToggleTabBar
+                        if !app.native_quick_terminal =>
+                    {
                         if let Some(window) =
                             app.window.as_ref().and_then(|w| native::native_window(w))
                         {
@@ -277,7 +363,7 @@ impl MacApplication {
                             }
                         }
                     }
-                    Command::NextTab | Command::PreviousTab => {
+                    Command::NextTab | Command::PreviousTab if !app.native_quick_terminal => {
                         if let Some(window) = &app.window {
                             native::select_tab(window, matches!(command, Command::NextTab));
                         }
@@ -289,14 +375,151 @@ impl MacApplication {
         }
     }
 
+    fn toggle_quick_terminal(&mut self, event_loop: &ActiveEventLoop) {
+        if self
+            .quick_terminal
+            .as_ref()
+            .is_some_and(|quick| quick.visible)
+        {
+            self.hide_quick_terminal(true);
+            return;
+        }
+        let previous_application = quick_terminal::QuickTerminal::frontmost_application();
+        let previous_window = self
+            .active_index()
+            .and_then(|i| self.windows[i].window.as_ref().map(|w| w.id()));
+        if self.quick_terminal.is_none() {
+            let mut config = LoomConfig::load().unwrap_or_else(|_| self.last_config.clone());
+            crate::sanitize_remote_hosts(&mut config);
+            let mut names = self.launched_sessions.clone();
+            for app in &self.windows {
+                names.extend(
+                    app.core
+                        .cached_local_sessions
+                        .iter()
+                        .map(|session| session.name.clone()),
+                );
+            }
+            let state_dir = loom_protocol::transport::state_dir();
+            names.extend(loom_session::restore::list_sessions(&state_dir).unwrap_or_default());
+            let name = match quick_terminal::session::allocate(&state_dir, &names) {
+                Ok(name) => name,
+                Err(error) => {
+                    log::error!("could not allocate Quick Terminal session: {error}");
+                    return;
+                }
+            };
+            let mut app = App::new(config, name.clone());
+            app.event_loop_proxy = Some(self.proxy.clone());
+            app.native_quick_terminal = true;
+            app.core.recent_hosts = crate::recent_hosts::load();
+            app.resumed(event_loop);
+            let Some(window) = &app.window else {
+                return;
+            };
+            self.quick_terminal = Some(quick_terminal::QuickTerminal::new(
+                window,
+                &app.core.config.window.macos_quick_terminal,
+            ));
+            self.launched_sessions.push(name);
+            self.windows.push(app);
+        }
+        let quick = self
+            .quick_terminal
+            .as_mut()
+            .expect("created Quick Terminal");
+        let Some(app) = self.windows.iter_mut().find(|app| {
+            app.window
+                .as_ref()
+                .is_some_and(|window| window.id() == quick.id)
+        }) else {
+            return;
+        };
+        if let Some(window) = &app.window {
+            quick.show(
+                window,
+                &app.core.config.window.macos_quick_terminal,
+                previous_window,
+                previous_application,
+            );
+            self.active = Some(quick.id);
+            app.schedule_redraw();
+        }
+        self.advance_quick_terminal();
+    }
+
+    fn hide_quick_terminal(&mut self, restore_focus: bool) {
+        let Some(quick) = &mut self.quick_terminal else {
+            return;
+        };
+        if let Some(app) = self.windows.iter_mut().find(|app| {
+            app.window
+                .as_ref()
+                .is_some_and(|window| window.id() == quick.id)
+        }) {
+            if let Some(window) = &app.window {
+                quick.hide(
+                    window,
+                    &app.core.config.window.macos_quick_terminal,
+                    restore_focus,
+                );
+            }
+            app.handle_window_focus_changed(false);
+        }
+        self.secure_input.update(false);
+        self.advance_quick_terminal();
+    }
+
+    fn advance_quick_terminal(&mut self) {
+        let Some(quick) = &mut self.quick_terminal else {
+            return;
+        };
+        let Some(window) = self.windows.iter().find_map(|app| {
+            app.window
+                .as_ref()
+                .filter(|window| window.id() == quick.id)
+                .cloned()
+        }) else {
+            return;
+        };
+        let now = std::time::Instant::now();
+        let previous = quick.step(&window, now);
+        if quick.take_final_resize(now)
+            && let Some(app) = self
+                .windows
+                .iter_mut()
+                .find(|app| app.native_quick_terminal)
+        {
+            // Commit exactly one final grid/PTY resize; animation frames are
+            // compositor previews, never intermediate terminal dimensions.
+            app.pending_resize = Some((window.inner_size(), now));
+            app.schedule_redraw();
+        }
+        if let Some(previous) = previous
+            && let Some(window) = self
+                .windows
+                .iter()
+                .find_map(|app| app.window.as_ref().filter(|window| window.id() == previous))
+        {
+            window.focus_window();
+            self.active = Some(previous);
+        }
+    }
+
     fn update_native_state(&mut self) {
         // Ask AppKit which tab is key; native tab switching and window-menu
         // selection can change it without going through a loom action.
         let focused = self.windows.iter().position(|app| {
-            app.window
-                .as_ref()
-                .and_then(|window| native::native_window(window))
-                .is_some_and(|window| window.isKeyWindow())
+            (!app.native_quick_terminal
+                || self
+                    .quick_terminal
+                    .as_ref()
+                    .is_some_and(|quick| quick.visible))
+                && app
+                    .window
+                    .as_ref()
+                    .and_then(|window| native::native_window(window))
+                    .is_some_and(|window| window.isKeyWindow())
         });
         if let Some(i) = focused {
             self.active = self.windows[i].window.as_ref().map(|w| w.id());
@@ -339,7 +562,16 @@ impl MacApplication {
         }
         let index = self.active_index();
         let app = index.map(|i| &self.windows[i]);
+        let config = app.map(|app| &app.core.config).unwrap_or(&self.last_config);
+        if let Some(manager) = &self.hotkey_manager {
+            self.hotkey_registration
+                .update(manager, &config.window.macos_quick_terminal.shortcut);
+        }
         if let Some(menu) = &mut self.menu {
+            menu.update_quick_terminal(
+                self.hotkey_registration.label().as_deref(),
+                self.hotkey_registration.error.as_deref(),
+            );
             menu.update(
                 &app.map(|app| &app.core.config)
                     .unwrap_or(&self.last_config)
@@ -347,6 +579,7 @@ impl MacApplication {
                 app.is_some(),
                 app.is_some_and(|app| app.core.selection.is_some()),
                 app.is_some_and(|app| app.modal_captures_keyboard()),
+                app.is_some_and(|app| app.native_quick_terminal),
             );
         }
     }
@@ -366,6 +599,9 @@ fn merge_control_flow(a: ControlFlow, b: ControlFlow) -> ControlFlow {
 impl ApplicationHandler for MacApplication {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         self.menu = Some(menu::MenuBar::new().expect("create macOS menu bar"));
+        if !self.show_initial_window {
+            self.windows.clear();
+        }
         for app in &mut self.windows {
             app.resumed(event_loop);
             self.active = app.window.as_ref().map(|w| w.id());
@@ -377,8 +613,24 @@ impl ApplicationHandler for MacApplication {
         self.prune_closed(event_loop);
         let mut flow = ControlFlow::Wait;
         for app in &mut self.windows {
+            if app.native_quick_terminal
+                && self
+                    .quick_terminal
+                    .as_ref()
+                    .is_some_and(|quick| quick.defer_resize(std::time::Instant::now()))
+            {
+                app.pending_resize = None;
+            }
             app.new_events(event_loop, cause);
             flow = merge_control_flow(flow, event_loop.control_flow());
+        }
+        self.advance_quick_terminal();
+        if let Some(deadline) = self
+            .quick_terminal
+            .as_ref()
+            .and_then(|quick| quick.next_frame(std::time::Instant::now()))
+        {
+            flow = merge_control_flow(flow, ControlFlow::WaitUntil(deadline));
         }
         event_loop.set_control_flow(flow);
     }
@@ -401,17 +653,57 @@ impl ApplicationHandler for MacApplication {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        if matches!(event, WindowEvent::CloseRequested) {
+        let is_quick = self
+            .quick_terminal
+            .as_ref()
+            .is_some_and(|quick| quick.id == id);
+        if is_quick
+            && matches!(event, WindowEvent::Resized(_))
+            && self
+                .quick_terminal
+                .as_ref()
+                .is_some_and(|quick| quick.defer_resize(std::time::Instant::now()))
+        {
+            return;
+        }
+        if is_quick && matches!(event, WindowEvent::CloseRequested) {
+            self.hide_quick_terminal(true);
+        } else if matches!(event, WindowEvent::CloseRequested) {
             self.close_window(id, event_loop);
         } else if let Some(app) = self
             .windows
             .iter_mut()
             .find(|app| app.window.as_ref().is_some_and(|w| w.id() == id))
         {
+            if is_quick
+                && self
+                    .quick_terminal
+                    .as_ref()
+                    .is_some_and(|quick| !quick.visible)
+                && matches!(
+                    event,
+                    WindowEvent::KeyboardInput { .. }
+                        | WindowEvent::Ime(_)
+                        | WindowEvent::Focused(true)
+                        | WindowEvent::ModifiersChanged(_)
+                        | WindowEvent::MouseInput { .. }
+                        | WindowEvent::MouseWheel { .. }
+                        | WindowEvent::CursorMoved { .. }
+                        | WindowEvent::DroppedFile(_)
+                )
+            {
+                return;
+            }
+            let hide_quick = is_quick
+                && matches!(event, WindowEvent::Focused(false))
+                && app.core.config.window.macos_quick_terminal.autohide;
             if matches!(event, WindowEvent::Focused(true)) {
                 self.active = Some(id);
             }
             app.window_event(event_loop, id, event);
+            if hide_quick {
+                self.hide_quick_terminal(false);
+            }
         }
         self.update_native_state();
     }
@@ -420,7 +712,18 @@ impl ApplicationHandler for MacApplication {
         for app in &mut self.windows {
             app.about_to_wait(event_loop);
         }
+        self.advance_quick_terminal();
         self.update_native_state();
+        if let Some(deadline) = self
+            .quick_terminal
+            .as_ref()
+            .and_then(|quick| quick.next_frame(std::time::Instant::now()))
+        {
+            event_loop.set_control_flow(merge_control_flow(
+                event_loop.control_flow(),
+                ControlFlow::WaitUntil(deadline),
+            ));
+        }
     }
 
     fn exiting(&mut self, event_loop: &ActiveEventLoop) {

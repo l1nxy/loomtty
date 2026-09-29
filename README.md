@@ -13,7 +13,7 @@ workspaces, a built-in browser client, and remote attach over a binary protocol.
 
 > **🚧 Early and experimental (v0.1).** Expect rough edges — not everything is
 > guaranteed to work yet. macOS has an [AppKit application shell](dist/macos/README.md#native-application-behavior)
-> with native menus, windows and tabs; desktop interaction validation is still
+> with native menus, windows, tabs, and Quick Terminal; desktop interaction validation is still
 > in progress.
 
 https://github.com/user-attachments/assets/6b078921-1065-4867-a412-e2f9c949fb9a

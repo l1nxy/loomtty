@@ -477,6 +477,9 @@ pub struct WindowConfig {
     /// Set false for a menu/Dock app that creates windows only on demand.
     #[garde(skip)]
     pub macos_initial_window: bool,
+    /// Restore normal window frames, sessions and native tab groups on default launch.
+    #[garde(skip)]
+    pub macos_restore_windows: bool,
     #[garde(dive)]
     pub macos_quick_terminal: MacosQuickTerminalConfig,
     #[garde(skip)]
@@ -494,6 +497,7 @@ impl Default for WindowConfig {
             macos_secure_input: true,
             macos_quit_after_last_window_closed: false,
             macos_initial_window: true,
+            macos_restore_windows: true,
             macos_quick_terminal: MacosQuickTerminalConfig::default(),
             width: 1024.0,
             height: 768.0,

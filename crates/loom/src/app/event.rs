@@ -435,6 +435,9 @@ impl ApplicationHandler for App {
         {
             use winit::platform::macos::WindowAttributesExtMacOS;
             attrs = attrs.with_titlebar_transparent(true);
+            if self.native_initially_hidden {
+                attrs = attrs.with_visible(false).with_active(false);
+            }
             if self.native_quick_terminal {
                 attrs = crate::macos::quick_terminal::attributes(
                     attrs,

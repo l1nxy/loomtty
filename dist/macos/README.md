@@ -83,6 +83,7 @@ macos_option_as_alt = "left" # "none", "left", "right", or "both"
 macos_secure_input = true
 macos_quit_after_last_window_closed = false
 macos_initial_window = true
+macos_restore_windows = true
 ```
 
 Option-key and Secure Input settings hot reload. By default left Option sends terminal Alt and right
@@ -101,6 +102,25 @@ Default interactive shells start as login shells on macOS so Finder launches
 load PATH and login configuration. Explicit commands and configured shell
 programs retain their arguments. A bundled launch from `/` starts in the home directory;
 CLI working directories are preserved.
+
+### Window restoration
+
+A default launch restores regular windows, their native tab order/selection,
+local or SSH session connections, positions, and minimized/zoomed/fullscreen
+state. Pane layouts and processes come from the existing server/session layer.
+Quick Terminal is excluded. `window.macos_restore_windows = false` disables
+restoration on the next launch. `macos_initial_window = false` takes precedence.
+Explicit CLI session commands always open their requested window.
+
+State is stored separately from server sessions in `state_dir()/macos/windows.json`.
+The first default-launch process owns a file lock; other processes cannot
+replace its state. Snapshots are debounced and atomically replaced. Quit saves
+the open windows before detaching them; closing a window normally removes it
+from the next snapshot. If all windows were closed, the next default launch
+opens its usual initial window. Missing/corrupt state falls back to normal
+startup. Window frames use points and are clamped to connected displays, so
+unplugged monitors do not leave restored windows off-screen. The OS chooses
+new fullscreen Spaces; their previous Space numbers cannot be restored.
 
 ### Look Up
 
@@ -171,9 +191,9 @@ launch creates a new Quick Terminal session. This follows loom's persistent
 server model rather than terminating the shell when the app quits.
 
 This does **not** claim full [Ghostty feature parity](https://ghostty.org/docs/features).
-AppleScript/App Intents, Finder Services providers,
-VoiceOver terminal content and OS window geometry restoration remain outstanding in this adaptation. Terminal splits and the settings
-panel still use loom's GPU UI. Session restoration is provided by the existing
+AppleScript/App Intents, Finder Services providers, and VoiceOver terminal
+content remain outstanding in this adaptation. Terminal splits and the
+settings panel still use loom's GPU UI. Session restoration is provided by the existing
 loom server/session layer.
 
 ### Manual regression checks
@@ -181,6 +201,11 @@ loom server/session layer.
 - Open multiple windows and native tabs; type different commands in each.
   Switch tabs, move a tab to a window, and merge windows. Input and output must
   stay associated with the correct session.
+- Move/resize windows, reorder tabs, minimize/zoom/fullscreen groups, then quit
+  and relaunch. Verify sessions and selected tabs. Unplug an external monitor
+  before relaunching and verify reachable frames. Run a separate explicit CLI
+  session and check that it does not replace the main application's snapshot.
+  Test disabled restoration, Quick Terminal exclusion, and corrupt state fallback.
 - Close one tab/window, then the last window; reopen from the Dock. The process
   remains alive and the server session survives. Cmd+Q and Dock → Quit exit
   the client without killing the server.
@@ -214,12 +239,12 @@ loom server/session layer.
 
 ### Validation for this implementation
 
-On Apple Silicon macOS, `cargo test --workspace` passed **1,611 tests**
-(12 documentation examples ignored). This includes the Quick Terminal geometry, animation reversal, shortcut
-replacement, session exclusion, appearance switching, user color overrides,
-and configuration validation tests. After adding Look Up and manual Secure
-Keyboard Entry, all **306 client tests** passed, including Unicode/query bounds
-and password/modal exclusion checks.
+On Apple Silicon macOS, `cargo test --workspace` passed **1,617 tests**
+(12 documentation examples ignored). Coverage includes Quick Terminal geometry,
+animation reversal, shortcut replacement, session exclusion, appearance
+switching, user color overrides, dictionary query bounds and password/modal
+exclusion, restoration locking/atomic saves, corrupt records, disconnected
+displays, and configuration validation. The client has **310 passing tests**.
 `cargo clippy --workspace --all-targets` completed with existing warnings;
 `cargo fmt`, plist validation, script syntax validation, and ad-hoc bundle
 signature verification also completed.

@@ -162,6 +162,8 @@ pub(crate) struct App {
     pub window: Option<Arc<Window>>,
     #[cfg(target_os = "macos")]
     pub native_quick_terminal: bool,
+    #[cfg(target_os = "macos")]
+    pub native_initially_hidden: bool,
     pub renderer: Option<Renderer>,
     pub glyph_cache: Option<GlyphCache>,
     pub glyph_atlas_gpu: Option<GlyphAtlasGpu>,
@@ -562,6 +564,8 @@ impl App {
             window: None,
             #[cfg(target_os = "macos")]
             native_quick_terminal: false,
+            #[cfg(target_os = "macos")]
+            native_initially_hidden: false,
             renderer: None,
             glyph_cache: None,
             glyph_atlas_gpu: None,

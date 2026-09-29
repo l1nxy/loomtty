@@ -3,6 +3,7 @@
 mod lookup;
 mod menu;
 mod native;
+mod restore;
 pub(crate) use native::system_dark_appearance;
 pub(crate) mod quick_terminal;
 
@@ -65,6 +66,9 @@ pub(crate) struct MacApplication {
     system_terminate_pending: bool,
     quick_terminal: Option<quick_terminal::QuickTerminal>,
     show_initial_window: bool,
+    restoration: Option<restore::Store>,
+    pending_restore: Option<restore::Snapshot>,
+    normal_frames: std::collections::HashMap<WindowId, restore::Frame>,
     hotkey_manager: Option<GlobalHotKeyManager>,
     hotkey_registration: quick_terminal::hotkey::Registration,
 }
@@ -84,8 +88,29 @@ impl MacApplication {
             let _ = tx.send(Command::Menu(event.id));
             let _ = menu_proxy.send_event(());
         }));
+        let restoration = if !explicit_window
+            && app.core.config.window.macos_initial_window
+            && app.core.config.window.macos_restore_windows
+        {
+            match restore::Store::open(&loom_protocol::transport::state_dir()) {
+                Ok(store) => store,
+                Err(error) => {
+                    log::warn!("could not open macOS window restoration: {error}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let pending_restore = restoration
+            .as_ref()
+            .and_then(|store| store.loaded())
+            .filter(|state| !state.groups.is_empty());
         Self {
             show_initial_window: explicit_window || app.core.config.window.macos_initial_window,
+            restoration,
+            pending_restore,
+            normal_frames: std::collections::HashMap::new(),
             last_config: app.core.config.clone(),
             last_session: app.core.session_name.clone(),
             last_remote: app.core.remote_config.clone(),
@@ -189,6 +214,7 @@ impl MacApplication {
         let mut app = self.windows.remove(index);
         self.directories.remove(&id);
         self.view_hooks.remove(&id);
+        self.normal_frames.remove(&id);
         if app.native_quick_terminal {
             self.quick_terminal = None;
         } else {
@@ -216,6 +242,7 @@ impl MacApplication {
         if self.windows.iter().all(|app| app.native_quick_terminal)
             && self.last_config.window.macos_quit_after_last_window_closed
         {
+            self.save_restoration(true);
             event_loop.exit();
         }
     }
@@ -316,6 +343,9 @@ impl MacApplication {
                 }
             }
             Command::Quit | Command::SystemQuit => {
+                // Capture before teardown; closing windows during Quit must not
+                // overwrite the snapshot with an empty application.
+                self.save_restoration(true);
                 let ids: Vec<_> = self
                     .windows
                     .iter()
@@ -396,6 +426,126 @@ impl MacApplication {
                 }
                 app.schedule_redraw();
             }
+        }
+    }
+
+    fn save_restoration(&mut self, quitting: bool) {
+        if self.restoration.as_ref().is_none_or(|store| store.frozen) {
+            return;
+        }
+        let normal_active = self
+            .active
+            .filter(|id| {
+                self.windows.iter().any(|app| {
+                    !app.native_quick_terminal
+                        && app.window.as_ref().is_some_and(|window| window.id() == *id)
+                })
+            })
+            .or_else(|| {
+                self.quick_terminal
+                    .as_ref()
+                    .and_then(|quick| quick.previous_window)
+            });
+        let snapshot = restore::capture(&self.windows, normal_active, &mut self.normal_frames);
+        if let Some(store) = &mut self.restoration {
+            store.observe(snapshot, std::time::Instant::now());
+            store.flush(quitting);
+            store.frozen = quitting;
+        }
+    }
+
+    fn next_native_deadline(&self) -> Option<std::time::Instant> {
+        let quick = self
+            .quick_terminal
+            .as_ref()
+            .and_then(|quick| quick.next_frame(std::time::Instant::now()));
+        let save = self.restoration.as_ref().and_then(|store| store.deadline());
+        quick.into_iter().chain(save).min()
+    }
+
+    fn restore_windows(&mut self, snapshot: restore::Snapshot, event_loop: &ActiveEventLoop) {
+        use objc2::{MainThreadMarker, rc::Retained};
+        use objc2_app_kit::{NSScreen, NSWindow, NSWindowOrderingMode};
+        use std::sync::Arc;
+        use winit::window::Window;
+        let mtm = MainThreadMarker::new().expect("macOS main thread");
+        let screens: Vec<_> = NSScreen::screens(mtm)
+            .iter()
+            .map(|screen| restore::Frame::from(screen.visibleFrame()))
+            .collect();
+        let initial = std::mem::take(&mut self.windows);
+        let mut selected_windows = Vec::new();
+        for (group_index, group) in snapshot.groups.into_iter().enumerate() {
+            let frame = group.frame.fit(&screens);
+            let mut parent: Option<Retained<NSWindow>> = None;
+            let mut selected: Option<Arc<Window>> = None;
+            for (tab_index, tab) in group.tabs.into_iter().enumerate() {
+                if tab.remote.is_none()
+                    && quick_terminal::session::is_quick_session(
+                        &loom_protocol::transport::state_dir(),
+                        &tab.session,
+                    )
+                {
+                    continue;
+                }
+                let mut app = App::new(self.last_config.clone(), tab.session.clone());
+                app.native_initially_hidden = true;
+                app.event_loop_proxy = Some(self.proxy.clone());
+                app.core.remote_config = tab.remote.map(|remote| RemoteConnectionConfig {
+                    host: remote.host,
+                    port: remote.port,
+                    ssh_port: remote.ssh_port,
+                });
+                app.core.recent_hosts = crate::recent_hosts::load();
+                app.resumed(event_loop);
+                if let Some(window) = &app.window
+                    && let Some(native) = native::native_window(window)
+                {
+                    native.setFrame_display((&frame).into(), false);
+                    self.normal_frames.insert(window.id(), frame.clone());
+                    if let Some(parent) = &parent {
+                        parent.addTabbedWindow_ordered(&native, NSWindowOrderingMode::Above);
+                    } else {
+                        parent = Some(native);
+                    }
+                    if selected.is_none() || tab_index == group.selected {
+                        selected = Some(window.clone());
+                    }
+                }
+                self.launched_sessions.push(tab.session);
+                self.windows.push(app);
+            }
+            if let Some(window) = selected
+                && let Some(native) = native::native_window(&window)
+            {
+                if let Some(tabs) = native.tabGroup() {
+                    tabs.setSelectedWindow(Some(&native));
+                }
+                window.set_visible(true);
+                if group.zoomed && !group.fullscreen {
+                    native.zoom(None);
+                }
+                if group.fullscreen {
+                    window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+                }
+                if group.minimized && !group.fullscreen {
+                    window.set_minimized(true);
+                }
+                selected_windows.push((group_index, window, group.minimized));
+            }
+        }
+        if self.windows.is_empty() {
+            self.windows = initial;
+            for app in &mut self.windows {
+                app.resumed(event_loop);
+            }
+        } else if let Some((_, window, _)) = selected_windows
+            .iter()
+            .find(|(index, _, minimized)| Some(*index) == snapshot.active_group && !minimized)
+            .or_else(|| selected_windows.iter().find(|(_, _, minimized)| !minimized))
+        {
+            window.focus_window();
+            self.active = Some(window.id());
         }
     }
 
@@ -631,6 +781,7 @@ impl MacApplication {
                 app.is_some_and(|app| app.native_quick_terminal),
             );
         }
+        self.save_restoration(false);
     }
 }
 
@@ -651,9 +802,13 @@ impl ApplicationHandler for MacApplication {
         if !self.show_initial_window {
             self.windows.clear();
         }
-        for app in &mut self.windows {
-            app.resumed(event_loop);
-            self.active = app.window.as_ref().map(|w| w.id());
+        if let Some(snapshot) = self.pending_restore.take() {
+            self.restore_windows(snapshot, event_loop);
+        } else {
+            for app in &mut self.windows {
+                app.resumed(event_loop);
+                self.active = app.window.as_ref().map(|w| w.id());
+            }
         }
         self.update_native_state();
     }
@@ -674,11 +829,7 @@ impl ApplicationHandler for MacApplication {
             flow = merge_control_flow(flow, event_loop.control_flow());
         }
         self.advance_quick_terminal();
-        if let Some(deadline) = self
-            .quick_terminal
-            .as_ref()
-            .and_then(|quick| quick.next_frame(std::time::Instant::now()))
-        {
+        if let Some(deadline) = self.next_native_deadline() {
             flow = merge_control_flow(flow, ControlFlow::WaitUntil(deadline));
         }
         event_loop.set_control_flow(flow);
@@ -779,11 +930,7 @@ impl ApplicationHandler for MacApplication {
         }
         self.advance_quick_terminal();
         self.update_native_state();
-        if let Some(deadline) = self
-            .quick_terminal
-            .as_ref()
-            .and_then(|quick| quick.next_frame(std::time::Instant::now()))
-        {
+        if let Some(deadline) = self.next_native_deadline() {
             event_loop.set_control_flow(merge_control_flow(
                 event_loop.control_flow(),
                 ControlFlow::WaitUntil(deadline),
@@ -792,6 +939,7 @@ impl ApplicationHandler for MacApplication {
     }
 
     fn exiting(&mut self, event_loop: &ActiveEventLoop) {
+        self.save_restoration(true);
         let ids: Vec<_> = self
             .windows
             .iter()

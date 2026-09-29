@@ -59,6 +59,7 @@ notify-rust = "4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 global-hotkey = "0.7"
+serde = { workspace = true }
 muda = "0.15.3"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSWindow", "NSView"] }

@@ -689,6 +689,15 @@ impl MacApplication {
                 previous_application,
             );
             self.active = Some(quick.id);
+            // Reversing a hide can reuse an NSWindow that is still key, so
+            // AppKit may not emit another Focused(true) event for this show.
+            let mtm = objc2::MainThreadMarker::new().expect("macOS main thread");
+            if !app.window_focused
+                && objc2_app_kit::NSApplication::sharedApplication(mtm).isActive()
+                && native::native_window(window).is_some_and(|window| window.isKeyWindow())
+            {
+                app.handle_window_focus_changed(true);
+            }
             app.schedule_redraw();
         }
         self.advance_quick_terminal();
@@ -738,7 +747,14 @@ impl MacApplication {
         {
             // Commit exactly one final grid/PTY resize; animation frames are
             // compositor previews, never intermediate terminal dimensions.
-            app.pending_resize = Some((window.inner_size(), now));
+            let size = window.inner_size();
+            // Hidden/intermediate Resized events are deliberately ignored. A
+            // zero-duration show after a reversed hide may emit no new event,
+            // so explicitly queue the final GPU extent as well as the PTY size.
+            if let Some(renderer) = &mut app.renderer {
+                renderer.resize(size.width, size.height);
+            }
+            app.pending_resize = Some((size, now));
             app.schedule_redraw();
         }
         if let Some(previous) = previous

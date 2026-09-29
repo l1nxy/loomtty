@@ -387,9 +387,26 @@ impl Default for AnimationConfig {
     }
 }
 
+/// macOS Option-key behavior. Invalid values fail config parsing.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MacosOptionAsAlt {
+    None,
+    #[default]
+    Left,
+    Right,
+    Both,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WindowConfig {
+    /// Which Option key sends terminal Alt; the other retains macOS text input.
+    pub macos_option_as_alt: MacosOptionAsAlt,
+    /// Enable Secure Event Input while a focused terminal reads a password.
+    pub macos_secure_input: bool,
+    /// By default keep the application in the Dock after closing its last window.
+    pub macos_quit_after_last_window_closed: bool,
     pub width: f64,
     pub height: f64,
     pub title: String,
@@ -398,6 +415,9 @@ pub struct WindowConfig {
 impl Default for WindowConfig {
     fn default() -> Self {
         WindowConfig {
+            macos_option_as_alt: MacosOptionAsAlt::Left,
+            macos_secure_input: true,
+            macos_quit_after_last_window_closed: false,
             width: 1024.0,
             height: 768.0,
             title: "loomtty".to_string(),
@@ -1565,5 +1585,33 @@ mod font_feature_tests {
         assert_eq!(cfg.adjust_underline_position, 0.0);
         assert_eq!(cfg.adjust_strikethrough_position, 0.0);
         assert_eq!(cfg.weight, None);
+    }
+}
+
+#[cfg(test)]
+mod macos_window_tests {
+    use super::*;
+
+    #[test]
+    fn old_window_config_keeps_native_defaults() {
+        let config: WindowConfig = toml::from_str("width = 1280.0").unwrap();
+        assert_eq!(config.macos_option_as_alt, MacosOptionAsAlt::Left);
+        assert!(config.macos_secure_input);
+        assert!(!config.macos_quit_after_last_window_closed);
+    }
+
+    #[test]
+    fn option_key_policy_is_validated() {
+        for (value, expected) in [
+            ("none", MacosOptionAsAlt::None),
+            ("left", MacosOptionAsAlt::Left),
+            ("right", MacosOptionAsAlt::Right),
+            ("both", MacosOptionAsAlt::Both),
+        ] {
+            let config: WindowConfig =
+                toml::from_str(&format!("macos_option_as_alt = {value:?}")).unwrap();
+            assert_eq!(config.macos_option_as_alt, expected);
+        }
+        assert!(toml::from_str::<WindowConfig>("macos_option_as_alt = 'typo'").is_err());
     }
 }

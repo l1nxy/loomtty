@@ -20,6 +20,8 @@ there's no separate GUI binary.
 ```sh
 cargo build --release -p loomtty -p loomtty-server
 dist/macos/make-app.sh                      # → target/macos/loomtty.app + .dmg
+# Faster local app testing without creating a DMG:
+dist/macos/make-app.sh --bindir "$PWD/target/debug" --app-only
 # real signing identity instead of ad-hoc:
 dist/macos/make-app.sh --sign-id "Developer ID Application: Name (TEAMID)"
 ```
@@ -37,3 +39,101 @@ then `xcrun stapler staple loomtty.app` before building the `.dmg`.
 The [`Release`](../../.github/workflows/release.yml) workflow runs `make-app.sh`
 on the `macos-latest` (arm64) runner for every `v*` tag and attaches the `.dmg`
 to the GitHub Release.
+
+## Native application behavior
+
+The macOS client uses AppKit windows, native tab groups, the system menu bar,
+traffic lights, and native fullscreen/Spaces, with the existing Rust client
+core and Metal renderer inside each window. Each new window or native tab gets
+an independent loom session; the session/connection switcher remains available
+inside it. New windows/tabs inherit the active window's remote connection.
+
+| Shortcut | Behavior |
+| --- | --- |
+| Cmd+N / Cmd+T | New window / native tab |
+| Cmd+Shift+W | Close the current tab/window and detach; keep its session running |
+| Cmd+W | Close the active terminal pane (ends that pane's process) |
+| Cmd+D / Cmd+Shift+D | New column / stacked tile |
+| Cmd+Shift+P | Command palette |
+| Cmd+Q | Quit all client windows; leave server sessions running |
+| Cmd+, / Cmd+Shift+, | Settings / reload configuration in every window |
+| Cmd+C / Cmd+V / Cmd+F | Copy / guarded paste / find |
+| Cmd+A | Select the active terminal's scrollback and screen |
+| Cmd+= / Cmd+- / Cmd+0 | Increase / decrease / reset font size (temporary) |
+| Cmd+Shift+[ / Cmd+Shift+] | Previous / next native tab |
+| Cmd+M / Ctrl+Cmd+F | Minimize / native fullscreen |
+| Cmd+H / Option+Cmd+H | Hide loomtty / hide other applications |
+
+Terminal menu shortcuts (Copy, Paste, Find, Close Pane, etc.) follow
+`keys.direct_bindings`, including custom mappings and removals. Application
+and window shortcuts in the table are reserved by the native menu. The Window
+menu also supports moving a tab into a window, merging windows, showing the
+tab bar, and bringing all windows forward. AppKit's tab-bar **+** creates a tab.
+
+Closing the last window keeps loomtty running in the Dock. Clicking the Dock
+icon reopens the last session, or brings an existing window forward. Closing
+one window or detaching one session does not exit sibling windows. Local pane
+working directories populate the titlebar proxy icon; remote paths are never
+interpreted as local files.
+
+```toml
+[window]
+macos_option_as_alt = "left" # "none", "left", "right", or "both"
+macos_secure_input = true
+macos_quit_after_last_window_closed = false
+```
+
+These settings hot reload. By default left Option sends terminal Alt and right
+Option retains native text entry. Secure Event Input is enabled only while a
+focused terminal is marked as reading a password by the server; it is released
+on focus loss, modal UI, password completion, window close, and application
+exit. This relies on the existing terminal password detection, not on matching
+prompt text. The native titlebar follows the configured terminal background's
+light/dark contrast.
+
+Default interactive shells start as login shells on macOS so Finder launches
+load PATH and login configuration. Explicit commands and configured shell
+programs retain their arguments. A bundled launch from `/` starts in the home directory;
+CLI working directories are preserved.
+
+This does **not** claim full [Ghostty feature parity](https://ghostty.org/docs/features).
+Quick Terminal/global hotkeys, Quick Look/Force Touch, AppleScript/App Intents,
+Finder Services providers, VoiceOver terminal content, automatic terminal theme
+switching, and OS window geometry restoration remain future work. Terminal
+splits and the settings panel still use loom's GPU UI. Session restoration is
+provided by the existing loom server/session layer.
+
+### Manual regression checks
+
+- Open multiple windows and native tabs; type different commands in each.
+  Switch tabs, move a tab to a window, and merge windows. Input and output must
+  stay associated with the correct session.
+- Close one tab/window, then the last window; reopen from the Dock. The process
+  remains alive and the server session survives. Cmd+Q and Dock → Quit exit
+  the client without killing the server.
+- Use menu Copy/Paste/Find, paste into search/palette, and verify large-paste
+  confirmation. Drag paths containing spaces/apostrophes into the terminal;
+  an open modal must not let a drop type into a hidden terminal.
+- Compose Chinese/Japanese text, cancel composition, switch windows, and type
+  again. Verify Option-key modes and candidate placement on Retina displays.
+- Exercise a password prompt, switch away/back, and close its window; inspect
+  Secure Input ownership with `ioreg -l -w 0 | rg SecureInput`.
+- Test fullscreen/Spaces, minimize, Hide/Show, resize and move between displays.
+  Test Finder launch, shell PATH, a custom theme, and live config reload.
+
+### Validation for this implementation
+
+On Apple Silicon macOS, `cargo test --workspace` passed **1,601 tests**
+(12 documentation examples ignored). The affected client/config tests were
+rerun after the last window-tabbing and shortcut adjustments.
+`cargo clippy --workspace --all-targets` completed with existing warnings;
+`cargo fmt`, plist validation, script syntax validation, and ad-hoc bundle
+signature verification also completed.
+
+A bundled startup smoke test exposed the pinned winit fork's requirement to
+retain its own application delegate. The integration now extends that delegate
+without changing its ivars or replacing its lifecycle handlers. The process
+stayed alive after that correction, but the desktop was locked, so window
+presentation, menu clicks, tab interactions, Secure Input transitions, and
+Dock reopen still need the manual checks above. Compilation and unit tests
+are not a substitute for those checks.

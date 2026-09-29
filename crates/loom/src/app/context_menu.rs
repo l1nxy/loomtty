@@ -148,6 +148,10 @@ impl App {
             ..loom_config::theme::ThemeConfig::default()
         };
         self.core.config.theme.resolve_preset();
+        #[cfg(target_os = "macos")]
+        if let Some(window) = &self.window {
+            super::apply_macos_window_config(window, &self.core.config);
+        }
         self.cached_color_table = loom_render::terminal::ColorTable::new(&self.core.config);
         self.cached_resolved_theme.reload(&self.core.config.theme);
         // Pane tile caches embed colour values derived from the old

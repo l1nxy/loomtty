@@ -67,7 +67,13 @@ impl App {
                 self.core.ime.preedit_cursor = cursor.map(|(start, _)| start);
                 self.schedule_redraw();
             }
-            Ime::Enabled | Ime::Disabled => {}
+            Ime::Disabled => {
+                self.core.ime.preedit_active = false;
+                self.core.ime.preedit_text.clear();
+                self.core.ime.preedit_cursor = None;
+                self.schedule_redraw();
+            }
+            Ime::Enabled => {}
         }
     }
 }
@@ -80,6 +86,29 @@ mod tests {
 
     fn make_app() -> App {
         App::new(LoomConfig::default(), "test-session")
+    }
+
+    #[test]
+    fn cancelled_composition_does_not_block_subsequent_input() {
+        let mut app = make_app();
+        app.handle_ime(Ime::Preedit("ni".into(), Some((2, 2))));
+        app.handle_ime(Ime::Disabled);
+        assert!(!app.core.ime.preedit_active);
+        assert!(app.core.ime.preedit_text.is_empty());
+        assert_eq!(app.core.ime.preedit_cursor, None);
+        app.core.open_command_palette();
+        app.handle_ime(Ime::Commit("你好".into()));
+        assert_eq!(app.core.command_palette.unwrap().query, "你好");
+    }
+
+    #[test]
+    fn focus_loss_clears_composition_and_stale_modifiers() {
+        let mut app = make_app();
+        app.handle_ime(Ime::Preedit("ni".into(), Some((2, 2))));
+        app.modifiers = winit::keyboard::ModifiersState::SUPER;
+        app.handle_window_focus_changed(false);
+        assert!(!app.core.ime.preedit_active);
+        assert!(app.modifiers.is_empty());
     }
 
     #[test]

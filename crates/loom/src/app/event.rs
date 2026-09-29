@@ -84,6 +84,8 @@ impl App {
             // first keystrokes went there is bad UX. Drag teardown handles the
             // case where the finalising mouse-up lands in another window.
             self.enter_modal_close_peers(ModalKind::None);
+            self.modifiers = winit::keyboard::ModifiersState::empty();
+            self.handle_ime(winit::event::Ime::Disabled);
         }
 
         self.schedule_redraw();
@@ -444,9 +446,7 @@ impl ApplicationHandler for App {
 
         #[cfg(target_os = "macos")]
         {
-            use winit::platform::macos::{OptionAsAlt, WindowExtMacOS};
-            // OnlyLeft: left Option = Alt (for keybindings), right Option = special chars (é, ñ, #)
-            window.set_option_as_alt(OptionAsAlt::OnlyLeft);
+            super::apply_macos_window_config(&window, &self.core.config);
         }
         let dpi_scale = window.scale_factor();
         let mut renderer = loom_gpu::Renderer::new(window.clone(), &self.core.config.render)
@@ -732,6 +732,9 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::DroppedFile(path) => {
+                if self.modal_captures_keyboard() {
+                    return;
+                }
                 let quoted = super::clipboard_image::quote_path_for_shell(&path.to_string_lossy());
                 let text = format!("{quoted} ");
                 self.send_paste_to_active_pane(text.as_bytes());

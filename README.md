@@ -12,8 +12,9 @@ workspaces, a built-in browser client, and remote attach over a binary protocol.
 ![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20Windows%20%7C%20macOS%20%28WIP%29-blue)
 
 > **🚧 Early and experimental (v0.1).** Expect rough edges — not everything is
-> guaranteed to work yet. Primarily developed on Linux and Windows; **macOS is
-> untested, treat it as work in progress.**
+> guaranteed to work yet. macOS has an [AppKit application shell](dist/macos/README.md#native-application-behavior)
+> with native menus, windows and tabs; desktop interaction validation is still
+> in progress.
 
 https://github.com/user-attachments/assets/6b078921-1065-4867-a412-e2f9c949fb9a
 

@@ -1947,6 +1947,28 @@ impl App {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn apply_macos_window_config(window: &Window, config: &LoomConfig) {
+    use loom_config::config::MacosOptionAsAlt;
+    use winit::platform::macos::{OptionAsAlt, WindowExtMacOS};
+    // The creation attribute forces NSWindowTabbingModePreferred in winit.
+    // Set only the identifier here so Cmd+N remains an independent window.
+    window.set_tabbing_identifier("loomtty");
+    window.set_option_as_alt(match config.window.macos_option_as_alt {
+        MacosOptionAsAlt::None => OptionAsAlt::None,
+        MacosOptionAsAlt::Left => OptionAsAlt::OnlyLeft,
+        MacosOptionAsAlt::Right => OptionAsAlt::OnlyRight,
+        MacosOptionAsAlt::Both => OptionAsAlt::Both,
+    });
+    // Match native titlebar/traffic-light contrast to the terminal background.
+    let [r, g, b, _] = loom_config::theme::ThemeConfig::parse_color(&config.theme.background);
+    window.set_theme(Some(if 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 {
+        winit::window::Theme::Light
+    } else {
+        winit::window::Theme::Dark
+    }));
+}
+
 #[cfg(test)]
 mod tests_app_layout {
     use super::App;

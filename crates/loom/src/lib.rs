@@ -17,6 +17,8 @@ mod connection;
 mod control;
 mod grid;
 mod init;
+#[cfg(target_os = "macos")]
+mod macos;
 mod recent_hosts;
 mod remote_validate;
 mod web;
@@ -242,7 +244,7 @@ pub fn run(cli: CliCommand) -> Result<()> {
         );
         remember_last_session(&session_name);
 
-        let event_loop = EventLoop::new()?;
+        let event_loop = create_event_loop()?;
         let mut app = App::new(config, session_name);
         app.event_loop_proxy = Some(event_loop.create_proxy());
         app.core.recent_hosts = recent_hosts::load();
@@ -253,7 +255,7 @@ pub fn run(cli: CliCommand) -> Result<()> {
         });
         // Recent-host recording is deferred to connect_remote_session()
         // so that only successfully initiated connections get persisted.
-        event_loop.run_app(&mut app)?;
+        run_gui(event_loop, app)?;
         return Ok(());
     }
 
@@ -278,11 +280,11 @@ pub fn run(cli: CliCommand) -> Result<()> {
         remember_last_session(&session_name);
     }
 
-    let event_loop = EventLoop::new()?;
+    let event_loop = create_event_loop()?;
     let mut app = App::new(config, session_name);
     app.event_loop_proxy = Some(event_loop.create_proxy());
     app.core.recent_hosts = recent_hosts::load();
-    event_loop.run_app(&mut app)?;
+    run_gui(event_loop, app)?;
     Ok(())
 }
 
@@ -407,6 +409,29 @@ fn remember_last_session(session_name: &str) {
         let _ = std::fs::create_dir_all(parent);
     }
     let _ = std::fs::write(path, session_name);
+}
+
+fn create_event_loop() -> Result<EventLoop<()>> {
+    let mut builder = EventLoop::builder();
+    #[cfg(target_os = "macos")]
+    {
+        use winit::platform::macos::EventLoopBuilderExtMacOS;
+        builder.with_default_menu(false);
+    }
+    Ok(builder.build()?)
+}
+
+fn run_gui(event_loop: EventLoop<()>, app: App) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    macos::prepare_launch_directory();
+    #[cfg(target_os = "macos")]
+    let mut app = macos::MacApplication::new(app, event_loop.create_proxy());
+    #[cfg(not(target_os = "macos"))]
+    let mut app = app;
+    event_loop.run_app(&mut app)?;
+    #[cfg(target_os = "macos")]
+    app.finish_termination();
+    Ok(())
 }
 
 #[cfg(test)]

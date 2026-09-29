@@ -779,6 +779,10 @@ impl App {
                 let background_image_changed = self.core.config.appearance.background_image
                     != new_config.appearance.background_image;
                 self.core.config = new_config;
+                #[cfg(target_os = "macos")]
+                if let Some(window) = &self.window {
+                    super::apply_macos_window_config(window, &self.core.config);
+                }
                 self.cached_color_table = loom_render::terminal::ColorTable::new(&self.core.config);
                 self.cached_resolved_theme.reload(&self.core.config.theme);
                 self.reload_input_config();

@@ -436,6 +436,7 @@ pub struct ReconnectPlan {
 }
 
 /// Parameters for a remote SSH tunnel connection.
+#[derive(Clone)]
 pub struct RemoteConnectionConfig {
     pub host: String,
     pub port: u16,

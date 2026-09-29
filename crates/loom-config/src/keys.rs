@@ -115,9 +115,14 @@ impl Default for KeybindConfig {
             direct_bindings.insert("super+f".to_string(), "open_search".to_string());
             direct_bindings.insert("super+c".to_string(), "clipboard_copy".to_string());
             direct_bindings.insert("super+v".to_string(), "clipboard_paste".to_string());
-            direct_bindings.insert("super+q".to_string(), "quit".to_string());
             direct_bindings.insert("super+w".to_string(), "close_pane".to_string());
-            direct_bindings.insert("super+n".to_string(), "create_pane".to_string());
+            direct_bindings.insert("super+d".to_string(), "new_column_right".to_string());
+            direct_bindings.insert("super+shift+d".to_string(), "new_tile_below".to_string());
+            direct_bindings.insert(
+                "super+shift+p".to_string(),
+                "toggle_command_palette".to_string(),
+            );
+            // Cmd+N/T/Q and window management are owned by the native app menu.
         }
         #[cfg(not(target_os = "macos"))]
         {

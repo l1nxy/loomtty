@@ -138,6 +138,11 @@ impl Pty {
             CommandBuilder::new(shell_path)
         };
 
+        #[cfg(target_os = "macos")]
+        if shell.is_empty() {
+            configure_macos_login_shell(&mut cmd, command);
+        }
+
         // Ensure child knows its terminal type.
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
@@ -395,5 +400,49 @@ impl Drop for Pty {
         }
         // Reader thread exits once the pipe returns EOF/error after
         // ClosePseudoConsole completes (or fd close on Unix).
+    }
+}
+
+/// Finder launches do not inherit an interactive shell's PATH. A login shell
+/// reads /etc/zprofile (path_helper), ~/.zprofile, or the equivalent startup
+/// files. Explicit commands and configured shell programs keep their own argv.
+#[cfg(target_os = "macos")]
+fn configure_macos_login_shell(cmd: &mut CommandBuilder, command: Option<&str>) {
+    if command.is_some_and(|command| !command.is_empty()) {
+        return;
+    }
+    let shell = cmd
+        .get_argv()
+        .first()
+        .and_then(|program| std::path::Path::new(program).file_name())
+        .and_then(|name| name.to_str());
+    if matches!(shell, Some("zsh" | "bash" | "sh" | "fish" | "ksh" | "dash")) {
+        cmd.arg("-l");
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    use super::*;
+
+    #[test]
+    fn standard_interactive_shells_are_login_shells() {
+        for shell in ["/bin/zsh", "/bin/bash", "/opt/homebrew/bin/fish"] {
+            let mut cmd = CommandBuilder::new(shell);
+            configure_macos_login_shell(&mut cmd, None);
+            assert_eq!(cmd.get_argv()[1], "-l");
+        }
+    }
+
+    #[test]
+    fn explicit_commands_and_custom_programs_keep_their_arguments() {
+        let mut cmd = CommandBuilder::new("sh");
+        cmd.args(["-c", "printf hello"]);
+        let original = cmd.get_argv().clone();
+        configure_macos_login_shell(&mut cmd, Some("printf hello"));
+        assert_eq!(*cmd.get_argv(), original);
+        let mut cmd = CommandBuilder::new("custom-shell");
+        configure_macos_login_shell(&mut cmd, None);
+        assert_eq!(cmd.get_argv().len(), 1);
     }
 }

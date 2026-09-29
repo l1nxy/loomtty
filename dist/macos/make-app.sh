@@ -6,7 +6,7 @@
 # identity), and packages a drag-to-Applications .dmg.
 #
 # Usage (run from anywhere):
-#   dist/macos/make-app.sh [--version X.Y.Z] [--bindir DIR] [--outdir DIR] [--sign-id ID]
+#   dist/macos/make-app.sh [--version X.Y.Z] [--bindir DIR] [--outdir DIR] [--sign-id ID] [--app-only]
 #
 # Defaults: version from Cargo.toml, bindir=target/release, outdir=target/macos,
 # sign-id="-" (ad-hoc).
@@ -19,12 +19,14 @@ VERSION=""
 BIN_DIR="$REPO_ROOT/target/release"
 OUT_DIR="$REPO_ROOT/target/macos"
 SIGN_ID="-"
+APP_ONLY=false
 while [ $# -gt 0 ]; do
     case "$1" in
         --version) VERSION="$2"; shift 2 ;;
         --bindir)  BIN_DIR="$2"; shift 2 ;;
         --outdir)  OUT_DIR="$2"; shift 2 ;;
         --sign-id) SIGN_ID="$2"; shift 2 ;;
+        --app-only) APP_ONLY=true; shift ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -63,6 +65,11 @@ done
 codesign --force --timestamp=none --sign "$SIGN_ID" "$APP/Contents/MacOS/loomtty-server"
 codesign --force --timestamp=none --sign "$SIGN_ID" "$APP"
 codesign --verify --deep --strict "$APP" && echo "codesign: verified"
+
+if [ "$APP_ONLY" = true ]; then
+    echo "Built: $APP"
+    exit 0
+fi
 
 # ── .dmg (drag-to-Applications) ─────────────────────────────────────────
 DMG="$OUT_DIR/loomtty-$VERSION-macos-arm64.dmg"

@@ -57,6 +57,12 @@ getrandom = "0.4.2"
 [target.'cfg(any(unix, windows))'.dependencies]
 notify-rust = "4"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = "0.15.3"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSWindow", "NSView"] }
+objc2-foundation = { version = "0.3", features = ["NSObject", "NSString"] }
+
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
 

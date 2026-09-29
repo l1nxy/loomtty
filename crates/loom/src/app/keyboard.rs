@@ -47,7 +47,7 @@ impl App {
         }
     }
 
-    fn sanitize_overlay_input(text: &str) -> Option<String> {
+    pub(super) fn sanitize_overlay_input(text: &str) -> Option<String> {
         let mut normalized = String::with_capacity(text.len());
         let mut pending_space = false;
 

@@ -278,11 +278,24 @@ read older history. Output notifications are coalesced; password-input panes
 are cleared immediately and concealed cells are exposed as spaces. Hidden
 Quick Terminal panes are removed from the accessibility tree.
 
+The GPU chrome also exposes native accessibility controls: pane tabs, session
+and workspace buttons, overview terminals, settings fields and dropdowns,
+command-palette and search input, context-menu items, paste confirmation,
+keyboard help, and connection status. Long settings/menu/result lists provide
+adjustable scroll controls. Field labels, descriptions, values, and bounds come
+from the existing settings schema and UI layout. A covered dialog's controls
+are removed until it becomes visible again.
+
+Actions return through the normal UI dispatcher. Closing a dialog, replacing
+a menu command, or changing a paste payload invalidates old actions. Input
+fields support setting their text value; ordinary buttons use their press
+action and do not claim keyboard focus. The adapter caches unchanged controls
+and does not add a polling timer.
+
 This does **not** claim full [Ghostty feature parity](https://ghostty.org/docs/features).
-App Intents and accessible controls for GPU settings/overlays remain
-outstanding. The terminal text adapter still needs live VoiceOver acceptance
-testing. Terminal splits and settings use loom's GPU UI; the native shell and
-server session model remain integrated with it.
+App Intents remains outstanding. The accessibility adapter still needs live
+VoiceOver acceptance testing. Terminal splits and settings use loom's GPU UI;
+the native shell and server session model remain integrated with it.
 
 ### Manual regression checks
 
@@ -292,6 +305,12 @@ server session model remain integrated with it.
   cursor/selection announcements during output and focus changes. A password
   prompt must expose no text, and hidden Quick Terminal panes must disappear.
   Close/reconnect panes and verify old accessibility elements become invalid.
+- Use VoiceOver to open Settings, change a toggle/stepper/dropdown, and scroll
+  to the last field. Read keyboard help and connection errors. Edit the command
+  palette and Find fields, invoke results, and activate pane tabs in all three
+  tab-bar positions. In overview, choose a terminal. Open a large-paste dialog
+  over the palette and verify only the confirmation controls are reachable;
+  cancelling must restore the palette. Repeat after moving between displays.
 - Select text and invoke an installed text Service from the application menu.
   Test send-only, return-only, and text-transform services, with Chinese and
   emoji. Verify returned text uses bracketed paste and large-paste confirmation.
@@ -350,9 +369,9 @@ server session model remain integrated with it.
 
 ### Validation for this implementation
 
-On Apple Silicon macOS, `cargo test --workspace` passed **1,644 tests**
+On Apple Silicon macOS, `cargo test --workspace` passed **1,656 tests**
 (12 documentation examples and one bundle-only test ignored), including
-**333 client tests**. Coverage includes Services request identity, shared
+**345 client tests**. Coverage includes Services request identity, shared
 paste-path regressions, Quick Terminal geometry,
 animation reversal, shortcut replacement, session exclusion, appearance
 switching, user color overrides, dictionary query bounds and password/modal
@@ -361,6 +380,10 @@ displays, configuration validation, Finder literal-path handling, scripting
 identity/backpressure, and accessibility Unicode/range/geometry handling.
 The accessibility cache tests also verify that renderer damage cannot cause
 idle polling and that password state clears cached text without delay.
+Chrome regressions check modal layering, stale commands/paste payloads, text
+editing, settings scroll bounds, and pointer/accessibility geometry across tab
+bar positions. Cocoa callbacks for detached terminal/control objects are tested
+without launching the UI.
 `cargo clippy --workspace --all-targets` completed with existing warnings;
 `cargo fmt`, plist validation, script syntax validation, and ad-hoc bundle
 signature verification also completed.

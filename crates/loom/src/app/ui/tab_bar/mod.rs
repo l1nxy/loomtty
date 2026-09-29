@@ -106,6 +106,27 @@ impl TabBarComponent {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    pub(super) fn accessibility(&self, cx: &UiContext<'_>) -> Vec<super::accessibility::Node> {
+        use super::accessibility::{Node, Role};
+        let root = self.build_tree(&Self::render_cx(cx));
+        super::types::with_hit_layout(&root, cx, |layout| {
+            layout
+                .nodes()
+                .iter()
+                .filter_map(|element| {
+                    let id = element.hit_id?;
+                    let pane = pane_id_from_hit_id(Some(id))?;
+                    let tab = self.tabs.iter().find(|tab| tab.pane_id == pane)?;
+                    let mut node = Node::new(id, &tab.label, element.bounds, Role::Button);
+                    node.press = Some(UiAction::FocusPaneTab(pane));
+                    node.selected = tab.active;
+                    Some(node)
+                })
+                .collect()
+        })
+    }
+
     fn render_cx<'a>(cx: &'a UiContext<'_>) -> RenderCtx<'a> {
         RenderCtx {
             theme: cx.theme,

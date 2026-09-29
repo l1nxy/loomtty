@@ -13,9 +13,11 @@ use loom_ui::{
     text, uniform_list,
 };
 
-const HIT_CLOSE: u64 = 1;
-const HIT_PANEL: u64 = 2;
-const HIT_ENTRY_BASE: u64 = 1_000_000;
+pub(super) const HIT_CLOSE: u64 = 1;
+pub(super) const HIT_PANEL: u64 = 2;
+pub(super) const HIT_QUERY: u64 = 3;
+pub(super) const HIT_SCROLL: u64 = 4;
+pub(super) const HIT_ENTRY_BASE: u64 = 1_000_000;
 
 fn entry_hit_id(entry_idx: usize) -> u64 {
     HIT_ENTRY_BASE + entry_idx as u64
@@ -175,6 +177,12 @@ impl PaletteComponent {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    pub(super) fn accessibility_layout(&self, cx: &UiContext<'_>) -> loom_ui::LayoutSnapshot {
+        let root = self.build_tree(&Self::render_cx(cx));
+        super::types::with_hit_layout(&root, cx, Clone::clone)
+    }
+
     pub(super) fn hit_test(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> UiPaletteHit {
         let render_cx = Self::render_cx(cx);
         let root = self.build_tree(&render_cx);
@@ -237,6 +245,7 @@ impl PaletteComponent {
         let pill_h_inset = tokens::SPACE_2;
         let pill_h = (input_row_h - pill_v_inset * 2.0).max(self.ui_line_h);
         let input_pill = div()
+            .hit_id(HIT_QUERY)
             .flex_1()
             .h(pill_h)
             .flex_row()
@@ -366,6 +375,7 @@ impl PaletteComponent {
                     .w(track_w)
                     .h(track_h)
                     .translate(-tokens::SPACE_2, 2.0)
+                    .hit_id(HIT_SCROLL)
                     .bg(tokens::tint(border_color, tokens::ALPHA_SCROLL_TRACK))
                     .child(
                         div()

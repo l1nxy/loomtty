@@ -74,7 +74,10 @@ impl App {
         );
     }
 
-    fn search_bar_component(&self, tiles: &[(u64, GeoRect, bool)]) -> Option<SearchBarComponent> {
+    pub(in crate::app) fn search_bar_component(
+        &self,
+        tiles: &[(u64, GeoRect, bool)],
+    ) -> Option<SearchBarComponent> {
         let Some(search) = &self.core.search_state else {
             return None;
         };

@@ -265,7 +265,7 @@ impl PaletteEntry {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum PaletteEntryKind {
     /// Non-selectable section header for visual grouping.
     SectionHeader(String),

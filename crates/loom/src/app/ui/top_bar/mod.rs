@@ -305,6 +305,47 @@ impl TopBarComponent {
         Some(top_bar_hit_from_id(ui_hit_id(&root, cx, mx, my)))
     }
 
+    #[cfg(target_os = "macos")]
+    pub(super) fn accessibility(&self, cx: &UiContext<'_>) -> Vec<super::accessibility::Node> {
+        use super::accessibility::{Node, Role};
+        let root = self.build_hit_tree(self.bar_rect(cx), cx);
+        super::types::with_hit_layout(&root, cx, |layout| {
+            layout
+                .nodes()
+                .iter()
+                .filter_map(|element| {
+                    let id = element.hit_id?;
+                    let (label, action, selected) = match top_bar_hit_from_id(Some(id)) {
+                        UiTopBarHit::Session => (
+                            format!("Session: {}", self.session_text),
+                            UiAction::OpenSessionPalette,
+                            false,
+                        ),
+                        UiTopBarHit::Workspace => (
+                            self.workspace_label.clone(),
+                            UiAction::CycleWorkspace,
+                            false,
+                        ),
+                        UiTopBarHit::Mode => (
+                            format!("Overview; {}", self.mode_label),
+                            UiAction::ToggleOverview,
+                            self.is_overview,
+                        ),
+                        UiTopBarHit::PaneTab(pane) => {
+                            let tab = self.pane_tabs.iter().find(|tab| tab.pane_id == pane)?;
+                            (tab.label.clone(), UiAction::FocusPaneTab(pane), tab.active)
+                        }
+                        UiTopBarHit::Background => return None,
+                    };
+                    let mut node = Node::new(id, label, element.bounds, Role::Button);
+                    node.press = Some(action);
+                    node.selected = selected;
+                    Some(node)
+                })
+                .collect()
+        })
+    }
+
     pub(super) fn hit_test(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiTopBarHit> {
         let rect = self.bar_rect(cx);
         self.hit_test_in_rect(rect, mx, my, cx)

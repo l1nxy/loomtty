@@ -232,7 +232,7 @@ pub(super) fn ui_hit_bounds(
 /// it skips `Element::paint`, so callers that only need bounds/ids
 /// don't pay for SDF rect emission, glyph shaping, or paint-time
 /// transform composition.
-fn with_hit_layout<R>(
+pub(super) fn with_hit_layout<R>(
     root: &impl loom_ui::Element,
     cx: &UiContext<'_>,
     f: impl FnOnce(&loom_ui::LayoutSnapshot) -> R,
@@ -279,6 +279,8 @@ pub(crate) struct UiHoverOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum UiAction {
+    #[cfg(target_os = "macos")]
+    CloseSearch,
     OpenSessionPalette,
     ToggleOverview,
     CycleWorkspace,

@@ -181,6 +181,34 @@ impl HelpOverlayComponent {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    pub(super) fn accessibility(&self, cx: &UiContext<'_>) -> super::accessibility::Model {
+        let root = self.build_tree(&Self::render_cx(cx));
+        super::types::with_hit_layout(&root, cx, |layout| {
+            let sections = self
+                .sections
+                .iter()
+                .enumerate()
+                .filter_map(|(index, section)| {
+                    let rect = layout
+                        .nodes()
+                        .iter()
+                        .find(|node| node.hit_id == Some(1000 + index as u64))?
+                        .bounds;
+                    let mut lines = vec![section.title.clone()];
+                    lines.extend(
+                        section
+                            .rows
+                            .iter()
+                            .map(|(key, label)| format!("{key}: {label}")),
+                    );
+                    Some((lines.join("\n"), rect))
+                })
+                .collect();
+            super::accessibility::help_model(sections)
+        })
+    }
+
     pub(crate) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let render_cx = Self::render_cx(cx);
         let root = <Self as Render>::render(self, &render_cx).into_element();
@@ -202,7 +230,10 @@ impl HelpOverlayComponent {
         for col in &self.columns {
             let mut column = div().flex_col().gap(tokens::SPACE_3).w(self.col_content_w);
             for &sec_idx in col {
-                column = column.child(self.build_section(cx, &self.sections[sec_idx]));
+                column = column.child(
+                    self.build_section(cx, &self.sections[sec_idx])
+                        .hit_id(1000 + sec_idx as u64),
+                );
             }
             body = body.child(column);
         }

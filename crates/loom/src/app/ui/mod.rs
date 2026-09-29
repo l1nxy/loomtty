@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+pub(crate) mod accessibility;
 pub(super) mod bell_flash;
 pub(crate) mod connection_status;
 pub(crate) mod context_menu;

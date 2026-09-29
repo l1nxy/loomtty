@@ -25,7 +25,7 @@ struct State {
     interest: HashMap<u64, Instant>,
 }
 thread_local! { static STATE: RefCell<State> = RefCell::default(); }
-fn touch(root: usize) {
+pub(super) fn touch(root: usize) {
     let wake = STATE.with(|state| {
         let mut state = state.borrow_mut();
         let root = state.roots.entry(root).or_default();
@@ -207,13 +207,13 @@ impl LoomAccessibleTerminal {
         unsafe { msg_send![super(Self::alloc().set_ivars(key)), init] }
     }
 }
-fn contains(rect: NSRect, point: NSPoint) -> bool {
+pub(super) fn contains(rect: NSRect, point: NSPoint) -> bool {
     point.x >= rect.origin.x
         && point.y >= rect.origin.y
         && point.x < rect.origin.x + rect.size.width
         && point.y < rect.origin.y + rect.size.height
 }
-fn intersection(a: NSRect, b: NSRect) -> NSRect {
+pub(super) fn intersection(a: NSRect, b: NSRect) -> NSRect {
     let x = a.origin.x.max(b.origin.x);
     let y = a.origin.y.max(b.origin.y);
     let right = (a.origin.x + a.size.width).min(b.origin.x + b.size.width);
@@ -305,20 +305,22 @@ extern "C" fn root_role(_this: &AnyObject, _sel: Sel) -> *mut NSString {
 extern "C" fn root_label(this: &AnyObject, _sel: Sel) -> *mut NSString {
     let key = this as *const AnyObject as usize;
     touch(key);
-    let label = STATE.with(|state| {
-        state
-            .borrow()
-            .roots
-            .get(&key)
-            .map(|r| r.label.clone())
-            .unwrap_or_else(|| "Terminal panes".into())
+    let label = super::chrome::label(key).unwrap_or_else(|| {
+        STATE.with(|state| {
+            state
+                .borrow()
+                .roots
+                .get(&key)
+                .map(|r| r.label.clone())
+                .unwrap_or_else(|| "Terminal panes".into())
+        })
     });
     Retained::autorelease_ptr(NSString::from_str(&label))
 }
 extern "C" fn children(this: &AnyObject, _sel: Sel) -> *mut NSArray<AnyObject> {
     let key = this as *const AnyObject as usize;
     touch(key);
-    let children = STATE.with(|state| {
+    let mut children = STATE.with(|state| {
         let state = state.borrow();
         state
             .roots
@@ -331,11 +333,15 @@ extern "C" fn children(this: &AnyObject, _sel: Sel) -> *mut NSArray<AnyObject> {
             })
             .unwrap_or_default()
     });
+    children.extend(super::chrome::children(key));
     Retained::autorelease_ptr(NSArray::from_retained_slice(&children))
 }
 extern "C" fn focused_child(this: &AnyObject, _sel: Sel) -> *mut AnyObject {
     let root = this as *const AnyObject as usize;
     touch(root);
+    if let Some(element) = super::chrome::focused(root) {
+        return Retained::autorelease_ptr(element);
+    }
     let focused = STATE.with(|state| {
         let state = state.borrow();
         state
@@ -349,11 +355,20 @@ extern "C" fn focused_child(this: &AnyObject, _sel: Sel) -> *mut AnyObject {
     });
     focused
         .map(|e| Retained::autorelease_ptr(e.into()))
-        .unwrap_or(std::ptr::null_mut())
+        .unwrap_or_else(|| {
+            if super::chrome::has_focus(root) {
+                Retained::autorelease_ptr(this.retain())
+            } else {
+                std::ptr::null_mut()
+            }
+        })
 }
 extern "C" fn hit_test(this: &AnyObject, _sel: Sel, point: NSPoint) -> *mut AnyObject {
     let root = this as *const AnyObject as usize;
     touch(root);
+    if let Some(element) = super::chrome::hit(root, point) {
+        return Retained::autorelease_ptr(element);
+    }
     let hit = STATE.with(|state| {
         let state = state.borrow();
         state
@@ -376,6 +391,14 @@ extern "C" fn hit_test(this: &AnyObject, _sel: Sel, point: NSPoint) -> *mut AnyO
 pub fn install(class: &mut ClassBuilder) {
     // SAFETY: documented NSAccessibility/NSView selector ABIs, no added ivars.
     unsafe {
+        class.add_method(
+            sel!(accessibilityVerticalScrollBar),
+            scrollbar as extern "C" fn(_, _) -> _,
+        );
+        class.add_method(
+            sel!(accessibilityPerformCancel),
+            cancel as extern "C" fn(_, _) -> _,
+        );
         class.add_method(
             sel!(isAccessibilityElement),
             is_element as extern "C" fn(_, _) -> _,
@@ -405,6 +428,14 @@ pub fn install(class: &mut ClassBuilder) {
             hit_test as extern "C" fn(_, _, _) -> _,
         );
     }
+}
+extern "C" fn scrollbar(this: &AnyObject, _sel: Sel) -> *mut AnyObject {
+    super::chrome::scrollbar(this as *const AnyObject as usize)
+        .map(Retained::autorelease_ptr)
+        .unwrap_or(std::ptr::null_mut())
+}
+extern "C" fn cancel(this: &AnyObject, _sel: Sel) -> Bool {
+    Bool::new(super::chrome::cancel(this as *const AnyObject as usize))
 }
 fn notify(element: &AnyObject, name: &str) {
     unsafe {

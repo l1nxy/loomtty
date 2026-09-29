@@ -75,6 +75,26 @@ pub(crate) struct ConnectionStatusComponent {
 }
 
 impl ConnectionStatusComponent {
+    #[cfg(target_os = "macos")]
+    pub(super) fn accessibility(&self, app: &App) -> super::accessibility::Node {
+        use super::accessibility::{Node, Role, Value};
+        let target = app
+            .core
+            .remote_config
+            .as_ref()
+            .map(|remote| remote.host.as_str())
+            .unwrap_or(&app.core.session_name);
+        let (primary, secondary) = banner_lines(&self.kind, target);
+        let mut node = Node::new(
+            1000,
+            "Connection status",
+            [self.x, self.y, self.w, self.h],
+            Role::StaticText,
+        );
+        node.value = Value::Text(format!("{primary}\n{secondary}"));
+        node
+    }
+
     pub fn capture(app: &App, cx: &UiContext<'_>) -> Option<Self> {
         if app.core.connected {
             return None;

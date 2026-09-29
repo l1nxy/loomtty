@@ -1,5 +1,6 @@
 //! Native accessibility elements for the GPU terminal panes. Cocoa callbacks
 //! use immutable snapshots; mutations return to the application event queue.
+mod chrome;
 mod element;
 mod text;
 use crate::app::App;
@@ -16,6 +17,7 @@ use winit::window::WindowId;
 
 #[derive(Clone, Debug)]
 pub(super) enum Action {
+    Chrome(chrome::Request),
     Focus {
         key: u64,
     },
@@ -67,6 +69,7 @@ impl Bridge {
     pub fn remove(&mut self, window: WindowId) {
         self.entries.retain(|(id, _), _| *id != window);
         if let Some(view) = self.views.remove(&window) {
+            chrome::remove(&view);
             element::remove(&view);
         }
     }
@@ -94,8 +97,20 @@ impl Bridge {
                 },
                 Vec::new(),
             );
+            chrome::update(
+                app,
+                view,
+                visible,
+                application_active && app.window_focused && native.isKeyWindow(),
+            );
             return;
         }
+        chrome::update(
+            app,
+            view,
+            visible,
+            application_active && app.window_focused && native.isKeyWindow(),
+        );
         let scale = app.dpi_scale.max(0.1);
         let (cw, ch) = app.cell_dimensions();
         if cw <= 0.0 || ch <= 0.0 {
@@ -213,14 +228,20 @@ impl Bridge {
 impl Drop for Bridge {
     fn drop(&mut self) {
         for view in self.views.values() {
+            chrome::remove(view);
             element::remove(view);
         }
     }
 }
 impl super::MacApplication {
     pub(super) fn handle_accessibility(&mut self, action: Action) {
+        if let Action::Chrome(request) = action {
+            self.handle_chrome_accessibility(request);
+            return;
+        }
         let key = match action {
             Action::Focus { key } | Action::Select { key, .. } => key,
+            Action::Chrome(_) => unreachable!(),
         };
         let Some(snapshot) = element::snapshot(key) else {
             return;

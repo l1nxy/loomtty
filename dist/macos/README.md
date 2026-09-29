@@ -103,6 +103,23 @@ load PATH and login configuration. Explicit commands and configured shell
 programs retain their arguments. A bundled launch from `/` starts in the home directory;
 CLI working directories are preserved.
 
+### Finder integration
+
+Finder → Services provides **New loomtty Window Here** and **New loomtty Tab
+Here** for selected local files/folders. Files open their containing folder;
+multiple items in one folder are deduplicated. Folders also advertise loomtty
+as an alternate Open With application. Installing the `.app` in Applications
+lets Launch Services discover these entries; no default file association is
+changed by the bundle.
+
+The selected directory is stored as a fresh session's startup cwd before its
+first shell launches. Spaces, quotes, and shell metacharacters remain literal
+path characters. Existing sessions are never overwritten, and no `cd` command
+is pasted into a shell. Normal Cmd+N/Cmd+T local windows also inherit the active
+local pane's cwd when available. Finder services always create local sessions,
+including when invoked while a remote terminal is active. Remote tab/window
+creation continues to use the remote server's session startup directory.
+
 ### Window restoration
 
 A default launch restores regular windows, their native tab order/selection,
@@ -191,7 +208,7 @@ launch creates a new Quick Terminal session. This follows loom's persistent
 server model rather than terminating the shell when the app quits.
 
 This does **not** claim full [Ghostty feature parity](https://ghostty.org/docs/features).
-AppleScript/App Intents, Finder Services providers, and VoiceOver terminal
+AppleScript/App Intents and VoiceOver terminal
 content remain outstanding in this adaptation. Terminal splits and the
 settings panel still use loom's GPU UI. Session restoration is provided by the existing
 loom server/session layer.
@@ -212,6 +229,10 @@ loom server/session layer.
 - Use menu Copy/Paste/Find, paste into search/palette, and verify large-paste
   confirmation. Drag paths containing spaces/apostrophes into the terminal;
   an open modal must not let a drop type into a hidden terminal.
+- In Finder, invoke New loomtty Window/Tab Here on a folder, a file, and several
+  files from the same folder. Test names containing spaces, apostrophes, `$()`,
+  and Chinese text. `pwd` must show the chosen directory with no extra shell
+  input. Repeat with the app closed and while a remote window is active.
 - Look up words with three-finger tap, Force Touch, and Ctrl+Cmd+D. Repeat on
   Retina/external displays and scrolled panes. Test selected Unicode text,
   password prompts, and modal overlays. Verify one popover per force click.
@@ -244,7 +265,8 @@ On Apple Silicon macOS, `cargo test --workspace` passed **1,617 tests**
 animation reversal, shortcut replacement, session exclusion, appearance
 switching, user color overrides, dictionary query bounds and password/modal
 exclusion, restoration locking/atomic saves, corrupt records, disconnected
-displays, and configuration validation. The client has **310 passing tests**.
+displays, and configuration validation. After adding Finder directory services, all **312 client tests** passed,
+including literal-path handling and startup-session persistence.
 `cargo clippy --workspace --all-targets` completed with existing warnings;
 `cargo fmt`, plist validation, script syntax validation, and ad-hoc bundle
 signature verification also completed.

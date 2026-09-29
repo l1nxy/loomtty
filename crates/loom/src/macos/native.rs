@@ -95,6 +95,14 @@ impl Delegate {
                 terminate as extern "C" fn(_, _, _) -> _,
             );
             class.add_method(
+                sel!(openDirectory:userData:error:),
+                super::services::open_directory_service as extern "C" fn(_, _, _, _, _),
+            );
+            class.add_method(
+                sel!(application:openURLs:),
+                super::services::open_urls as extern "C" fn(_, _, _, _),
+            );
+            class.add_method(
                 sel!(newWindowForTab:),
                 new_window_for_tab as extern "C" fn(_, _, _),
             );
@@ -107,6 +115,10 @@ impl Delegate {
         unsafe {
             AnyObject::set_class(&object, class);
         }
+        // SAFETY: the provider implements the advertised Services selector.
+        unsafe {
+            app.setServicesProvider(Some(&object));
+        }
         NSWindow::setAllowsAutomaticWindowTabbing(false, mtm);
         Self {
             object,
@@ -117,6 +129,12 @@ impl Delegate {
 
 impl Drop for Delegate {
     fn drop(&mut self) {
+        if let Some(mtm) = MainThreadMarker::new() {
+            // SAFETY: unregister before removing the advertised selectors.
+            unsafe {
+                NSApplication::sharedApplication(mtm).setServicesProvider(None);
+            }
+        }
         // SAFETY: restore the class we extended before releasing our retain.
         unsafe {
             AnyObject::set_class(&self.object, self.original_class);

@@ -4,6 +4,7 @@ mod lookup;
 mod menu;
 mod native;
 mod restore;
+mod services;
 pub(crate) use native::system_dark_appearance;
 pub(crate) mod quick_terminal;
 
@@ -25,6 +26,10 @@ enum Command {
     Action(Action),
     NewWindow,
     NewTab,
+    OpenDirectory {
+        directory: std::path::PathBuf,
+        tab: bool,
+    },
     CloseWindow,
     Reopen,
     Quit,
@@ -164,13 +169,39 @@ impl MacApplication {
         })
     }
 
-    fn create_window(&mut self, event_loop: &ActiveEventLoop, tab: bool, reopen: bool) {
+    fn create_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        tab: bool,
+        reopen: bool,
+        directory: Option<std::path::PathBuf>,
+    ) {
         let parent = self.active_index().map(|i| &self.windows[i]);
         let mut config = LoomConfig::load().unwrap_or_else(|_| self.last_config.clone());
         crate::sanitize_remote_hosts(&mut config);
-        let remote = parent
-            .map(|app| app.core.remote_config.clone())
-            .unwrap_or_else(|| self.last_remote.clone());
+        let remote = if directory.is_some() {
+            None
+        } else {
+            parent
+                .map(|app| app.core.remote_config.clone())
+                .unwrap_or_else(|| self.last_remote.clone())
+        };
+        let cwd = directory
+            .or_else(|| {
+                parent
+                    .filter(|app| app.core.remote_config.is_none())
+                    .and_then(|app| {
+                        app.core
+                            .workspaces
+                            .active()
+                            .active_pane_id()
+                            .and_then(|id| app.core.pane_grids.get(&id))
+                    })
+                    .and_then(|grid| grid.cwd.as_ref())
+                    .map(std::path::PathBuf::from)
+                    .filter(|path| path.is_dir())
+            })
+            .or_else(|| std::env::current_dir().ok());
         let name = if reopen {
             self.last_session.clone()
         } else {
@@ -183,7 +214,24 @@ impl MacApplication {
                         .map(|s| s.name.clone()),
                 );
             }
-            loom_session::names::unique_name(&names)
+            if remote.is_none()
+                && let Some(cwd) = cwd
+            {
+                match services::seed_session(
+                    &loom_protocol::transport::state_dir(),
+                    &names,
+                    &cwd,
+                    &config,
+                ) {
+                    Ok(name) => name,
+                    Err(error) => {
+                        log::error!("could not create terminal in {}: {error}", cwd.display());
+                        return;
+                    }
+                }
+            } else {
+                loom_session::names::unique_name(&names)
+            }
         };
         let parent_window = parent
             .filter(|app| !app.native_quick_terminal)
@@ -307,7 +355,14 @@ impl MacApplication {
             }
             Command::ToggleQuickTerminal => self.toggle_quick_terminal(event_loop),
             Command::NewWindow | Command::NewTab => {
-                self.create_window(event_loop, matches!(command, Command::NewTab), false);
+                self.create_window(event_loop, matches!(command, Command::NewTab), false, None);
+            }
+            Command::OpenDirectory { directory, tab } => {
+                self.create_window(event_loop, tab, false, Some(directory));
+                #[allow(deprecated)]
+                objc2_app_kit::NSRunningApplication::currentApplication().activateWithOptions(
+                    objc2_app_kit::NSApplicationActivationOptions::ActivateIgnoringOtherApps,
+                );
             }
             Command::Reopen => {
                 let normal = self
@@ -326,7 +381,7 @@ impl MacApplication {
                         self.active = Some(window.id());
                     }
                 } else {
-                    self.create_window(event_loop, false, true);
+                    self.create_window(event_loop, false, true, None);
                 }
             }
             Command::CloseWindow => {
@@ -370,7 +425,7 @@ impl MacApplication {
             Command::Action(Action::ToggleSettings | Action::ToggleHelp)
                 if self.active_index().is_none() =>
             {
-                self.create_window(event_loop, false, true);
+                self.create_window(event_loop, false, true, None);
                 self.dispatch(command, event_loop);
             }
             _ => {
@@ -799,6 +854,16 @@ fn merge_control_flow(a: ControlFlow, b: ControlFlow) -> ControlFlow {
 impl ApplicationHandler for MacApplication {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         self.menu = Some(menu::MenuBar::new().expect("create macOS menu bar"));
+        let queued: Vec<_> = self.commands.try_iter().collect();
+        // File/Services launch requests can arrive before didFinishLaunching.
+        // They supply their own windows instead of an unrelated initial one.
+        if queued
+            .iter()
+            .any(|command| matches!(command, Command::OpenDirectory { .. }))
+        {
+            self.windows.clear();
+            self.pending_restore = None;
+        }
         if !self.show_initial_window {
             self.windows.clear();
         }
@@ -809,6 +874,9 @@ impl ApplicationHandler for MacApplication {
                 app.resumed(event_loop);
                 self.active = app.window.as_ref().map(|w| w.id());
             }
+        }
+        for command in queued {
+            self.dispatch(command, event_loop);
         }
         self.update_native_state();
     }

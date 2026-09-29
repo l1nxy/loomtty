@@ -750,6 +750,11 @@ impl ApplicationHandler for App {
                 self.schedule_redraw();
             }
 
+            #[cfg(target_os = "macos")]
+            WindowEvent::ThemeChanged(theme) => {
+                self.apply_system_theme(theme == winit::window::Theme::Dark);
+            }
+
             WindowEvent::RedrawRequested => self.render(),
 
             _ => {}

@@ -2,6 +2,7 @@
 //! a single AppKit menu bar, and process-wide input/lifecycle integration.
 mod menu;
 mod native;
+pub(crate) use native::system_dark_appearance;
 pub(crate) mod quick_terminal;
 
 use crossbeam_channel::Receiver;
@@ -412,6 +413,7 @@ impl MacApplication {
             let mut app = App::new(config, name.clone());
             app.event_loop_proxy = Some(self.proxy.clone());
             app.native_quick_terminal = true;
+            app.core.remembers_last_session = false;
             app.core.recent_hosts = crate::recent_hosts::load();
             app.resumed(event_loop);
             let Some(window) = &app.window else {

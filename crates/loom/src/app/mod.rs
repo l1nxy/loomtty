@@ -544,6 +544,16 @@ impl App {
     }
 
     pub fn new(config: LoomConfig, session_name: impl Into<String>) -> Self {
+        #[cfg(target_os = "macos")]
+        let config = {
+            let mut config = config;
+            if config.theme.follows_system() {
+                config
+                    .theme
+                    .resolve_for_appearance(crate::macos::system_dark_appearance().unwrap_or(true));
+            }
+            config
+        };
         let cached_color_table = ColorTable::new(&config);
         let cached_resolved_theme = loom_ui::ResolvedTheme::from_config(&config.theme);
         let core = AppModel::new(config, session_name);
@@ -1964,6 +1974,11 @@ fn apply_macos_window_config(window: &Window, config: &LoomConfig) {
         MacosOptionAsAlt::Right => OptionAsAlt::OnlyRight,
         MacosOptionAsAlt::Both => OptionAsAlt::Both,
     });
+    if config.theme.follows_system() {
+        // Inherit the application appearance so winit delivers ThemeChanged.
+        window.set_theme(None);
+        return;
+    }
     // Match native titlebar/traffic-light contrast to the terminal background.
     let [r, g, b, _] = loom_config::theme::ThemeConfig::parse_color(&config.theme.background);
     window.set_theme(Some(if 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 {

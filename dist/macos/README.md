@@ -84,7 +84,7 @@ macos_quit_after_last_window_closed = false
 macos_initial_window = true
 ```
 
-These settings hot reload. By default left Option sends terminal Alt and right
+Option-key and Secure Input settings hot reload. By default left Option sends terminal Alt and right
 Option retains native text entry. Secure Event Input is enabled only while a
 focused terminal is marked as reading a password by the server; it is released
 on focus loss, modal UI, password completion, window close, and application
@@ -96,6 +96,27 @@ Default interactive shells start as login shells on macOS so Finder launches
 load PATH and login configuration. Explicit commands and configured shell
 programs retain their arguments. A bundled launch from `/` starts in the home directory;
 CLI working directories are preserved.
+
+### System appearance
+
+Terminal colors, floating chrome, and native window appearance can follow
+macOS light/dark mode, including an automatic sunset/sunrise change:
+
+```toml
+[theme]
+preset = "loom_dark"       # fallback; also used on other platforms
+light_preset = "loom_light"
+dark_preset = "loom_dark"
+# accent = "#286B86"       # explicit overrides apply in both appearances
+```
+
+Leave both appearance presets empty (the default) to keep a fixed theme. If
+only one is set, the other uses `preset`. Explicit color overrides, including
+empty values, are preserved across switches. `loom_light` includes light
+terminal and chrome colors and is also available as a fixed preset. Choosing
+a preset in the settings panel temporarily stops following the system until
+configuration reload. Fixed themes continue to set titlebar contrast from the
+terminal background. Appearance changes invalidate every pane's cached colors.
 
 ### Quick Terminal
 
@@ -137,8 +158,7 @@ server model rather than terminating the shell when the app quits.
 
 This does **not** claim full [Ghostty feature parity](https://ghostty.org/docs/features).
 Quick Look/Force Touch, AppleScript/App Intents, Finder Services providers,
-VoiceOver terminal content, automatic terminal theme switching, and OS window
-geometry restoration remain future work. Terminal splits and the settings
+VoiceOver terminal content and OS window geometry restoration remain future work. Terminal splits and the settings
 panel still use loom's GPU UI. Session restoration is provided by the existing
 loom server/session layer.
 
@@ -159,6 +179,9 @@ loom server/session layer.
   Secure Input ownership with `ioreg -l -w 0 | rg SecureInput`.
 - Test fullscreen/Spaces, minimize, Hide/Show, resize and move between displays.
   Test Finder launch, shell PATH, a custom theme, and live config reload.
+  Configure appearance presets and switch macOS Light/Dark/Auto; terminal cells,
+  palette, settings, native tabs, and the Quick Terminal must all update. Test
+  a fixed preset and explicit color overrides too.
 
 - Set a global Quick Terminal shortcut; invoke it from another application and
   over a fullscreen Space. Toggle repeatedly during animation and check focus
@@ -172,9 +195,10 @@ loom server/session layer.
 
 ### Validation for this implementation
 
-On Apple Silicon macOS, `cargo test --workspace` passed **1,608 tests**
+On Apple Silicon macOS, `cargo test --workspace` passed **1,611 tests**
 (12 documentation examples ignored). This includes the Quick Terminal geometry, animation reversal, shortcut
-replacement, session exclusion, and configuration validation tests.
+replacement, session exclusion, appearance switching, user color overrides,
+and configuration validation tests.
 `cargo clippy --workspace --all-targets` completed with existing warnings;
 `cargo fmt`, plist validation, script syntax validation, and ad-hoc bundle
 signature verification also completed.

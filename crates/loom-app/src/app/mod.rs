@@ -30,6 +30,8 @@ use crate::prediction::PredictionEngine;
 pub struct AppModel {
     pub config: LoomConfig,
     pub session_name: String,
+    /// Auxiliary windows can opt out of the normal-launch session preference.
+    pub remembers_last_session: bool,
     pub pending_session_name: Option<String>,
     pub frame_interval: Duration,
 
@@ -167,6 +169,7 @@ impl AppModel {
         AppModel {
             config,
             session_name,
+            remembers_last_session: true,
             pending_session_name: None,
             frame_interval,
             workspaces: WorkspaceSet::new_with_gaps(initial_view, column_gap, column_gap),
@@ -288,6 +291,9 @@ impl AppModel {
     }
 
     pub fn write_last_session(&self) {
+        if !self.remembers_last_session {
+            return;
+        }
         let path = Self::last_session_path();
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);

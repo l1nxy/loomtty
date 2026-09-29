@@ -201,3 +201,16 @@ pub fn set_directory(window: &Window, path: Option<&str>) {
         window.setRepresentedURL(url.as_deref());
     }
 }
+
+/// Read the application appearance, which is independent of a fixed theme on
+/// an individual window. Called from UI/config reload, never from server code.
+pub(crate) fn system_dark_appearance() -> Option<bool> {
+    use objc2_app_kit::{NSAppearanceNameAqua, NSAppearanceNameDarkAqua};
+    use objc2_foundation::NSArray;
+    let mtm = MainThreadMarker::new()?;
+    let appearance = NSApplication::sharedApplication(mtm).effectiveAppearance();
+    // SAFETY: AppKit appearance names are immutable, process-lifetime constants.
+    let (light, dark) = unsafe { (NSAppearanceNameAqua, NSAppearanceNameDarkAqua) };
+    let best = appearance.bestMatchFromAppearancesWithNames(&NSArray::from_slice(&[light, dark]));
+    best.map(|name| &*name == dark)
+}

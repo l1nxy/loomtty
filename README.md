@@ -96,7 +96,7 @@ family = "JetBrains Mono"
 size = 12.0
 
 [theme]
-preset = "loom_dark"   # one_dark, catppuccin_mocha, tokyo_night, dracula, nord, gruvbox_dark, ghostty, …
+preset = "loom_dark"   # loom_light, one_dark, catppuccin_mocha, tokyo_night, dracula, nord, gruvbox_dark, ghostty, …
 
 [keys]
 leader = "alt"

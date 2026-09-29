@@ -28,6 +28,9 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    #[cfg(target_os = "macos")]
+    #[command(name = "_app-intents-metadata", hide = true)]
+    AppIntentsMetadata,
     /// Create a new session and connect
     New,
 
@@ -217,6 +220,8 @@ pub enum TemplateCommand {
 /// Resolve the CLI into the internal command enum used by main.rs.
 pub fn resolve(cli: Cli) -> CliCommand {
     match cli.command {
+        #[cfg(target_os = "macos")]
+        Some(Command::AppIntentsMetadata) => CliCommand::AppIntentsMetadata,
         None => {
             if let Some(name) = cli.session_name {
                 CliCommand::Run { session_name: name }
@@ -350,6 +355,8 @@ pub fn resolve(cli: Cli) -> CliCommand {
 
 #[derive(Debug)]
 pub enum CliCommand {
+    #[cfg(target_os = "macos")]
+    AppIntentsMetadata,
     /// No subcommand given: auto-attach to existing session or create new.
     Default,
     New,

@@ -50,6 +50,10 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Build App Intents (macOS)
+        if: runner.os == 'macOS'
+        run: cargo build --release --target ${{ matrix.target }} -p loomtty --bin loomtty --features macos-app-intents
+
       # The GUI-subsystem launcher is feature-gated so non-Windows builds don't
       # link a redundant copy of the GUI; build it explicitly on Windows.
       - name: Build GUI launcher (Windows)

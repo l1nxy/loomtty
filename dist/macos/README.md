@@ -18,10 +18,13 @@ there's no separate GUI binary.
 ## Build locally (on a Mac)
 
 ```sh
-cargo build --release -p loomtty -p loomtty-server
+# Full Xcode 16+ is needed for App Intents discovery metadata.
+# Set DEVELOPER_DIR if Xcode is not the selected developer directory.
+cargo build --release -p loomtty -p loomtty-server --features loomtty/macos-app-intents
 dist/macos/make-app.sh                      # → target/macos/loomtty.app + .dmg
-# Faster local app testing without creating a DMG:
-dist/macos/make-app.sh --bindir "$PWD/target/debug" --app-only
+# Faster local app testing with Command Line Tools only (no Shortcuts discovery):
+cargo build -p loomtty -p loomtty-server
+dist/macos/make-app.sh --bindir "$PWD/target/debug" --app-only --without-app-intents
 # real signing identity instead of ad-hoc:
 dist/macos/make-app.sh --sign-id "Developer ID Application: Name (TEAMID)"
 ```
@@ -85,6 +88,7 @@ macos_quit_after_last_window_closed = false
 macos_initial_window = true
 macos_restore_windows = true
 macos_applescript = true
+macos_app_intents = true
 ```
 
 Option-key and Secure Input settings hot reload. By default left Option sends terminal Alt and right
@@ -293,12 +297,70 @@ action and do not claim keyboard focus. The adapter caches unchanged controls
 and does not add a polling timer.
 
 This does **not** claim full [Ghostty feature parity](https://ghostty.org/docs/features).
-App Intents remains outstanding. The accessibility adapter still needs live
-VoiceOver acceptance testing. Terminal splits and settings use loom's GPU UI;
+App Intents metadata extraction and live Shortcuts execution still need to be
+verified with full Xcode and an unlocked desktop. The accessibility adapter
+still needs live VoiceOver acceptance testing. Terminal splits and settings use loom's GPU UI;
 the native shell and server session model remain integrated with it.
+
+### Shortcuts / App Intents
+
+Feature-enabled builds include Swift App Intents in the same client executable.
+They queue work on the Rust event loop and share the AppleScript creation/input
+engine. No Apple Events, subprocess shell commands, or extra IPC server are used.
+Non-default AppKit launches (such as Services/automation) defer the default
+window to the requested action and leave saved desktop restoration data intact.
+App Intents requires macOS 13+; earlier systems retain the normal native client.
+The `.app` needs Xcode-generated `Metadata.appintents` to expose these actions in
+Shortcuts. A bare Cargo binary or `--without-app-intents` bundle does not include
+that discovery metadata.
+
+- **New Terminal** creates a window, native tab, split right, or split down and
+  returns a connected terminal for subsequent actions. A parent is required for
+  a split and optional for a tab. New windows/tabs accept an existing absolute
+  working-directory path (which explicitly creates a local session); splits
+  inherit their terminal's directory.
+- **Find Terminals** searches title, session and directory. Empty text lists all
+  connected normal-window terminals. Terminal entities also expose these three
+  fields to Shortcuts. Quick Terminal is excluded, as with AppleScript.
+- **Focus Terminal**, **Send Text to Terminal**, and **Close Terminal** operate
+  on a specific terminal entity. Send Text sends exact UTF-8 (at most 256 KiB),
+  including supplied newlines; it adds no Return key. Close ends the pane's
+  process. Dialogs/overlays reject these actions until dismissed.
+- An App Shortcut provides **New Terminal** with the phrase “Open a terminal in
+  loomtty.” Siri/Shortcuts discovery still requires the metadata and live
+  acceptance checks below.
+
+Actions use Apple's `requiresLocalDeviceAuthentication` policy: the Mac must be
+unlocked before an action runs, including requests originating on another device.
+
+`window.macos_app_intents = false` disables queries and actions independently of
+`window.macos_applescript`. Entity IDs expire when the terminal's connection or
+session changes and across app restarts. Find the terminal again in each workflow
+instead of treating a saved entity as a persistent session reference. Cancellation
+removes pending callbacks; it cannot undo an operation already sent to the server.
+Creation times out after 30 seconds, with an outer 35-second bridge deadline; errors
+ask the user to inspect the terminal before retrying to avoid duplicate actions.
+
+The bundle builder obtains compiler metadata from the exact binary being packaged,
+requires the extraction output, copies any required Swift compatibility runtimes,
+and signs inside-out. A failed build keeps the previous `.app`. macOS CI builds
+this feature, runs the Swift bridge tests, and requires real metadata extraction.
+
+```sh
+# Foundation-only tests; no terminal windows or server sessions are opened:
+dist/macos/app-intents/test.sh
+cargo test -p loomtty --lib --features macos-app-intents macos::scripting
+```
 
 ### Manual regression checks
 
+- Build with full Xcode, install the signed app, and find its actions in
+  Shortcuts. Chain New Terminal → Send Text → Focus Terminal, using a path with
+  spaces and Chinese/emoji input. Exercise tabs and both split directions, closed
+  entities, cancellation, disabled configuration and a stalled connection. Run
+  with loomtty already open, closed, and with no windows; check that cold launch
+  does not create an unintended extra window. Confirm Siri discovers New Terminal
+  and requires unlocking this Mac when it is locked.
 - With VoiceOver, navigate between terminal panes and native tabs. Read Chinese,
   combining accents, and emoji; select and copy them. Read scrollback, resize
   the window, and check character bounds on Retina/external displays. Verify

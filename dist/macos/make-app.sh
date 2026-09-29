@@ -6,7 +6,7 @@
 # identity), and packages a drag-to-Applications .dmg.
 #
 # Usage (run from anywhere):
-#   dist/macos/make-app.sh [--version X.Y.Z] [--bindir DIR] [--outdir DIR] [--sign-id ID] [--app-only]
+#   dist/macos/make-app.sh [--version X.Y.Z] [--bindir DIR] [--outdir DIR] [--sign-id ID] [--app-only] [--without-app-intents]
 #
 # Defaults: version from Cargo.toml, bindir=target/release, outdir=target/macos,
 # sign-id="-" (ad-hoc).
@@ -20,6 +20,7 @@ BIN_DIR="$REPO_ROOT/target/release"
 OUT_DIR="$REPO_ROOT/target/macos"
 SIGN_ID="-"
 APP_ONLY=false
+APP_INTENTS=true
 while [ $# -gt 0 ]; do
     case "$1" in
         --version) VERSION="$2"; shift 2 ;;
@@ -27,6 +28,7 @@ while [ $# -gt 0 ]; do
         --outdir)  OUT_DIR="$2"; shift 2 ;;
         --sign-id) SIGN_ID="$2"; shift 2 ;;
         --app-only) APP_ONLY=true; shift ;;
+        --without-app-intents) APP_INTENTS=false; shift ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -40,10 +42,20 @@ for b in loomtty loomtty-server; do
     [ -f "$BIN_DIR/$b" ] || { echo "missing binary: $BIN_DIR/$b (build with: cargo build --release -p loomtty -p loomtty-server)" >&2; exit 1; }
 done
 
+# Fail before touching an existing app. Full Xcode is needed for the system's
+# discovery metadata; ordinary cargo builds still work with Command Line Tools.
+if [ "$APP_INTENTS" = true ]; then
+    xcrun --find appintentsmetadataprocessor >/dev/null 2>&1 || {
+        echo "App Intents bundling requires full Xcode (xcrun cannot find appintentsmetadataprocessor)." >&2
+        echo "Select Xcode with DEVELOPER_DIR, or use --without-app-intents for a development bundle." >&2
+        exit 1
+    }
+fi
 echo "loomtty.app  version=$VERSION  arch=arm64  sign=$SIGN_ID"
 mkdir -p "$OUT_DIR"
-APP="$OUT_DIR/loomtty.app"
-rm -rf "$APP"
+BUILD_DIR="$(mktemp -d "$OUT_DIR/.loomtty-app.XXXXXX")"
+trap 'rm -rf "$BUILD_DIR"' EXIT
+APP="$BUILD_DIR/loomtty.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 # Binaries (the daemon sits next to the client, where the client looks for it).
@@ -62,11 +74,31 @@ for s in loom.bash loom.zsh loom.fish; do
     cp "$REPO_ROOT/crates/loom-server/shell-integration/$s" "$APP/Contents/Resources/shell-integration/$s"
 done
 
+if [ "$APP_INTENTS" = true ]; then
+    "$APP/Contents/MacOS/loomtty" _app-intents-metadata > "$BUILD_DIR/LoomAppIntents.swiftconstvalues"
+    "$SCRIPT_DIR/app-intents/extract.sh" "$APP" "$BUILD_DIR/LoomAppIntents.swiftconstvalues"
+fi
+
+# Copy back-deployment Swift runtimes when the executable needs them. This is
+# also needed when packaging a feature-enabled development binary without its
+# discovery metadata. swift-stdlib-tool skips binaries without Swift references.
+mkdir -p "$APP/Contents/Frameworks"
+xcrun swift-stdlib-tool --copy --scan-executable "$APP/Contents/MacOS/loomtty" \
+    --platform macosx --destination "$APP/Contents/Frameworks" \
+    --sign "$SIGN_ID" --Xcodesign --timestamp=none
+# The tool keeps pre-signing backups for incremental builds. They are not
+# runtime dependencies and need not ship in this freshly assembled bundle.
+rm -f "$APP/Contents/Frameworks/"*.original
+
 # Sign inside-out: the extra helper binary first, then the bundle (which seals
 # the main executable + the rest).
 codesign --force --timestamp=none --sign "$SIGN_ID" "$APP/Contents/MacOS/loomtty-server"
 codesign --force --timestamp=none --sign "$SIGN_ID" "$APP"
 codesign --verify --deep --strict "$APP" && echo "codesign: verified"
+# Preserve the last working bundle until all generation and signing succeeded.
+rm -rf "$OUT_DIR/loomtty.app"
+mv "$APP" "$OUT_DIR/loomtty.app"
+APP="$OUT_DIR/loomtty.app"
 
 if [ "$APP_ONLY" = true ]; then
     echo "Built: $APP"

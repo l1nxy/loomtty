@@ -483,6 +483,9 @@ pub struct WindowConfig {
     /// Allow AppleScript to query and control native windows and terminals.
     #[garde(skip)]
     pub macos_applescript: bool,
+    /// Allow Shortcuts App Intents to query and control terminals (bundled builds).
+    #[garde(skip)]
+    pub macos_app_intents: bool,
     #[garde(dive)]
     pub macos_quick_terminal: MacosQuickTerminalConfig,
     #[garde(skip)]
@@ -502,6 +505,7 @@ impl Default for WindowConfig {
             macos_initial_window: true,
             macos_restore_windows: true,
             macos_applescript: true,
+            macos_app_intents: true,
             macos_quick_terminal: MacosQuickTerminalConfig::default(),
             width: 1024.0,
             height: 768.0,
@@ -1703,6 +1707,8 @@ mod macos_window_tests {
         assert_eq!(config.macos_option_as_alt, MacosOptionAsAlt::Left);
         assert!(config.macos_secure_input);
         assert!(!config.macos_quit_after_last_window_closed);
+        assert!(config.macos_applescript);
+        assert!(config.macos_app_intents);
     }
 
     #[test]

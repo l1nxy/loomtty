@@ -1,5 +1,5 @@
 use super::{
-    Request, Verb, WaitResult, Waiting, cocoa,
+    Request, Source, Verb, WaitResult, Waiting, cocoa, intents,
     model::{Kind, Object},
 };
 use crate::macos::{MacApplication, native};
@@ -13,7 +13,7 @@ thread_local! {
     static RESULTS: RefCell<HashMap<u64, Result<u64, String>>> = RefCell::default();
 }
 pub(crate) fn creation_result(token: u64, pane: Option<u64>, error: Option<String>) {
-    if cocoa::request(token).is_some_and(|request| request.verb == Verb::Split) {
+    if super::request(token).is_some_and(|request| request.verb == Verb::Split) {
         let result = match (pane, error) {
             (Some(pane), None) => Ok(pane),
             (_, error) => {
@@ -41,7 +41,11 @@ fn send(app: &crate::app::App, message: ClientMessage) -> Result<(), String> {
             crossbeam_channel::TrySendError::Disconnected(_) => "The server disconnected".into(),
         })
 }
-fn target(request: &Request, snapshot: &super::model::Snapshot) -> Result<Object, String> {
+fn target(
+    request: &Request,
+    snapshot: &super::model::Snapshot,
+    source: Source,
+) -> Result<Object, String> {
     let id = request
         .target
         .as_ref()
@@ -51,6 +55,7 @@ fn target(request: &Request, snapshot: &super::model::Snapshot) -> Result<Object
         .get(id)
         .ok_or("The target no longer exists")?;
     let expected = match request.verb {
+        Verb::NewTab | Verb::Focus if source == Source::AppIntents => Some(Kind::Terminal),
         Verb::NewTab | Verb::CloseWindow => Some(Kind::Window),
         Verb::CloseTab => Some(Kind::Tab),
         Verb::Split | Verb::Input | Verb::CloseTerminal => Some(Kind::Terminal),
@@ -63,17 +68,43 @@ fn target(request: &Request, snapshot: &super::model::Snapshot) -> Result<Object
 }
 impl MacApplication {
     pub(in crate::macos) fn update_scripting(&mut self) {
-        let enabled = self
-            .active_index()
-            .map(|i| self.windows[i].core.config.window.macos_applescript)
-            .unwrap_or(self.last_config.window.macos_applescript);
-        let snapshot = self.scripting.capture(&self.windows, self.active, enabled);
-        cocoa::publish(snapshot.clone());
+        self.update_automation(Source::AppleScript);
+        if cfg!(any(feature = "macos-app-intents", test)) {
+            self.update_automation(Source::AppIntents);
+        }
+    }
+
+    fn automation(&mut self, source: Source) -> &mut super::Bridge {
+        match source {
+            Source::AppleScript => &mut self.scripting,
+            Source::AppIntents => &mut self.intents,
+        }
+    }
+
+    fn update_automation(&mut self, source: Source) {
+        let enabled = source.enabled(
+            self.active_index()
+                .map(|i| &self.windows[i].core.config.window)
+                .unwrap_or(&self.last_config.window),
+        );
+        let bridge = match source {
+            Source::AppleScript => &mut self.scripting,
+            Source::AppIntents => &mut self.intents,
+        };
+        let snapshot = bridge.capture(&self.windows, self.active, enabled, source);
+        match source {
+            Source::AppleScript => cocoa::publish(snapshot.clone()),
+            Source::AppIntents => intents::publish(snapshot.clone()),
+        }
         let now = Instant::now();
         let mut completions = Vec::new();
-        self.scripting.waiting.retain_mut(|wait| {
+        bridge.waiting.retain_mut(|wait| {
+            if super::request(wait.token).is_none() {
+                RESULTS.with(|results| results.borrow_mut().remove(&wait.token));
+                return false;
+            }
             let failure = if !enabled {
-                Some("AppleScript was disabled".to_owned())
+                Some(format!("{} was disabled", source.label()))
             } else if now >= wait.deadline {
                 Some("Terminal creation timed out; inspect the window before retrying".to_owned())
             } else if !snapshot.objects.contains_key(&wait.tab) {
@@ -91,7 +122,7 @@ impl MacApplication {
                     .get(&wait.tab)
                     .filter(|tab| tab.ready && tab.focused.is_some())
                     .and_then(|_| {
-                        if *window {
+                        if *window && source == Source::AppleScript {
                             snapshot
                                 .windows
                                 .iter()
@@ -143,31 +174,35 @@ impl MacApplication {
             RESULTS.with(|results| {
                 results.borrow_mut().remove(&token);
             });
-            cocoa::finish(token, result);
+            super::finish(token, result);
         }
     }
 
     pub(in crate::macos) fn execute_script(&mut self, token: u64, event_loop: &ActiveEventLoop) {
-        let Some(request) = cocoa::request(token) else {
+        let Some(request) = super::request(token) else {
             return;
         };
         self.update_scripting();
-        let snapshot = cocoa::snapshot();
+        let source = Source::for_token(token);
+        let snapshot = match source {
+            Source::AppleScript => cocoa::snapshot(),
+            Source::AppIntents => intents::snapshot(),
+        };
         if !snapshot.enabled {
-            cocoa::finish(token, Err("AppleScript is disabled".into()));
+            super::finish(token, Err(format!("{} is disabled", source.label())));
             return;
         }
         let result = self.apply_script(token, &request, &snapshot, event_loop);
         self.update_scripting();
         if let Err(error) = result {
-            cocoa::finish(token, Err(error));
+            super::finish(token, Err(error));
         } else if !self
-            .scripting
+            .automation(source)
             .waiting
             .iter()
             .any(|wait| wait.token == token)
         {
-            cocoa::finish(token, Ok(None));
+            super::finish(token, Ok(None));
         }
     }
 
@@ -178,6 +213,10 @@ impl MacApplication {
         snapshot: &super::model::Snapshot,
         event_loop: &ActiveEventLoop,
     ) -> Result<(), String> {
+        let source = Source::for_token(token);
+        if request.verb == Verb::ListTerminals {
+            return Ok(());
+        }
         if matches!(request.verb, Verb::NewWindow | Verb::NewTab) {
             let directory = request
                 .directory
@@ -192,7 +231,7 @@ impl MacApplication {
                 })
                 .transpose()?;
             if request.verb == Verb::NewTab && request.target.is_some() {
-                self.active = Some(target(request, snapshot)?.window_id);
+                self.active = Some(target(request, snapshot, source)?.window_id);
             }
             let before = self.windows.len();
             self.create_window(event_loop, request.verb == Verb::NewTab, false, directory);
@@ -203,9 +242,10 @@ impl MacApplication {
                 .windows
                 .last()
                 .and_then(|app| app.window.as_ref())
-                .ok_or("Window initialization failed")?;
-            let tab = self.scripting.ids.tab(window.id());
-            self.scripting.waiting.push(Waiting {
+                .ok_or("Window initialization failed")?
+                .id();
+            let tab = self.automation(source).ids.tab(window);
+            self.automation(source).waiting.push(Waiting {
                 token,
                 tab,
                 deadline: Instant::now() + Duration::from_secs(30),
@@ -215,7 +255,7 @@ impl MacApplication {
             });
             return Ok(());
         }
-        let object = target(request, snapshot)?;
+        let object = target(request, snapshot, source)?;
         let index = self
             .windows
             .iter()
@@ -225,9 +265,13 @@ impl MacApplication {
                     .is_some_and(|window| window.id() == object.window_id)
             })
             .ok_or("The target window no longer exists")?;
+        let tab_id = self.automation(source).ids.tab(object.window_id);
         let app = &mut self.windows[index];
-        if !app.core.config.window.macos_applescript {
-            return Err("AppleScript is disabled for the target window".into());
+        if !source.enabled(&app.core.config.window) {
+            return Err(format!(
+                "{} is disabled for the target window",
+                source.label()
+            ));
         }
         if matches!(
             request.verb,
@@ -255,7 +299,7 @@ impl MacApplication {
             }
             Verb::Split => {
                 let pane_id = object.pane_id.ok_or("Expected a terminal")?;
-                let tab = self.scripting.ids.tab(object.window_id);
+                let tab = tab_id;
                 send(
                     app,
                     ClientMessage::CreatePaneAt {
@@ -264,7 +308,7 @@ impl MacApplication {
                         request_id: token,
                     },
                 )?;
-                self.scripting.waiting.push(Waiting {
+                self.automation(source).waiting.push(Waiting {
                     token,
                     tab,
                     deadline: Instant::now() + Duration::from_secs(30),
@@ -327,6 +371,51 @@ impl MacApplication {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn app_intents_parent_is_a_live_terminal_and_capabilities_are_independent() {
+        let mut config = loom_config::schema::WindowConfig {
+            macos_applescript: false,
+            ..Default::default()
+        };
+        assert!(!Source::AppleScript.enabled(&config));
+        assert!(Source::AppIntents.enabled(&config));
+        config.macos_app_intents = false;
+        config.macos_applescript = true;
+        assert!(Source::AppleScript.enabled(&config));
+        assert!(!Source::AppIntents.enabled(&config));
+
+        let mut snapshot = super::super::model::Snapshot::default();
+        let object = Object {
+            id: "t".into(),
+            kind: Kind::Terminal,
+            name: "shell".into(),
+            tabs: vec![],
+            terminals: vec![],
+            selected: None,
+            focused: None,
+            cwd: String::new(),
+            session: "s".into(),
+            window_id: winit::window::WindowId::dummy(),
+            pane_id: Some(1),
+            ready: true,
+        };
+        snapshot.objects.insert("t".into(), object.clone());
+        let request = Request {
+            verb: Verb::NewTab,
+            target: Some("t".into()),
+            input: None,
+            directory: None,
+            direction: "right".into(),
+        };
+        assert!(target(&request, &snapshot, Source::AppIntents).is_ok());
+        assert!(target(&request, &snapshot, Source::AppleScript).is_err());
+        snapshot.objects.clear();
+        let mut surviving_window = object;
+        surviving_window.id = "w".into();
+        surviving_window.kind = Kind::Window;
+        snapshot.objects.insert("w".into(), surviving_window);
+        assert!(target(&request, &snapshot, Source::AppIntents).is_err());
+    }
     #[test]
     fn input_reports_backpressure_instead_of_silently_dropping_text() {
         let mut app = crate::app::App::new(loom_config::config::LoomConfig::default(), "test");

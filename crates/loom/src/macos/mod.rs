@@ -10,6 +10,7 @@ mod services;
 mod text_services;
 pub(crate) use native::system_dark_appearance;
 pub(crate) use scripting::creation_result as scripting_result;
+pub(crate) use scripting::metadata as app_intents_metadata;
 pub(crate) mod quick_terminal;
 
 use crossbeam_channel::Receiver;
@@ -79,12 +80,14 @@ pub(crate) struct MacApplication {
     system_terminate_pending: bool,
     quick_terminal: Option<quick_terminal::QuickTerminal>,
     show_initial_window: bool,
+    explicit_window: bool,
     restoration: Option<restore::Store>,
     pending_restore: Option<restore::Snapshot>,
     normal_frames: std::collections::HashMap<WindowId, restore::Frame>,
     hotkey_manager: Option<GlobalHotKeyManager>,
     hotkey_registration: quick_terminal::hotkey::Registration,
     scripting: scripting::Bridge,
+    intents: scripting::Bridge,
     accessibility: accessibility::Bridge,
 }
 
@@ -92,6 +95,7 @@ impl MacApplication {
     pub fn new(app: App, proxy: EventLoopProxy<()>, explicit_window: bool) -> Self {
         let (tx, commands) = crossbeam_channel::unbounded();
         scripting::configure(app.core.config.window.macos_applescript);
+        scripting::start_intents(app.core.config.window.macos_app_intents);
         let delegate = native::Delegate::install(tx.clone(), proxy.clone());
         let menu_proxy = proxy.clone();
         let hotkey_proxy = proxy.clone();
@@ -124,6 +128,7 @@ impl MacApplication {
             .filter(|state| !state.groups.is_empty());
         Self {
             show_initial_window: explicit_window || app.core.config.window.macos_initial_window,
+            explicit_window,
             restoration,
             pending_restore,
             normal_frames: std::collections::HashMap::new(),
@@ -151,6 +156,7 @@ impl MacApplication {
             secure_input: native::SecureInput::default(),
             manual_secure_input: false,
             scripting: scripting::Bridge::default(),
+            intents: scripting::Bridge::default(),
             accessibility: accessibility::Bridge::default(),
             view_hooks: std::collections::HashMap::new(),
         }
@@ -537,6 +543,7 @@ impl MacApplication {
             .into_iter()
             .chain(save)
             .chain(self.scripting.deadline())
+            .chain(self.intents.deadline())
             .chain(self.accessibility.deadline())
             .min()
     }
@@ -834,6 +841,11 @@ impl MacApplication {
                     self.view_hooks.entry(window.id())
                     && let Some(hooks) = lookup::ViewHooks::install(window)
                 {
+                    if let Some(window) = native::native_window(window) {
+                        // Loom restores its session/layout snapshot itself.
+                        // Do not also ask AppKit to restore these NSWindows.
+                        window.setRestorable(false);
+                    }
                     entry.insert(hooks);
                 }
                 if let Some(hooks) = self.view_hooks.get(&window.id()) {
@@ -906,6 +918,16 @@ impl ApplicationHandler for MacApplication {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         self.menu = Some(menu::MenuBar::new().expect("create macOS menu bar"));
         let queued: Vec<_> = self.commands.try_iter().collect();
+        if !self.explicit_window && !native::is_default_launch() {
+            // A Service or automation request may arrive *after* resumed().
+            // AppKit's launch notification lets it create its own window,
+            // instead of first opening/restoring unrelated default windows.
+            self.windows.clear();
+            self.pending_restore = None;
+            // A background query must not replace the saved desktop with an
+            // empty snapshot when it later exits.
+            self.restoration = None;
+        }
         // File/Services launch requests can arrive before didFinishLaunching.
         // They supply their own windows instead of an unrelated initial one.
         if queued
@@ -1059,6 +1081,7 @@ impl ApplicationHandler for MacApplication {
 
     fn exiting(&mut self, event_loop: &ActiveEventLoop) {
         scripting::cancel_all("loomtty is quitting");
+        scripting::stop_intents();
         scripting::configure(false);
         self.save_restoration(true);
         let ids: Vec<_> = self

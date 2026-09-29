@@ -1,4 +1,5 @@
-//! AppKit callbacks only queue commands; they never re-enter the Rust app.
+//! Native actions queue commands instead of borrowing the Rust application.
+//! The launch hook records AppKit metadata, then forwards to winit unchanged.
 //!
 //! The pinned winit 0.30 fork requires its original application delegate (and
 //! checks isKindOfClass internally), despite the custom-delegate example in
@@ -7,11 +8,12 @@
 use crossbeam_channel::Sender;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel};
-use objc2::{MainThreadMarker, sel};
+use objc2::{MainThreadMarker, msg_send, sel};
 use objc2_app_kit::{
-    NSApplication, NSApplicationTerminateReply, NSView, NSWindow, NSWindowOrderingMode,
+    NSApplication, NSApplicationLaunchIsDefaultLaunchKey, NSApplicationTerminateReply, NSView,
+    NSWindow, NSWindowOrderingMode,
 };
-use objc2_foundation::{NSString, NSURL};
+use objc2_foundation::{NSNotification, NSNumber, NSString, NSURL};
 use std::cell::RefCell;
 use winit::event_loop::EventLoopProxy;
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -22,6 +24,46 @@ use super::Command;
 struct DelegateState {
     tx: Sender<Command>,
     proxy: EventLoopProxy<()>,
+    original_class: &'static AnyClass,
+    default_launch: bool,
+}
+
+fn notification_is_default_launch(notification: &NSNotification) -> bool {
+    notification
+        .userInfo()
+        .and_then(|info| {
+            // SAFETY: AppKit's exported immutable notification key.
+            info.objectForKey(unsafe { NSApplicationLaunchIsDefaultLaunchKey })
+        })
+        .and_then(|value| value.downcast_ref::<NSNumber>().map(NSNumber::as_bool))
+        .unwrap_or(true)
+}
+
+extern "C" fn did_finish_launching(this: &AnyObject, _sel: Sel, notification: &NSNotification) {
+    let original = CALLBACKS.with(|state| {
+        let mut state = state.borrow_mut();
+        let state = state.as_mut()?;
+        state.default_launch = notification_is_default_launch(notification);
+        Some(state.original_class)
+    });
+    if let Some(original) = original {
+        // SAFETY: preserve winit's launch handler, including its resumed()
+        // dispatch. Publish the launch kind first, without a TLS borrow across
+        // that call. This extension does not change the delegate's ivars.
+        unsafe {
+            let _: () =
+                msg_send![super(this, original), applicationDidFinishLaunching: notification];
+        }
+    }
+}
+
+pub(super) fn is_default_launch() -> bool {
+    CALLBACKS.with(|state| {
+        state
+            .borrow()
+            .as_ref()
+            .is_none_or(|state| state.default_launch)
+    })
 }
 
 thread_local! {
@@ -84,6 +126,10 @@ impl Delegate {
         // no ivars and inherits winit's implementation of every other method.
         unsafe {
             class.add_method(
+                sel!(applicationDidFinishLaunching:),
+                did_finish_launching as extern "C" fn(_, _, _),
+            );
+            class.add_method(
                 sel!(applicationShouldHandleReopen:hasVisibleWindows:),
                 reopen as extern "C" fn(_, _, _, _) -> _,
             );
@@ -110,7 +156,14 @@ impl Delegate {
         }
         let class = class.register();
         assert_eq!(original_class.instance_size(), class.instance_size());
-        CALLBACKS.with(|state| *state.borrow_mut() = Some(DelegateState { tx, proxy }));
+        CALLBACKS.with(|state| {
+            *state.borrow_mut() = Some(DelegateState {
+                tx,
+                proxy,
+                original_class,
+                default_launch: true,
+            })
+        });
         // SAFETY: same instance layout, original superclass/ivars preserved,
         // and only the main thread accesses this main-thread-only delegate.
         unsafe {
@@ -237,4 +290,32 @@ pub(crate) fn system_dark_appearance() -> Option<bool> {
     let (light, dark) = unsafe { (NSAppearanceNameAqua, NSAppearanceNameDarkAqua) };
     let best = appearance.bestMatchFromAppearancesWithNames(&NSArray::from_slice(&[light, dark]));
     best.map(|name| &*name == dark)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use objc2_foundation::NSDictionary;
+
+    #[test]
+    fn appkit_launch_notification_distinguishes_requested_actions_from_default_launch() {
+        let name = NSString::from_str("NSApplicationDidFinishLaunchingNotification");
+        // SAFETY: notification names and immutable userInfo values are valid
+        // Foundation objects; no NSApplication or window is created here.
+        let empty = unsafe { NSNotification::notificationWithName_object(&name, None) };
+        assert!(notification_is_default_launch(&empty));
+        for default in [false, true] {
+            let value = NSNumber::new_bool(default);
+            let key = unsafe { NSApplicationLaunchIsDefaultLaunchKey };
+            let values: [&AnyObject; 1] = [&value];
+            let info = NSDictionary::from_slices(&[key], &values);
+            // SAFETY: erase the dictionary's generic types for the Foundation
+            // userInfo ABI; its keys/values remain retained Objective-C objects.
+            let info: Retained<NSDictionary> = unsafe { Retained::cast_unchecked(info) };
+            let notification = unsafe {
+                NSNotification::notificationWithName_object_userInfo(&name, None, Some(&info))
+            };
+            assert_eq!(notification_is_default_launch(&notification), default);
+        }
+    }
 }

@@ -44,17 +44,31 @@ pub struct Snapshot {
     pub objects: HashMap<String, Object>,
 }
 
-#[derive(Default)]
 pub struct Ids {
+    run: String,
     next: u64,
     pub tabs: HashMap<WindowId, String>,
     terminals: HashMap<(String, u64), String>,
     groups: Vec<(String, Vec<String>)>,
 }
+impl Default for Ids {
+    fn default() -> Self {
+        use objc2_foundation::NSUUID;
+        Self {
+            // Shortcuts can persist entity IDs. Never let an ID saved during
+            // an earlier application run resolve to an unrelated terminal.
+            run: NSUUID::new().UUIDString().to_string(),
+            next: 0,
+            tabs: HashMap::new(),
+            terminals: HashMap::new(),
+            groups: Vec::new(),
+        }
+    }
+}
 impl Ids {
     fn next(&mut self, prefix: &str) -> String {
         self.next += 1;
-        format!("{prefix}-{}", self.next)
+        format!("{prefix}-{}-{}", self.run, self.next)
     }
     pub fn tab(&mut self, key: WindowId) -> String {
         if let Some(id) = self.tabs.get(&key) {
@@ -112,6 +126,12 @@ mod tests {
     use super::*;
     fn tabs(names: &[&str]) -> Vec<String> {
         names.iter().map(|s| s.to_string()).collect()
+    }
+    #[test]
+    fn terminal_ids_do_not_resolve_across_bridge_or_application_lifetimes() {
+        let old = Ids::default().terminal("tab", 1);
+        let new = Ids::default().terminal("tab", 1);
+        assert_ne!(old, new);
     }
     #[test]
     fn group_survives_first_tab_closing_and_ids_are_not_recycled() {

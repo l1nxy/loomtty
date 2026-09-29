@@ -51,6 +51,14 @@ pub fn run(cli: CliCommand) -> Result<()> {
     let explicit_window = !matches!(&cli, CliCommand::Default);
     // Handle non-GUI commands first
     match cli {
+        #[cfg(target_os = "macos")]
+        CliCommand::AppIntentsMetadata => {
+            print!(
+                "{}",
+                macos::app_intents_metadata().map_err(anyhow::Error::msg)?
+            );
+            return Ok(());
+        }
         CliCommand::Init => {
             return init::run_init();
         }

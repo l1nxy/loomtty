@@ -1,10 +1,13 @@
 //! Cocoa scripting objects, queued commands, and correlated terminal creation.
 mod cocoa;
 mod execution;
+mod intents;
 mod model;
 pub(super) use cocoa::{cancel_all, install};
 use crossbeam_channel::Sender;
 pub(crate) use execution::creation_result;
+pub(crate) use intents::metadata;
+pub(super) use intents::{start as start_intents, stop as stop_intents};
 use loom_protocol::message::ClientMessage;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -18,6 +21,45 @@ pub(super) fn configure(enabled: bool) {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Source {
+    AppleScript,
+    AppIntents,
+}
+impl Source {
+    fn for_token(token: u64) -> Self {
+        if token & (1 << 63) == 0 {
+            Self::AppleScript
+        } else {
+            Self::AppIntents
+        }
+    }
+    fn enabled(self, config: &loom_config::schema::WindowConfig) -> bool {
+        match self {
+            Self::AppleScript => config.macos_applescript,
+            Self::AppIntents => config.macos_app_intents,
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::AppleScript => "AppleScript",
+            Self::AppIntents => "App Intents",
+        }
+    }
+}
+fn request(token: u64) -> Option<Request> {
+    match Source::for_token(token) {
+        Source::AppleScript => cocoa::request(token),
+        Source::AppIntents => intents::request(token),
+    }
+}
+fn finish(token: u64, result: Result<Option<String>, String>) {
+    match Source::for_token(token) {
+        Source::AppleScript => cocoa::finish(token, result),
+        Source::AppIntents => intents::finish(token, result),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Verb {
     NewWindow,
     NewTab,
@@ -27,6 +69,7 @@ enum Verb {
     CloseTab,
     CloseWindow,
     Input,
+    ListTerminals,
 }
 #[derive(Clone, Debug)]
 struct Request {
@@ -67,6 +110,7 @@ impl Bridge {
         apps: &[crate::app::App],
         active: Option<WindowId>,
         enabled: bool,
+        source: Source,
     ) -> model::Snapshot {
         use model::{Kind, Object, Snapshot};
         let mut snapshot = Snapshot {
@@ -75,7 +119,7 @@ impl Bridge {
         };
         let windows: Vec<_> = apps
             .iter()
-            .filter(|app| !app.native_quick_terminal && app.core.config.window.macos_applescript)
+            .filter(|app| !app.native_quick_terminal && source.enabled(&app.core.config.window))
             .filter_map(|app| {
                 Some((
                     app,

@@ -84,6 +84,7 @@ macos_secure_input = true
 macos_quit_after_last_window_closed = false
 macos_initial_window = true
 macos_restore_windows = true
+macos_applescript = true
 ```
 
 Option-key and Secure Input settings hot reload. By default left Option sends terminal Alt and right
@@ -207,13 +208,61 @@ excluded from automatic normal-window session selection. A later application
 launch creates a new Quick Terminal session. This follows loom's persistent
 server model rather than terminating the shell when the app quits.
 
+### AppleScript
+
+The app bundle includes a scripting dictionary. Open **Script Editor → File →
+Open Dictionary → loomtty** to inspect it. `window.macos_applescript = false`
+disables loom's object queries and control commands after config reload.
+The hierarchy is application → native windows → native tabs → terminals.
+Application-level `tabs` and `terminals` collections also support absolute ID
+references. Quick Terminal is excluded. Tab IDs survive a session switch;
+terminal IDs expire when their connection, session, or pane changes.
+
+```applescript
+tell application "loomtty"
+    set projectWindow to new window working directory "/tmp"
+    set firstTerminal to focused terminal of projectWindow
+    set secondTerminal to split terminal firstTerminal direction "down"
+    input text ("pwd" & linefeed) to secondTerminal
+    focus firstTerminal
+    set extraTab to new tab in window projectWindow working directory "/tmp"
+    return {id of projectWindow, session name of extraTab}
+end tell
+```
+
+`new window`, `new tab`, and `split terminal` wait for the new terminal (up to
+30 seconds). Split creation is atomic relative to its target and returns the
+server's correlated pane ID; it requires the matching server build, including
+on remote hosts. If creation times out, inspect the app before retrying: a
+window or pane may already exist. New windows and tabs inherit the active
+connection; an explicit working directory selects a local session.
+
+`input text` sends exact UTF-8 (up to 256 KiB per call) to the specified terminal, without broadcasting,
+bracketed-paste wrapping, or an added newline. Add `linefeed` to execute a
+command. Its completion means queued for delivery, not that the shell finished
+processing it. Closed objects, unavailable connections, a full input queue,
+and modal dialogs return script errors. `close terminal` closes its PTY;
+`close tab` and `close window` detach clients and preserve server sessions.
+
+`dist/macos/test-scripting.sh` runs a Foundation-only bundle test that loads the
+actual dictionary, checks command argument mappings, and exercises object
+getters/specifiers. It requires no Xcode installation and opens no UI. The
+normal Rust/server tests cover identity invalidation, backpressure, and atomic
+split targeting. GUI Apple-event execution still needs the manual checks below.
+
 This does **not** claim full [Ghostty feature parity](https://ghostty.org/docs/features).
-AppleScript/App Intents and VoiceOver terminal
-content remain outstanding in this adaptation. Terminal splits and the
-settings panel still use loom's GPU UI. Session restoration is provided by the existing
-loom server/session layer.
+App Intents and VoiceOver terminal content remain outstanding. Terminal splits
+and settings use loom's GPU UI; the native shell and server session model
+remain integrated with it.
 
 ### Manual regression checks
+
+- In Script Editor, run the example above, query `every terminal`, then move
+  tabs between windows and resolve the saved IDs again. Try scripts while
+  another client switches focus; splits and input must still reach the named
+  target. Disconnect/reconnect a session and verify old terminal references
+  fail. Disable AppleScript and verify queries/commands return errors. Confirm
+  creation followed immediately by input delivers the entire text.
 
 - Open multiple windows and native tabs; type different commands in each.
   Switch tabs, move a tab to a window, and merge windows. Input and output must

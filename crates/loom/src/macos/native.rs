@@ -79,6 +79,7 @@ impl Delegate {
         let original_class = object.class();
         let mut class = ClassBuilder::new(c"LoomApplicationDelegate", original_class)
             .expect("register loom application delegate extension once");
+        super::scripting::install(&mut class);
         // SAFETY: selectors use AppKit's documented ABIs. The subclass adds
         // no ivars and inherits winit's implementation of every other method.
         unsafe {

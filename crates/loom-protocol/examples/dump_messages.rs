@@ -425,6 +425,15 @@ fn emit_fixtures() -> String {
 fn client_fixtures() -> Vec<(&'static str, String, String)> {
     let cases: Vec<(&'static str, ClientMessage, &'static str)> = vec![
         (
+            "Targeted pane creation",
+            ClientMessage::CreatePaneAt {
+                pane_id: 42,
+                below: true,
+                request_id: 9001,
+            },
+            r#"{ tag: "CreatePaneAt", paneId: 42n, below: true, requestId: 9001n }"#,
+        ),
+        (
             "Input bytes",
             ClientMessage::Input {
                 pane_id: 42,
@@ -511,6 +520,15 @@ fn client_fixtures() -> Vec<(&'static str, String, String)> {
 
 fn server_fixtures() -> Vec<(&'static str, String, String)> {
     let cases: Vec<(&'static str, ServerMessage, &'static str)> = vec![
+        (
+            "Correlated pane creation result",
+            ServerMessage::PaneCreationResult {
+                request_id: 9001,
+                pane_id: Some(43),
+                error: None,
+            },
+            r#"{ tag: "PaneCreationResult", requestId: 9001n, paneId: 43n, error: null }"#,
+        ),
         (
             "Bell",
             ServerMessage::Bell { pane_id: 9 },

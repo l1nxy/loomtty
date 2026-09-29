@@ -572,6 +572,16 @@ impl App {
                             needs_redraw = true;
                         }
                     }
+                    ServerEvent::Control(ServerMessage::PaneCreationResult {
+                        request_id,
+                        pane_id,
+                        error,
+                    }) => {
+                        #[cfg(target_os = "macos")]
+                        crate::macos::scripting_result(request_id, pane_id, error);
+                        #[cfg(not(target_os = "macos"))]
+                        let _ = (request_id, pane_id, error);
+                    }
                     // IPC-only responses — not relevant for the GUI client
                     ServerEvent::Control(ServerMessage::SessionInfoReply { .. })
                     | ServerEvent::Control(ServerMessage::PaneListReply { .. })

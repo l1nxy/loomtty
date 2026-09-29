@@ -1781,3 +1781,87 @@ fn cursor_debounce_two_consecutive_calls_settle() {
     assert!(!held2, "second observation of same value settles");
     assert_eq!(sent2, (5, 10, 0));
 }
+
+#[rstest]
+fn targeted_split_ignores_current_focus_and_returns_only_to_requester(
+    mut server_with_session: (Server, String),
+) {
+    let (ref mut server, ref name) = server_with_session;
+    let target = server.sessions[name]
+        .workspaces
+        .active()
+        .active_pane_id()
+        .unwrap();
+    server.handle_message(ClientMessage::CreatePane, 1);
+    assert_ne!(
+        server.sessions[name].workspaces.active().active_pane_id(),
+        Some(target)
+    );
+    let responses = server.handle_message(
+        ClientMessage::CreatePaneAt {
+            pane_id: target,
+            below: true,
+            request_id: 812,
+        },
+        1,
+    );
+    let created = responses
+        .iter()
+        .find_map(|response| match response {
+            ServerResponse::SendToClient(
+                1,
+                ServerMessage::PaneCreationResult {
+                    request_id: 812,
+                    pane_id: Some(id),
+                    error: None,
+                },
+            ) => Some(*id),
+            _ => None,
+        })
+        .expect("correlated response to caller");
+    let session = &server.sessions[name];
+    let workspace = session.workspaces.active();
+    let column = workspace
+        .columns
+        .iter()
+        .find(|column| column.contains_pane(target))
+        .unwrap();
+    assert!(
+        column.contains_pane(created),
+        "new tile must be below the requested pane"
+    );
+    assert_eq!(workspace.columns.len(), 2);
+    assert!(!responses.iter().any(|response| matches!(
+        response,
+        ServerResponse::BroadcastToSession(_, ServerMessage::PaneCreationResult { .. })
+    )));
+    assert!(responses.iter().any(|response| matches!(response, ServerResponse::BroadcastToSession(_, ServerMessage::PaneCreated { pane_id, .. }) if *pane_id == created)));
+}
+
+#[rstest]
+fn targeted_split_rejects_missing_pane_without_creating_another(
+    mut server_with_session: (Server, String),
+) {
+    let (ref mut server, ref name) = server_with_session;
+    let before = server.sessions[name].workspaces.all_pane_ids();
+    let responses = server.handle_message(
+        ClientMessage::CreatePaneAt {
+            pane_id: u64::MAX,
+            below: false,
+            request_id: 813,
+        },
+        1,
+    );
+    assert_eq!(server.sessions[name].workspaces.all_pane_ids(), before);
+    assert!(responses.iter().any(|response| matches!(
+        response,
+        ServerResponse::SendToClient(
+            1,
+            ServerMessage::PaneCreationResult {
+                request_id: 813,
+                pane_id: None,
+                error: Some(_)
+            }
+        )
+    )));
+}

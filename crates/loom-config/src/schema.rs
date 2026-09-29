@@ -480,6 +480,9 @@ pub struct WindowConfig {
     /// Restore normal window frames, sessions and native tab groups on default launch.
     #[garde(skip)]
     pub macos_restore_windows: bool,
+    /// Allow AppleScript to query and control native windows and terminals.
+    #[garde(skip)]
+    pub macos_applescript: bool,
     #[garde(dive)]
     pub macos_quick_terminal: MacosQuickTerminalConfig,
     #[garde(skip)]
@@ -498,6 +501,7 @@ impl Default for WindowConfig {
             macos_quit_after_last_window_closed: false,
             macos_initial_window: true,
             macos_restore_windows: true,
+            macos_applescript: true,
             macos_quick_terminal: MacosQuickTerminalConfig::default(),
             width: 1024.0,
             height: 768.0,

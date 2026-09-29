@@ -531,6 +531,13 @@ pub enum ClientMessage {
         from_offset: u32,
         direction: i8,
     },
+    /// Atomically focus a specific pane and split beside it. The reply is
+    /// correlated to the requesting client, even with concurrent clients.
+    CreatePaneAt {
+        pane_id: u64,
+        below: bool,
+        request_id: u64,
+    },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -659,6 +666,12 @@ pub enum ServerMessage {
     /// `ClientPaneGrid::scroll_offset` (lines into history from the live
     /// bottom).
     SetScrollOffset { pane_id: u64, offset: u32 },
+    /// Completion of CreatePaneAt, sent only to the requesting client.
+    PaneCreationResult {
+        request_id: u64,
+        pane_id: Option<u64>,
+        error: Option<String>,
+    },
 }
 
 /// Direction of the edge bounce.

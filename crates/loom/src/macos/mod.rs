@@ -4,8 +4,10 @@ mod lookup;
 mod menu;
 mod native;
 mod restore;
+mod scripting;
 mod services;
 pub(crate) use native::system_dark_appearance;
+pub(crate) use scripting::creation_result as scripting_result;
 pub(crate) mod quick_terminal;
 
 use crossbeam_channel::Receiver;
@@ -22,6 +24,7 @@ use crate::app::{App, RemoteConnectionConfig, Selection};
 
 #[derive(Clone, Debug)]
 enum Command {
+    Script(u64),
     Menu(muda::MenuId),
     Action(Action),
     NewWindow,
@@ -76,11 +79,13 @@ pub(crate) struct MacApplication {
     normal_frames: std::collections::HashMap<WindowId, restore::Frame>,
     hotkey_manager: Option<GlobalHotKeyManager>,
     hotkey_registration: quick_terminal::hotkey::Registration,
+    scripting: scripting::Bridge,
 }
 
 impl MacApplication {
     pub fn new(app: App, proxy: EventLoopProxy<()>, explicit_window: bool) -> Self {
         let (tx, commands) = crossbeam_channel::unbounded();
+        scripting::configure(app.core.config.window.macos_applescript);
         let delegate = native::Delegate::install(tx.clone(), proxy.clone());
         let menu_proxy = proxy.clone();
         let hotkey_proxy = proxy.clone();
@@ -139,6 +144,7 @@ impl MacApplication {
             _delegate: delegate,
             secure_input: native::SecureInput::default(),
             manual_secure_input: false,
+            scripting: scripting::Bridge::default(),
             view_hooks: std::collections::HashMap::new(),
         }
     }
@@ -309,6 +315,7 @@ impl MacApplication {
 
     fn dispatch(&mut self, command: Command, event_loop: &ActiveEventLoop) {
         match command {
+            Command::Script(token) => self.execute_script(token, event_loop),
             Command::Menu(id) => {
                 if let Some(command) = self.menu.as_ref().and_then(|menu| menu.command(&id)) {
                     self.dispatch(command, event_loop);
@@ -515,7 +522,11 @@ impl MacApplication {
             .as_ref()
             .and_then(|quick| quick.next_frame(std::time::Instant::now()));
         let save = self.restoration.as_ref().and_then(|store| store.deadline());
-        quick.into_iter().chain(save).min()
+        quick
+            .into_iter()
+            .chain(save)
+            .chain(self.scripting.deadline())
+            .min()
     }
 
     fn restore_windows(&mut self, snapshot: restore::Snapshot, event_loop: &ActiveEventLoop) {
@@ -853,6 +864,7 @@ impl MacApplication {
             );
         }
         self.save_restoration(false);
+        self.update_scripting();
     }
 }
 
@@ -1023,6 +1035,8 @@ impl ApplicationHandler for MacApplication {
     }
 
     fn exiting(&mut self, event_loop: &ActiveEventLoop) {
+        scripting::cancel_all("loomtty is quitting");
+        scripting::configure(false);
         self.save_restoration(true);
         let ids: Vec<_> = self
             .windows

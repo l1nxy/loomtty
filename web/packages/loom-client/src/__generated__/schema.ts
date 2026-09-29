@@ -110,6 +110,7 @@ export const REGISTRY: Record<string, ContainerSpec> = {
     { name: "CapturePane", ordinal: 44, shape: { kind: "struct", fields: [{ name: "session_name", jsName: "sessionName", type: { kind: "str" } }, { name: "pane_id", jsName: "paneId", type: { kind: "u64" } }, { name: "opts", jsName: "opts", type: { kind: "ref", name: "CapturePaneOpts" } }, ] } },
     { name: "ListPrompts", ordinal: 45, shape: { kind: "struct", fields: [{ name: "session_name", jsName: "sessionName", type: { kind: "str" } }, { name: "pane_id", jsName: "paneId", type: { kind: "u64" } }, ] } },
     { name: "JumpToPrompt", ordinal: 46, shape: { kind: "struct", fields: [{ name: "session_name", jsName: "sessionName", type: { kind: "str" } }, { name: "pane_id", jsName: "paneId", type: { kind: "u64" } }, { name: "from_offset", jsName: "fromOffset", type: { kind: "u32" } }, { name: "direction", jsName: "direction", type: { kind: "i8" } }, ] } },
+    { name: "CreatePaneAt", ordinal: 47, shape: { kind: "struct", fields: [{ name: "pane_id", jsName: "paneId", type: { kind: "u64" } }, { name: "below", jsName: "below", type: { kind: "bool" } }, { name: "request_id", jsName: "requestId", type: { kind: "u64" } }, ] } },
   ] },
   ColumnState: { kind: "struct", fields: [
     { name: "tiles", jsName: "tiles", type: { kind: "seq", of: { kind: "ref", name: "TileState" } } },
@@ -172,6 +173,7 @@ export const REGISTRY: Record<string, ContainerSpec> = {
     { name: "PaneCapture", ordinal: 25, shape: { kind: "struct", fields: [{ name: "session_name", jsName: "sessionName", type: { kind: "str" } }, { name: "pane_id", jsName: "paneId", type: { kind: "u64" } }, { name: "text", jsName: "text", type: { kind: "str" } }, { name: "truncated", jsName: "truncated", type: { kind: "bool" } }, ] } },
     { name: "PromptListReply", ordinal: 26, shape: { kind: "struct", fields: [{ name: "session_name", jsName: "sessionName", type: { kind: "str" } }, { name: "pane_id", jsName: "paneId", type: { kind: "u64" } }, { name: "marks", jsName: "marks", type: { kind: "seq", of: { kind: "ref", name: "PromptMarkInfo" } } }, ] } },
     { name: "SetScrollOffset", ordinal: 27, shape: { kind: "struct", fields: [{ name: "pane_id", jsName: "paneId", type: { kind: "u64" } }, { name: "offset", jsName: "offset", type: { kind: "u32" } }, ] } },
+    { name: "PaneCreationResult", ordinal: 28, shape: { kind: "struct", fields: [{ name: "request_id", jsName: "requestId", type: { kind: "u64" } }, { name: "pane_id", jsName: "paneId", type: { kind: "option", of: { kind: "u64" } } }, { name: "error", jsName: "error", type: { kind: "option", of: { kind: "str" } } }, ] } },
   ] },
   SessionDetailInfo: { kind: "struct", fields: [
     { name: "name", jsName: "name", type: { kind: "str" } },

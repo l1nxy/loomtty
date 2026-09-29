@@ -54,6 +54,8 @@ install -m755 "$BIN_DIR/loomtty-server" "$APP/Contents/MacOS/loomtty-server"
 sed "s/@VERSION@/$VERSION/g" "$SCRIPT_DIR/Info.plist" > "$APP/Contents/Info.plist"
 cp "$REPO_ROOT/assets/icons/app_icon_macos.icns" "$APP/Contents/Resources/app_icon_macos.icns"
 
+cp "$SCRIPT_DIR/loomtty.sdef" "$APP/Contents/Resources/loomtty.sdef"
+
 # Shell-integration scripts (OSC 133 prompt marks).
 mkdir -p "$APP/Contents/Resources/shell-integration"
 for s in loom.bash loom.zsh loom.fish; do

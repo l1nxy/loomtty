@@ -50,6 +50,7 @@ impl ViewHooks {
             let mut class = ClassBuilder::new(c"LoomTerminalView", original_class)
                 .expect("register terminal view extension");
             super::accessibility::install(&mut class);
+            super::text_services::install(&mut class);
             // SAFETY: AppKit's quickLookWithEvent: ABI; no additional ivars.
             unsafe {
                 class.add_method(
@@ -132,6 +133,7 @@ impl ViewHooks {
 
 impl Drop for ViewHooks {
     fn drop(&mut self) {
+        super::text_services::remove(&self.view);
         VIEWS.with(|views| {
             views
                 .borrow_mut()

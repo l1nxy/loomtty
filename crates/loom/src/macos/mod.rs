@@ -7,6 +7,7 @@ mod native;
 mod restore;
 mod scripting;
 mod services;
+mod text_services;
 pub(crate) use native::system_dark_appearance;
 pub(crate) use scripting::creation_result as scripting_result;
 pub(crate) mod quick_terminal;
@@ -25,6 +26,7 @@ use crate::app::{App, RemoteConnectionConfig, Selection};
 
 #[derive(Clone, Debug)]
 enum Command {
+    ServiceText(text_services::Request),
     Accessibility(accessibility::Action),
     AccessibilityRefresh,
     Script(u64),
@@ -321,6 +323,7 @@ impl MacApplication {
 
     fn dispatch(&mut self, command: Command, event_loop: &ActiveEventLoop) {
         match command {
+            Command::ServiceText(request) => self.handle_service_text(request),
             Command::Accessibility(action) => self.handle_accessibility(action),
             Command::AccessibilityRefresh => {}
             Command::Script(token) => self.execute_script(token, event_loop),
@@ -841,6 +844,7 @@ impl MacApplication {
                             .is_some_and(|quick| quick.visible);
                     self.accessibility
                         .update(app, hooks.view(), visible, application_active);
+                    text_services::update(app, hooks.view(), visible);
                 }
                 // A remote cwd must never be represented as a local file URL.
                 let cwd = if app.core.remote_config.is_none() {

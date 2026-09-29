@@ -121,6 +121,7 @@ impl Delegate {
             app.setServicesProvider(Some(&object));
         }
         NSWindow::setAllowsAutomaticWindowTabbing(false, mtm);
+        super::text_services::register(&app);
         Self {
             object,
             original_class,

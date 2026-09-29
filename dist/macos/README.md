@@ -250,6 +250,19 @@ getters/specifiers. It requires no Xcode installation and opens no UI. The
 normal Rust/server tests cover identity invalidation, backpressure, and atomic
 split targeting. GUI Apple-event execution still needs the manual checks below.
 
+### Text Services
+
+The loomtty → Services menu can send the active terminal's selected text to
+installed macOS text services and accept text returned by a service. Returned
+text goes through the normal paste path, including bracketed paste and the
+configured large-paste confirmation. It does not rewrite terminal output.
+
+Requests stay bound to their original pane and connection; switching panes,
+reconnecting, opening a modal, or entering password input invalidates them.
+Selections containing concealed cells are not offered to Services. Transfers
+are limited to 1 MiB of UTF-8 text in either direction. The service's private
+pasteboard is used, preserving the normal clipboard.
+
 ### Accessibility
 
 Each visible terminal pane exposes an AppKit text area for VoiceOver, with its
@@ -279,6 +292,12 @@ server session model remain integrated with it.
   cursor/selection announcements during output and focus changes. A password
   prompt must expose no text, and hidden Quick Terminal panes must disappear.
   Close/reconnect panes and verify old accessibility elements become invalid.
+- Select text and invoke an installed text Service from the application menu.
+  Test send-only, return-only, and text-transform services, with Chinese and
+  emoji. Verify returned text uses bracketed paste and large-paste confirmation.
+  Switch panes or reconnect while a service is open; its late result must not
+  enter the newly focused terminal. Repeat without selection, in a password
+  prompt, and while a modal is open. The normal clipboard must stay intact.
 - In Script Editor, run the example above, query `every terminal`, then move
   tabs between windows and resolve the saved IDs again. Try scripts while
   another client switches focus; splits and input must still reach the named
@@ -331,9 +350,10 @@ server session model remain integrated with it.
 
 ### Validation for this implementation
 
-On Apple Silicon macOS, `cargo test --workspace` passed **1,638 tests**
-(12 documentation examples and one bundle-only test ignored). A subsequent
-focused run added a passing scrollback accessibility regression test. Coverage includes Quick Terminal geometry,
+On Apple Silicon macOS, `cargo test --workspace` passed **1,644 tests**
+(12 documentation examples and one bundle-only test ignored), including
+**333 client tests**. Coverage includes Services request identity, shared
+paste-path regressions, Quick Terminal geometry,
 animation reversal, shortcut replacement, session exclusion, appearance
 switching, user color overrides, dictionary query bounds and password/modal
 exclusion, restoration locking/atomic saves, corrupt records, disconnected

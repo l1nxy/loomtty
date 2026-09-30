@@ -664,6 +664,16 @@ impl MacApplication {
             native::focus_window(window);
             self.active = Some(window.id());
         }
+        // Restored tabs begin hidden; AppKit may omit an unselected tab until
+        // it is first shown. Register every restored window after grouping so
+        // it is immediately reachable through Window. Existing entries are
+        // left intact by addWindowsItem:.
+        let application = objc2_app_kit::NSApplication::sharedApplication(mtm);
+        for app in &self.windows {
+            if let Some(window) = app.window.as_ref().and_then(|w| native::native_window(w)) {
+                application.addWindowsItem_title_filename(&window, &window.title(), false);
+            }
+        }
     }
 
     fn look_up(&mut self, id: WindowId, point: objc2_foundation::NSPoint, selection: bool) {

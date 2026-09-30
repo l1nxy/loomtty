@@ -528,6 +528,17 @@ The zoom hook retains winit's window class and forwards its original method;
 replacing an NSWindow's class was rejected after a live AppKit assertion. These
 checks do not cover external-display removal or fullscreen Spaces.
 
+A live Window-menu check on 2026-09-30 caught muda registering an unattached
+submenu template. Registration now uses the actual menu-bar submenu, allowing
+AppKit to add its window list and system layout commands. Restored hidden tabs
+are explicitly registered with AppKit after grouping. Before selecting any
+background tab, the menu listed all three restored tabs and the minimized
+fourth window. Selecting a background tab activated it; selecting the minimized
+window restored it; closing a tab removed its entry. Help registration uses the
+attached submenu too, but its search field was not visible in this QA bundle
+and is not yet verified. The focused client suite passed 372 tests and the
+workspace Clippy check passed with existing warnings after this change.
+
 An isolated client/server run verified Chinese, combining accents arriving in
 separate output chunks, removal of an overwritten accent, and preservation of
 the complete emoji ZWJ sequence in accessibility text and copied text. Live release checks also verify joined woman-technologist and family emoji,

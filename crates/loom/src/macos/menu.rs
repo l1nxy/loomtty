@@ -6,6 +6,9 @@ use muda::{
     AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu,
     accelerator::Accelerator,
 };
+use objc2::MainThreadMarker;
+use objc2_app_kit::NSApplication;
+use objc2_foundation::ns_string;
 
 use super::Command;
 
@@ -199,8 +202,22 @@ impl MenuBar {
         )?;
         menu.append_items(&[&app, &file, &edit, &view, &window, &help])?;
         menu.init_for_nsapp();
-        window.set_as_windows_menu_for_nsapp();
-        help.set_as_help_menu_for_nsapp();
+        // muda 0.15 creates a separate NSMenu when attaching each submenu.
+        // Its registration helpers point at the unattached template instead,
+        // so AppKit's window list and Help search never reach the menu bar.
+        let mtm = MainThreadMarker::new().expect("menus are created on the main thread");
+        let application = NSApplication::sharedApplication(mtm);
+        let native_menu = application.mainMenu().expect("installed main menu");
+        let windows = native_menu
+            .itemWithTitle(ns_string!("Window"))
+            .and_then(|item| item.submenu())
+            .expect("attached Window menu");
+        let help = native_menu
+            .itemWithTitle(ns_string!("Help"))
+            .and_then(|item| item.submenu())
+            .expect("attached Help menu");
+        application.setWindowsMenu(Some(&windows));
+        application.setHelpMenu(Some(&help));
         Ok(this)
     }
 

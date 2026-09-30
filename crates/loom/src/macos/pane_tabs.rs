@@ -370,14 +370,24 @@ impl PaneTabs {
         let enabled = app.core.connected
             && app.core.pending_session_name.is_none()
             && !app.modal_captures_keyboard();
-        self.control.setEnabled(enabled);
-        self.new_button.setEnabled(enabled);
-        self.close_button.setEnabled(enabled && active.is_some());
-        self.control.setSelectedSegment(
-            selected
-                .filter(|index| visible.contains(index))
-                .map_or(-1, |index| (index - visible.start) as isize),
-        );
+        // AppKit setters can invalidate drawing even when the value is
+        // unchanged. Native-state synchronization runs on every event/wake.
+        if self.control.isEnabled() != enabled {
+            self.control.setEnabled(enabled);
+        }
+        if self.new_button.isEnabled() != enabled {
+            self.new_button.setEnabled(enabled);
+        }
+        let can_close = enabled && active.is_some();
+        if self.close_button.isEnabled() != can_close {
+            self.close_button.setEnabled(can_close);
+        }
+        let selected_segment = selected
+            .filter(|index| visible.contains(index))
+            .map_or(-1, |index| (index - visible.start) as isize);
+        if self.control.selectedSegment() != selected_segment {
+            self.control.setSelectedSegment(selected_segment);
+        }
         self.rendered = visible;
         self.viewport_size = viewport;
         self.entries = entries;

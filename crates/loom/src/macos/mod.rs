@@ -1082,8 +1082,12 @@ impl MacApplication {
             self.hotkey_registration
                 .update(manager, &config.window.macos_quick_terminal.shortcut);
         }
+        let settings_key = self
+            .settings
+            .as_ref()
+            .is_some_and(|settings| settings.is_key());
         if let Some(menu) = &mut self.menu {
-            menu.update_panes(app);
+            menu.update_panes(app, settings_key);
             menu.update_secure_input(self.manual_secure_input, self.secure_input.is_enabled());
             menu.update_quick_terminal(
                 self.hotkey_registration.label().as_deref(),
@@ -1097,14 +1101,8 @@ impl MacApplication {
                 app.is_some_and(|app| app.core.selection.is_some()),
                 app.is_some_and(|app| app.modal_captures_keyboard()),
                 app.is_some_and(|app| app.native_quick_terminal),
+                settings_key,
             );
-            if self
-                .settings
-                .as_ref()
-                .is_some_and(|settings| settings.is_key())
-            {
-                menu.update_for_settings();
-            }
         }
         self.save_restoration(false);
         self.update_scripting();

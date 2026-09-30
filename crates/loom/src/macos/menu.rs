@@ -277,7 +277,7 @@ impl MenuBar {
     /// Pane navigation belongs in AppKit when the GPU tab strip is absent.
     /// Requests retain window/session identity so a queued click cannot focus
     /// a same-numbered pane after the active window or session changes.
-    pub fn update_panes(&mut self, app: Option<&App>) {
+    pub fn update_panes(&mut self, app: Option<&App>, settings: bool) {
         let context = app.and_then(|app| {
             app.window
                 .as_ref()
@@ -287,8 +287,11 @@ impl MenuBar {
         // Shortcut menu stays bounded; the scrolling pane strip exposes all panes.
         panes.truncate(9);
         let active = app.and_then(|app| app.core.workspaces.active().active_pane_id());
-        let enabled = app.is_some_and(|app| !app.modal_captures_keyboard());
-        self.panes.set_enabled(enabled && !panes.is_empty());
+        let enabled = !settings && app.is_some_and(|app| !app.modal_captures_keyboard());
+        let menu_enabled = enabled && !panes.is_empty();
+        if self.panes.is_enabled() != menu_enabled {
+            self.panes.set_enabled(menu_enabled);
+        }
         let changed = self.pane_context != context || self.pane_entries.len() != panes.len()
             || self.pane_entries.iter().zip(&panes).any(|((_, command), (id, _))|
                 !matches!(command, Command::FocusPane { pane, .. } if pane == id));
@@ -329,33 +332,6 @@ impl MenuBar {
             }
             if item.is_enabled() != enabled {
                 item.set_enabled(enabled);
-            }
-        }
-    }
-
-    pub fn update_for_settings(&self) {
-        self.panes.set_enabled(false);
-        for entry in &self.entries {
-            if matches!(entry.command, Command::Action(Action::ClosePane)) {
-                entry.item.set_text("Close Settings");
-            }
-            match entry.command {
-                Command::CloseWindow
-                | Command::SelectAll
-                | Command::Action(
-                    Action::ClosePane | Action::ClipboardCopy | Action::ClipboardPaste,
-                ) => entry.item.set_enabled(true),
-                Command::Action(Action::ToggleSettings) => {}
-                Command::Action(_)
-                | Command::NewPane
-                | Command::NextTab
-                | Command::PreviousTab
-                | Command::MergeWindows
-                | Command::MoveTabToWindow
-                | Command::ToggleTabBar
-                | Command::FontSize(_)
-                | Command::ToggleFullscreen => entry.item.set_enabled(false),
-                _ => {}
             }
         }
     }
@@ -420,13 +396,19 @@ impl MenuBar {
         can_copy: bool,
         modal: bool,
         quick: bool,
+        settings: bool,
     ) {
         let changed = self.bindings.as_ref() != Some(&keys.direct_bindings);
         for entry in &self.entries {
-            if matches!(entry.command, Command::Action(Action::ClosePane))
-                && entry.item.text() != "Close Pane"
-            {
-                entry.item.set_text("Close Pane");
+            if matches!(entry.command, Command::Action(Action::ClosePane)) {
+                let title = if settings {
+                    "Close Settings"
+                } else {
+                    "Close Pane"
+                };
+                if entry.item.text() != title {
+                    entry.item.set_text(title);
+                }
             }
             if matches!(entry.command, Command::ToggleFullscreen) {
                 let title = if quick {
@@ -443,6 +425,25 @@ impl MenuBar {
                 let _ = entry.item.set_accelerator(accelerator);
             }
             let enabled = match entry.command {
+                Command::CloseWindow
+                | Command::SelectAll
+                | Command::Action(
+                    Action::ClosePane | Action::ClipboardCopy | Action::ClipboardPaste,
+                ) if settings => true,
+                Command::Action(Action::ToggleSettings) => true,
+                Command::Action(_)
+                | Command::NewPane
+                | Command::NextTab
+                | Command::PreviousTab
+                | Command::MergeWindows
+                | Command::MoveTabToWindow
+                | Command::ToggleTabBar
+                | Command::FontSize(_)
+                | Command::ToggleFullscreen
+                    if settings =>
+                {
+                    false
+                }
                 Command::NewWindow
                 | Command::NewTab
                 | Command::Quit
@@ -453,7 +454,7 @@ impl MenuBar {
                 | Command::MoveTabToWindow
                 | Command::MergeWindows
                 | Command::ToggleTabBar => has_window && !quick,
-                Command::Action(Action::ToggleSettings | Action::ToggleHelp) => true,
+                Command::Action(Action::ToggleHelp) => true,
                 Command::Action(Action::ClipboardCopy) => has_window && can_copy && !modal,
                 Command::Action(Action::ClipboardPaste) => has_window,
                 Command::Action(_) | Command::NewPane | Command::SelectAll | Command::LookUp => {

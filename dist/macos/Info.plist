@@ -46,6 +46,7 @@
             <key>NSMessage</key><string>openDirectory</string>
             <key>NSPortName</key><string>loomtty</string>
             <key>NSSendFileTypes</key><array><string>public.item</string></array>
+            <key>NSRequiredContext</key><dict/>
             <key>NSUserData</key><string>window</string>
         </dict>
         <dict>
@@ -53,6 +54,7 @@
             <key>NSMessage</key><string>openDirectory</string>
             <key>NSPortName</key><string>loomtty</string>
             <key>NSSendFileTypes</key><array><string>public.item</string></array>
+            <key>NSRequiredContext</key><dict/>
             <key>NSUserData</key><string>tab</string>
         </dict>
     </array>

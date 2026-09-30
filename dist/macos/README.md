@@ -131,6 +131,10 @@ multiple items in one folder are deduplicated. Folders also advertise loomtty
 as an alternate Open With application. Installing the `.app` in Applications
 lets Launch Services discover these entries; no default file association is
 changed by the bundle.
+Both services declare an empty `NSRequiredContext` so macOS exposes them by
+default; `NSSendFileTypes` limits their input to files and folders. Omitting
+that context registers the services without automatically showing them in
+Finder's menu.
 
 The selected directory is stored as a fresh session's startup cwd before its
 first shell launches. Spaces, quotes, and shell metacharacters remain literal
@@ -571,8 +575,21 @@ separately. This checks the OS's actual ownership rather than inferring it from
 the menu state. The automation could not capture the open application menu's
 checkmark, so that visual check remains manual.
 
+Finder Services passed live release checks on 2026-09-30 with a signed QA app
+installed in `~/Applications`. The checks first exposed the missing
+`NSRequiredContext`; after adding it and refreshing Services registration,
+both entries appeared in Finder's context menu. Selecting a folder opened a
+new window, and selecting two files in the same folder opened exactly one new
+native tab. Those warm-client checks used a separate server socket. After the
+QA client quit, invoking the window service on one file cold-launched it with
+one attached session in the file's parent directory, using the already-running
+local server. In all three cases, shell `pwd` preserved Chinese, spaces, an
+apostrophe, and literal `$()` in the directory name. The temporary installed
+QA copy was removed after validation.
+
 VoiceOver speech/navigation, IME composition, the Secure Input menu checkmark,
 physical Look Up gestures, multi-display/Spaces restoration,
-Finder Services, other text-Service modes/late results/clipboard preservation, and
+Finder Services with a remote window active, folder Open With, other
+text-Service modes/late results/clipboard preservation, and
 Shortcuts discovery/execution still need their manual checks above. Full Xcode remains necessary for App Intents metadata;
 Command Line Tools alone cannot finish that validation.

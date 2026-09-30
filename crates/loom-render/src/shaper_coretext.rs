@@ -8,6 +8,7 @@ use core_foundation::base::{CFRange, TCFType};
 use core_foundation::string::CFString;
 use core_text::font::CTFont;
 use core_text::line::CTLine;
+use core_text::run::CTRun;
 use core_text::string_attributes::kCTFontAttributeName;
 
 use crate::shaper::Ligature;
@@ -32,6 +33,22 @@ fn create_ct_line(font: &CTFont, text: &str) -> CTLine {
     CTLine::new_with_attributed_string(attr_string.as_concrete_TypeRef())
 }
 
+/// CoreText silently substitutes fonts (including for an ASCII keycap with
+/// VS16). Glyph IDs are local to a font: returning a substituted face's ID
+/// with the caller's face would rasterize an unrelated letter. Let the
+/// caller's explicit font fallback choose that face instead.
+fn run_uses_font(run: &CTRun, font: &CTFont) -> bool {
+    let Some(attributes) = run.attributes() else {
+        return false;
+    };
+    // SAFETY: CoreText's attribute key is a process-lifetime CFString constant.
+    let key = unsafe { CFString::wrap_under_get_rule(kCTFontAttributeName) };
+    attributes
+        .find(key)
+        .and_then(|value| value.downcast::<CTFont>())
+        .is_some_and(|actual| actual.postscript_name() == font.postscript_name())
+}
+
 /// Shape a single character and return its glyph ID.
 ///
 /// Returns `None` if the font has no glyph for this character (glyph ID = 0).
@@ -42,6 +59,9 @@ pub(crate) fn ct_shape_char(font: &CTFont, ch: char) -> Option<u32> {
 
     // Search all runs for the first non-zero glyph
     for run in runs.iter() {
+        if !run_uses_font(&run, font) {
+            continue;
+        }
         let glyphs = run.glyphs();
         if let Some(&g) = glyphs.iter().find(|&&g| g != 0) {
             log::debug!(
@@ -79,6 +99,9 @@ pub(crate) fn ct_shape_grapheme(font: &CTFont, cluster: &str) -> Option<u32> {
     let mut total_glyphs: usize = 0;
     let mut first_nonzero_glyph: Option<u32> = None;
     for run in runs.iter() {
+        if !run_uses_font(&run, font) {
+            return None;
+        }
         let glyphs = run.glyphs();
         total_glyphs += glyphs.len();
         if first_nonzero_glyph.is_none()

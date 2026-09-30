@@ -133,6 +133,129 @@ fn styled_cell(ch: char, fg: PackedColor, bg: PackedColor, flags: u16) -> Packed
 }
 
 #[test]
+#[cfg(target_os = "macos")]
+fn coretext_shapes_complete_emoji_across_terminal_cells() {
+    let mut config = test_config();
+    let shaper = test_shaper(&config);
+    let mut atlas = test_atlas(&config, &shaper);
+    let ct = test_color_table(&config);
+    // Alacritty stores these as three wide cells; the zero-width joiner is
+    // attached to the skin-tone modifier, not to the first emoji scalar.
+    let mut cells = grid_with_size(7, 1);
+    for (col, ch) in [(0, '👩'), (2, '🏽'), (4, '💻')] {
+        cells[col] = PackedCell::with_ch(ch);
+        cells[col].flags = FLAG_WIDE_CHAR.to_le_bytes();
+        cells[col + 1].flags = FLAG_WIDE_CHAR_SPACER.to_le_bytes();
+    }
+    cells[6] = PackedCell::with_ch('A');
+    let graphemes = HashMap::from([(2, "🏽\u{200d}".into())]);
+    let emoji_font = shaper.emoji_font_id().expect("macOS Apple Color Emoji");
+    let expected = shaper
+        .shape_grapheme("👩🏽‍💻", emoji_font)
+        .expect("technologist glyph");
+    assert_ne!(Some(expected), shaper.shape_grapheme("👩🏽", emoji_font));
+    let mut reference_cells = grid_with_size(7, 1);
+    reference_cells[6] = PackedCell::with_ch('A');
+    let empty_graphemes = HashMap::new();
+    let reference = build_view_from_grid(
+        &mut atlas,
+        &test_view_inputs(
+            TestFrame {
+                cells: &reference_cells,
+                cols: 7,
+                rows: 1,
+                cursor_line: -1,
+                cursor_col: 0,
+                cursor_shape: CURSOR_HIDDEN,
+            },
+            &shaper,
+            &config,
+            &ct,
+            &empty_graphemes,
+        ),
+    );
+    for disabled in [
+        loom_config::schema::DisableLigatures::Never,
+        loom_config::schema::DisableLigatures::Always,
+    ] {
+        config.font.disable_ligatures = disabled;
+        let inputs = test_view_inputs(
+            TestFrame {
+                cells: &cells,
+                cols: 7,
+                rows: 1,
+                cursor_line: -1,
+                cursor_col: 0,
+                cursor_shape: CURSOR_HIDDEN,
+            },
+            &shaper,
+            &config,
+            &ct,
+            &graphemes,
+        );
+        let view = build_view_from_grid(&mut atlas, &inputs);
+        assert_eq!(
+            view.row_lig_cache[0].grapheme_glyphs,
+            vec![(0, expected, emoji_font, 2)]
+        );
+        assert_eq!(flattened_color_glyphs(&view).len(), 1, "one complete emoji");
+        let text = flattened_glyphs(&view);
+        assert_eq!(text.len(), 1, "following ASCII remains visible");
+        assert_relative_glyph_lists_match(&text, &flattened_glyphs(&reference));
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn coretext_keycap_uses_font_that_owns_the_glyph() {
+    let mut config = test_config();
+    config.font.family = "Menlo".into();
+    let shaper = test_shaper(&config);
+    let mut atlas = test_atlas(&config, &shaper);
+    let ct = test_color_table(&config);
+    let emoji_font = shaper.emoji_font_id().expect("Apple Color Emoji");
+    let expected = shaper
+        .shape_grapheme("1️⃣", emoji_font)
+        .expect("keycap glyph");
+    assert_eq!(
+        shaper.shape_grapheme("1️⃣", shaper.primary_font_id().unwrap()),
+        None
+    );
+    let menlo = core_text::font::new_from_name("Menlo", 16.0).unwrap();
+    assert_eq!(crate::shaper_coretext::ct_shape_char(&menlo, '👩'), None);
+    assert!(crate::shaper_coretext::ct_shape_char(&menlo, 'A').is_some());
+    let cells: Vec<_> = "1 X".chars().map(PackedCell::with_ch).collect();
+    let extras = HashMap::from([(0, "1️⃣".into())]);
+    let view = build_view_from_grid(
+        &mut atlas,
+        &test_view_inputs(
+            TestFrame {
+                cells: &cells,
+                cols: 3,
+                rows: 1,
+                cursor_line: -1,
+                cursor_col: 0,
+                cursor_shape: CURSOR_HIDDEN,
+            },
+            &shaper,
+            &config,
+            &ct,
+            &extras,
+        ),
+    );
+    assert_eq!(
+        view.row_lig_cache[0].grapheme_glyphs,
+        vec![(0, expected, emoji_font, 2)]
+    );
+    assert_eq!(flattened_color_glyphs(&view).len(), 1);
+    assert_eq!(
+        flattened_glyphs(&view).len(),
+        1,
+        "only the following X is monochrome"
+    );
+}
+
+#[test]
 fn packed_hidden_and_wide_spacer_cells_do_not_render_text_or_decorations() {
     let config = test_config();
     let shaper = test_shaper(&config);

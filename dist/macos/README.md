@@ -436,7 +436,7 @@ cargo test -p loomtty --lib --features macos-app-intents macos::scripting
 ### Validation for this implementation
 
 On Apple Silicon macOS, `cargo test --workspace --features loomtty/macos-app-intents`
-passed **1,669 tests**
+passed **1,675 tests**
 (12 documentation examples and one bundle-only test ignored), including
 **353 client tests**. Coverage includes Services request identity, shared
 paste-path regressions, Quick Terminal geometry,
@@ -473,9 +473,12 @@ matching results. Select All, Copy and paste into Find preserve the selected tex
 
 An isolated client/server run verified Chinese, combining accents arriving in
 separate output chunks, removal of an overwritten accent, and preservation of
-the complete emoji ZWJ sequence in accessibility text and copied text. The
-woman-technologist emoji still renders as separate woman/laptop components;
-text preservation does not establish full emoji shaping support.
+the complete emoji ZWJ sequence in accessibility text and copied text. Live release checks also verify joined woman-technologist and family emoji,
+regional-indicator flags, and keycaps. Shaping joins extended graphemes across
+terminal cells and checks each CoreText run's actual font before rasterizing
+its glyph ID. The emulator's allocated columns remain unchanged, so joined
+sequences can leave space before following text. Regression tests cover these
+clusters with ligatures enabled/disabled and font substitution for keycaps.
 
 VoiceOver speech/navigation, IME composition, Secure Input transitions, physical
 Look Up gestures, multi-display/Spaces restoration, Finder/text Services,

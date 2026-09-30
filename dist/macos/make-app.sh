@@ -101,6 +101,10 @@ rm -f "$APP/Contents/Frameworks/"*.original
 codesign --force --timestamp=none --sign "$SIGN_ID" "$SERVER_APP"
 codesign --force --timestamp=none --sign "$SIGN_ID" "$APP"
 codesign --verify --deep --strict "$APP" && echo "codesign: verified"
+if [ "$APP_INTENTS" = true ] && [ "$SIGN_ID" = "-" ]; then
+    echo "App Intents metadata included; macOS may reject Shortcuts discovery for ad-hoc signatures."
+    echo "Use --sign-id with an Apple Development or Developer ID identity for live Shortcuts testing."
+fi
 # Preserve the last working bundle until all generation and signing succeeded.
 rm -rf "$OUT_DIR/loomtty.app"
 mv "$APP" "$OUT_DIR/loomtty.app"

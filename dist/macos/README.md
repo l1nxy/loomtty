@@ -25,7 +25,9 @@ there's no separate GUI binary.
 
 ```sh
 # Full Xcode 16+ is needed for App Intents discovery metadata.
-# Set DEVELOPER_DIR if Xcode is not the selected developer directory.
+# Set it explicitly when switching from Command Line Tools so Cargo rebuilds
+# the Swift bridge and embedded compiler metadata with the selected Xcode.
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 cargo build --release -p loomtty -p loomtty-server --features loomtty/macos-app-intents
 dist/macos/make-app.sh                      # → target/macos/loomtty.app + .dmg
 # Faster local app testing with Command Line Tools only (no Shortcuts discovery):
@@ -42,6 +44,15 @@ so Gatekeeper blocks the first launch — users right-click → Open, or run
 `xattr -dr com.apple.quarantine /Applications/loomtty.app`. For a double-click
 experience, sign with a Developer ID and notarize (`xcrun notarytool submit`),
 then `xcrun stapler staple loomtty.app` before building the `.dmg`.
+
+App Intents discovery also depends on a trusted signing identity. On the tested
+macOS 27 system, `linkd` rejected an ad-hoc bundle as “not trusted for binding”
+and reported a missing Team ID; producing `Metadata.appintents` alone did not
+make actions appear in Shortcuts. Configure an Apple Development identity in
+Xcode for local acceptance testing, or a Developer ID identity for distribution,
+and pass its exact name with `--sign-id`. List available identities with
+`security find-identity -v -p codesigning`. Ad-hoc bundles remain useful for
+testing the terminal UI, but do not establish Shortcuts support.
 
 ## CI
 
@@ -329,8 +340,8 @@ action and do not claim keyboard focus. The adapter caches unchanged controls
 and does not add a polling timer.
 
 This does **not** claim full [Ghostty feature parity](https://ghostty.org/docs/features).
-App Intents metadata extraction and live Shortcuts execution still need to be
-verified with full Xcode and an unlocked desktop. The accessibility adapter
+App Intents metadata extraction passed with Xcode 27. Live Shortcuts execution
+still needs a trusted signed bundle and an unlocked desktop. The accessibility adapter
 still needs live VoiceOver acceptance testing. Terminal splits and settings use loom's GPU UI;
 the native shell and server session model remain integrated with it.
 
@@ -730,5 +741,18 @@ VoiceOver speech/navigation, IME composition, the Secure Input menu checkmark,
 physical Look Up gestures, external-display restoration/physical Space switching,
 Finder Services with a remote window active, folder Open With, other
 text-Service modes/late results/nonempty clipboard preservation, and
-Shortcuts discovery/execution still need their manual checks above. Full Xcode remains necessary for App Intents metadata;
-Command Line Tools alone cannot finish that validation.
+Shortcuts discovery/execution still need their manual checks above.
+
+With Xcode 27.0 (27A266a), the Swift bridge/ABI tests and release build passed.
+The bundle extractor now supplies the Xcode product build version and source/
+constant-value file lists, and reads the bundle identifier from the packaged
+Info.plist. The resulting signed bundle contains all five action definitions,
+TerminalEntity, entity queries, location enum, and New Terminal App Shortcut;
+`codesign --verify --deep --strict` passes.
+
+Live discovery used a separate `dev.loomtty.intentsliveqa` bundle and isolated
+runtime/state directories. Shortcuts did not list its actions. The system log
+reports `Bundle dev.loomtty.intentsliveqa is not trusted for binding, skipping`
+and `Unable to get teamId`; `security find-identity -v -p codesigning` found zero
+valid identities. This is a signing prerequisite for further live acceptance,
+not evidence that any action has executed successfully.

@@ -457,9 +457,9 @@ cargo test -p loomtty --lib --features macos-app-intents macos::scripting
 ### Validation for this implementation
 
 On Apple Silicon macOS, `cargo test --workspace --features loomtty/macos-app-intents`
-passed **1,682 tests**
+passed **1,690 tests**
 (12 documentation examples and one bundle-only test ignored), including
-**359 client tests**. Coverage includes Services request identity, shared
+**367 client tests**. Coverage includes Services request identity, shared
 paste-path regressions, Quick Terminal geometry,
 animation reversal, shortcut replacement, session exclusion, appearance
 switching, user color overrides, dictionary query bounds and password/modal
@@ -526,6 +526,18 @@ painting. Regressions cover all tab-bar/status-bar placements, painted preedit
 alignment, fixed-position font/scale changes, and hidden/underline cursors.
 The current UI automation attempt delivered literal `nihao` without entering
 system Pinyin composition, so it does not count as a live IME pass.
+
+Composition now retains its original pane/text field, session, connection, and
+broadcast recipients across AppKit's empty-preedit/commit sequence. Focus or
+modal changes cancel stale preedit instead of transferring it to another input;
+reopening the same field also expires the old composition. A paste-confirmation
+dialog blocks IME input to a palette underneath it. macOS window focus loss
+disables the native input context and clears winit's marked text; focus return
+reenables it. Regressions reproduce the previous wrong-pane/wrong-palette
+delivery and cover reconnects, pending session changes, cancellation, exact
+Unicode delivery, and password broadcast suppression. A live release check
+opened and closed another native window while a raw PTY recorded keystrokes;
+the original terminal received exactly `ab` across the focus round trip.
 
 The installed macOS Simplified-to-Traditional Chinese text Service returned
 the expected conversion to an isolated raw PTY, preserving emoji and combining

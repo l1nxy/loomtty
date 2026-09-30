@@ -157,6 +157,8 @@ pub(crate) struct UiFontInit {
 pub(crate) struct App {
     /// Core logic state — platform-agnostic.
     pub core: AppModel,
+    ime_target: Option<ime::Target>,
+    ime_generation: u64,
 
     // --- Shell-only fields (GPU / windowing / platform) ---
     pub window: Option<Arc<Window>>,
@@ -609,6 +611,8 @@ impl App {
                 m
             },
             window_focused: true,
+            ime_target: None,
+            ime_generation: 0,
             config_watcher: None,
             config_change_rx: None,
             pending_self_config_write_deadline: None,

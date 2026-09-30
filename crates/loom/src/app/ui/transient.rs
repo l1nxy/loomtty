@@ -235,7 +235,10 @@ impl App {
         cw: f32,
         ch: f32,
     ) -> Option<ImePreeditComponent> {
-        if !self.core.ime.preedit_active || self.core.ime.preedit_text.is_empty() {
+        if !self.core.ime.preedit_active
+            || self.core.ime.preedit_text.is_empty()
+            || !self.ime_target_is_current()
+        {
             return None;
         }
         let (base_x, base_y) = self.ime_input_anchor(tiles, cw, ch)?;

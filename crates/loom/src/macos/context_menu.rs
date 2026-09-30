@@ -247,11 +247,11 @@ impl super::MacApplication {
         // Selection may change while AppKit runs its nested tracking loop.
         // Never copy another pane's text through a previously enabled item.
         if matches!(request.item.action, ContextMenuAction::Copy)
-            && !app
+            && app
                 .core
                 .selection
                 .as_ref()
-                .is_some_and(|selection| selection.pane_id == request.target.pane)
+                .is_none_or(|selection| selection.pane_id != request.target.pane)
         {
             return;
         }

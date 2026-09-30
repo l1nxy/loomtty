@@ -66,6 +66,12 @@ impl App {
         use loom_protocol::message::ClientMessage;
 
         self.window_focused = focused;
+        #[cfg(target_os = "macos")]
+        if let Some(window) = &self.window {
+            // Clear AppKit/winit's marked text too. Clearing only our painted
+            // preedit leaves the old composition alive when this window returns.
+            window.set_ime_allowed(focused);
+        }
         self.send(ClientMessage::FocusChange { focused });
 
         if focused {
@@ -765,6 +771,7 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        self.cancel_stale_ime();
         self.flush_pending_redraw();
     }
 }

@@ -23,6 +23,10 @@ impl App {
     /// pins the contract; sprinkling `field = None` across new
     /// sites should be unnecessary.
     pub(crate) fn enter_modal_close_peers(&mut self, keep: ModalKind) {
+        // Opening/reopening a text field must not inherit a prior field's IME
+        // commit, even if the new field happens to have the same kind/pane.
+        self.ime_generation = self.ime_generation.wrapping_add(1);
+        self.cancel_stale_ime();
         let kept = kept_set(keep);
         if !kept.contains(&ModalField::Search) {
             // Restore pre-search scroll BEFORE the AppModel-level

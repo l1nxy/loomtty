@@ -11,6 +11,8 @@ use objc2_app_kit::NSApplication;
 use objc2_foundation::ns_string;
 
 use super::Command;
+use crate::app::App;
+use winit::window::WindowId;
 
 struct Entry {
     item: MenuItem,
@@ -24,6 +26,9 @@ pub struct MenuBar {
     entries: Vec<Entry>,
     secure_input: CheckMenuItem,
     bindings: Option<HashMap<String, String>>,
+    panes: Submenu,
+    pane_entries: Vec<(CheckMenuItem, Command)>,
+    pane_context: Option<(WindowId, String)>,
 }
 
 impl MenuBar {
@@ -34,6 +39,9 @@ impl MenuBar {
             entries: Vec::new(),
             secure_input: CheckMenuItem::new("Secure Keyboard Entry", true, false, None),
             bindings: None,
+            panes: Submenu::new("Go to Pane", false),
+            pane_entries: Vec::new(),
+            pane_context: None,
         };
         let app = Submenu::new("loomtty", true);
         app.append(&PredefinedMenuItem::about(
@@ -162,6 +170,27 @@ impl MenuBar {
             Some("Control+Super+F"),
         )?;
 
+        let pane = Submenu::new("Pane", true);
+        for (label, action) in [
+            ("Split Right", Action::NewColumnRight),
+            ("Split Below", Action::NewTileBelow),
+            ("Focus Left", Action::FocusLeft),
+            ("Focus Right", Action::FocusRight),
+            ("Focus Above", Action::FocusUp),
+            ("Focus Below", Action::FocusDown),
+            ("Close Pane", Action::ClosePane),
+        ] {
+            this.add(&pane, label, Command::Action(action), None)?;
+        }
+        pane.append(&PredefinedMenuItem::separator())?;
+        pane.append(&this.panes)?;
+        this.add(
+            &view,
+            "Sessions…",
+            Command::Action(Action::ToggleSessionPalette),
+            None,
+        )?;
+
         let window = Submenu::new("Window", true);
         window.append_items(&[
             &PredefinedMenuItem::minimize(None),
@@ -200,7 +229,7 @@ impl MenuBar {
             Command::Action(Action::ToggleHelp),
             None,
         )?;
-        menu.append_items(&[&app, &file, &edit, &view, &window, &help])?;
+        menu.append_items(&[&app, &file, &edit, &view, &pane, &window, &help])?;
         menu.init_for_nsapp();
         // muda 0.15 creates a separate NSMenu when attaching each submenu.
         // Its registration helpers point at the unattached template instead,
@@ -242,6 +271,63 @@ impl MenuBar {
             action,
         });
         Ok(())
+    }
+
+    /// Pane navigation belongs in AppKit when the GPU tab strip is absent.
+    /// Requests retain window/session identity so a queued click cannot focus
+    /// a same-numbered pane after the active window or session changes.
+    pub fn update_panes(&mut self, app: Option<&App>) {
+        let context = app.and_then(|app| {
+            app.window
+                .as_ref()
+                .map(|window| (window.id(), app.core.session_name.clone()))
+        });
+        let panes = app.map(App::pane_tab_entries).unwrap_or_default();
+        let active = app.and_then(|app| app.core.workspaces.active().active_pane_id());
+        let enabled = app.is_some_and(|app| !app.modal_captures_keyboard());
+        self.panes.set_enabled(enabled && !panes.is_empty());
+        let changed = self.pane_context != context || self.pane_entries.len() != panes.len()
+            || self.pane_entries.iter().zip(&panes).any(|((_, command), (id, _))|
+                !matches!(command, Command::FocusPane { pane, .. } if pane == id));
+        if changed {
+            for (item, _) in self.pane_entries.drain(..) {
+                let _ = self.panes.remove(&item);
+            }
+            if let Some((window, session)) = &context {
+                for (index, (id, label)) in panes.iter().enumerate() {
+                    let shortcut = (index < 9).then(|| {
+                        format!("Super+Alt+Digit{}", index + 1)
+                            .parse::<Accelerator>()
+                            .expect("valid pane shortcut")
+                    });
+                    let item = CheckMenuItem::new(label, enabled, active == Some(*id), shortcut);
+                    if let Err(error) = self.panes.append(&item) {
+                        log::warn!("could not add native pane item: {error}");
+                        break;
+                    }
+                    self.pane_entries.push((
+                        item,
+                        Command::FocusPane {
+                            window: *window,
+                            session: session.clone(),
+                            pane: *id,
+                        },
+                    ));
+                }
+            }
+            self.pane_context = context;
+        }
+        for ((item, _), (id, label)) in self.pane_entries.iter().zip(&panes) {
+            if item.text() != *label {
+                item.set_text(label);
+            }
+            if item.is_checked() != (active == Some(*id)) {
+                item.set_checked(active == Some(*id));
+            }
+            if item.is_enabled() != enabled {
+                item.set_enabled(enabled);
+            }
+        }
     }
 
     pub fn update_quick_terminal(&self, shortcut: Option<&str>, error: Option<&str>) {
@@ -287,6 +373,9 @@ impl MenuBar {
     pub fn command(&self, id: &muda::MenuId) -> Option<Command> {
         if self.secure_input.id() == id {
             return Some(Command::ToggleSecureInput);
+        }
+        if let Some((_, command)) = self.pane_entries.iter().find(|(item, _)| item.id() == id) {
+            return Some(command.clone());
         }
         self.entries
             .iter()

@@ -188,6 +188,47 @@ mod tests {
         App::new(LoomConfig::default(), "test-session")
     }
 
+    #[test]
+    fn native_tabs_remove_custom_chrome_without_reserving_or_intercepting_content() {
+        for position in [
+            TabBarPosition::Integrated,
+            TabBarPosition::Left,
+            TabBarPosition::Right,
+        ] {
+            for status in [StatusBarPosition::Top, StatusBarPosition::Bottom] {
+                let mut app = make_app();
+                app.native_window_chrome = true;
+                app.core.config.tabbar.position = position;
+                app.core.config.statusbar.position = status;
+                app.core.workspaces.view_size.width = 800.0;
+                app.core.workspaces.view_size.height = 600.0 - app.hints_bar_height();
+                let layout = app.top_bar_layout(800.0, 600.0, 8.0, 24.0, None);
+                let rects = chrome_rects(
+                    &app,
+                    800.0,
+                    600.0,
+                    layout.bar_height,
+                    app.hints_bar_height(),
+                );
+                assert!(rects.top_bar.is_empty());
+                assert!(rects.side_tab_bar.is_none());
+                assert_eq!(app.total_chrome_width(), 0.0);
+                assert_eq!(app.total_chrome_height(), app.hints_bar_height());
+                assert!(app.hints_bar_height() > 0.0);
+                assert_eq!(app.content_origin_x(), 0.0);
+                assert_eq!(app.content_origin_y(), 0.0);
+                assert_eq!(app.content_x_from_screen(1.0, 800.0), Some(1.0));
+                assert_eq!(app.content_x_from_screen(799.0, 800.0), Some(799.0));
+                assert!(!app.hit_test_top_bar(100.0, 0.0));
+                let cx = app.ui_context();
+                let bar = TopBarComponent::capture(&app, layout, &cx);
+                assert!(bar.hit_test(100.0, 1.0, &cx).is_none());
+                #[cfg(target_os = "macos")]
+                assert!(bar.accessibility(&cx).is_empty());
+            }
+        }
+    }
+
     /// Toggling the help overlay MUST change the chrome-cache key,
     /// otherwise `build_ui` returns the cached scene and the overlay
     /// never paints on open / ghosts on close (the bug behind "Alt+/

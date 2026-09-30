@@ -37,6 +37,11 @@ enum Command {
     Script(u64),
     Menu(muda::MenuId),
     Action(Action),
+    FocusPane {
+        window: WindowId,
+        session: String,
+        pane: u64,
+    },
     NewWindow,
     NewTab,
     OpenDirectory {
@@ -99,7 +104,8 @@ pub(crate) struct MacApplication {
 }
 
 impl MacApplication {
-    pub fn new(app: App, proxy: EventLoopProxy<()>, explicit_window: bool) -> Self {
+    pub fn new(mut app: App, proxy: EventLoopProxy<()>, explicit_window: bool) -> Self {
+        app.native_window_chrome = true;
         let (tx, commands) = crossbeam_channel::unbounded();
         scripting::configure(app.core.config.window.macos_applescript);
         scripting::start_intents(app.core.config.window.macos_app_intents);
@@ -268,6 +274,7 @@ impl MacApplication {
             .filter(|app| !app.native_quick_terminal)
             .and_then(|app| app.window.clone());
         let mut app = App::new(config, name.clone());
+        app.native_window_chrome = true;
         app.event_loop_proxy = Some(self.proxy.clone());
         app.core.remote_config = remote;
         app.core.recent_hosts = crate::recent_hosts::load();
@@ -401,6 +408,24 @@ impl MacApplication {
                 }
             }
             Command::ToggleQuickTerminal => self.toggle_quick_terminal(event_loop),
+            Command::FocusPane {
+                window,
+                session,
+                pane,
+            } => {
+                if let Some(app) = self.windows.iter_mut().find(|app| {
+                    app.window.as_ref().is_some_and(|w| w.id() == window)
+                        && app.core.session_name == session
+                        && !app.modal_captures_keyboard()
+                        && app.pane_tab_entries().iter().any(|(id, _)| *id == pane)
+                }) {
+                    app.apply_ui_action(crate::app::ui::UiAction::FocusPaneTab(pane));
+                    if let Some(window) = &app.window {
+                        native::focus_window(window);
+                    }
+                    app.schedule_redraw();
+                }
+            }
             Command::NewWindow | Command::NewTab => {
                 self.create_window(event_loop, matches!(command, Command::NewTab), false, None);
             }
@@ -620,6 +645,7 @@ impl MacApplication {
                     continue;
                 }
                 let mut app = App::new(self.last_config.clone(), tab.session.clone());
+                app.native_window_chrome = true;
                 app.native_initially_hidden = true;
                 app.event_loop_proxy = Some(self.proxy.clone());
                 app.core.remote_config = tab.remote.map(|remote| RemoteConnectionConfig {
@@ -752,6 +778,7 @@ impl MacApplication {
                 }
             };
             let mut app = App::new(config, name.clone());
+            app.native_window_chrome = true;
             app.event_loop_proxy = Some(self.proxy.clone());
             app.native_quick_terminal = true;
             app.core.remembers_last_session = false;
@@ -950,6 +977,7 @@ impl MacApplication {
                 .update(manager, &config.window.macos_quick_terminal.shortcut);
         }
         if let Some(menu) = &mut self.menu {
+            menu.update_panes(app);
             menu.update_secure_input(self.manual_secure_input, self.secure_input.is_enabled());
             menu.update_quick_terminal(
                 self.hotkey_registration.label().as_deref(),

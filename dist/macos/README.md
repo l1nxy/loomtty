@@ -810,3 +810,17 @@ terminal and no invalid-provider alert appeared. After the return, an explicit
 `printf` command produced `RECONNECTED_OK`. Provider timestamps and client
 reconnection logs establish the ordering. This check used visible terminal
 output, not a raw-byte capture on the replacement PTY.
+
+### Native tabs and split navigation
+
+macOS uses AppKit window tabs (`Cmd+T`, `Cmd+Shift+[` / `]`), including native
+reordering, moving a tab to a window, and merging windows. The GPU pane tab
+strip is not drawn on macOS, including when an older configuration selects a
+left/right tab bar. The old strip reserves no space and has no invisible mouse
+or accessibility targets. The terminal hints row remains available.
+
+Splits remain inside each window/tab. Use **Pane → Go to Pane** (checked active
+pane, `Cmd+Option+1` through `9`), the directional Pane commands, or click the
+terminal itself. **View → Sessions…** and **View → Overview** preserve the
+navigation previously exposed by the custom strip. Linux and Windows retain
+their existing chrome.

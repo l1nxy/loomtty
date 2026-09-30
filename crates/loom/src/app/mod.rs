@@ -162,6 +162,8 @@ pub(crate) struct App {
 
     // --- Shell-only fields (GPU / windowing / platform) ---
     pub window: Option<Arc<Window>>,
+    /// AppKit owns tabs; GPU chrome keeps only the terminal hints/status row.
+    pub native_window_chrome: bool,
     #[cfg(target_os = "macos")]
     pub native_quick_terminal: bool,
     #[cfg(target_os = "macos")]
@@ -565,6 +567,7 @@ impl App {
         App {
             core,
             window: None,
+            native_window_chrome: false,
             #[cfg(target_os = "macos")]
             native_quick_terminal: false,
             #[cfg(target_os = "macos")]
@@ -1491,6 +1494,9 @@ impl App {
     /// chrome cache key (display now reads hover declaratively via
     /// `cx.is_hovered(hit_id)` after Step 28).
     pub(crate) fn current_pane_tab_hover(&self) -> Option<u64> {
+        if self.native_window_chrome {
+            return None;
+        }
         if !matches!(
             self.core.config.tabbar.position,
             loom_config::config::TabBarPosition::Integrated,
@@ -1579,6 +1585,13 @@ impl App {
     }
 
     pub fn status_bar_height(&self) -> f32 {
+        if self.native_window_chrome {
+            return 0.0;
+        }
+        self.chrome_row_height()
+    }
+
+    fn chrome_row_height(&self) -> f32 {
         let cell_h = self
             .glyph_cache
             .as_ref()
@@ -1594,7 +1607,7 @@ impl App {
 
     /// Height of the bottom hints bar (same size as the status bar).
     pub fn hints_bar_height(&self) -> f32 {
-        self.status_bar_height()
+        self.chrome_row_height()
     }
 
     /// Total vertical space occupied by chrome (status bar + hints bar).
@@ -1606,6 +1619,9 @@ impl App {
     /// Matches the `Fixed` size hint used by `TabBarComponent` so that
     /// `Border`'s `left` / `right` slot width equals this value.
     pub fn total_chrome_width(&self) -> f32 {
+        if self.native_window_chrome {
+            return 0.0;
+        }
         match self.core.config.tabbar.position {
             loom_config::config::TabBarPosition::Integrated => 0.0,
             loom_config::config::TabBarPosition::Left
@@ -1630,6 +1646,9 @@ impl App {
     /// X origin of the terminal viewport — shifted right by the side
     /// tab bar's width when the tab bar is on the left, zero otherwise.
     pub fn content_origin_x(&self) -> f32 {
+        if self.native_window_chrome {
+            return 0.0;
+        }
         match self.core.config.tabbar.position {
             loom_config::config::TabBarPosition::Left => self.core.config.tabbar.width,
             _ => 0.0,
@@ -1645,6 +1664,9 @@ impl App {
     /// Map an absolute screen X coordinate into terminal-local X, or
     /// `None` if the point is inside the side tab bar (or to its left/right).
     pub fn content_x_from_screen(&self, screen_x: f32, window_width: f32) -> Option<f32> {
+        if self.native_window_chrome {
+            return Some(screen_x);
+        }
         match self.core.config.tabbar.position {
             loom_config::config::TabBarPosition::Integrated => Some(screen_x),
             loom_config::config::TabBarPosition::Left => {

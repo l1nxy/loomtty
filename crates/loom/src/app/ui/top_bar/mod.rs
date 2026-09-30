@@ -97,10 +97,11 @@ impl TopBarComponent {
     pub fn capture(app: &App, layout: TopBarLayout, cx: &UiContext<'_>) -> Self {
         let (mode_label, mode_color) = app.current_mode_label();
         let workspace_label = app.workspace_indicator_label();
-        let show_integrated_tabs = matches!(
-            app.core.config.tabbar.position,
-            loom_config::config::TabBarPosition::Integrated,
-        );
+        let show_integrated_tabs = !app.native_window_chrome
+            && matches!(
+                app.core.config.tabbar.position,
+                loom_config::config::TabBarPosition::Integrated,
+            );
         // Tab snapshot is only needed when we draw them inline. Saves
         // a Vec allocation + label cloning for side-bar configs.
         let pane_tabs = if show_integrated_tabs {
@@ -308,6 +309,9 @@ impl TopBarComponent {
     #[cfg(target_os = "macos")]
     pub(super) fn accessibility(&self, cx: &UiContext<'_>) -> Vec<super::accessibility::Node> {
         use super::accessibility::{Node, Role};
+        if self.bar_rect(cx).is_empty() {
+            return Vec::new();
+        }
         let root = self.build_hit_tree(self.bar_rect(cx), cx);
         super::types::with_hit_layout(&root, cx, |layout| {
             layout

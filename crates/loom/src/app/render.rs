@@ -450,6 +450,7 @@ impl App {
         // `.active()` reads it via `cx.is_active(hit_id)` at paint.
         self.effective_active_hit_id().hash(&mut hasher);
         self.pane_tab_scroll.to_bits().hash(&mut hasher);
+        self.native_window_chrome.hash(&mut hasher);
         self.pane_tab_scroll_max().to_bits().hash(&mut hasher);
         self.core.overview.active.hash(&mut hasher);
         self.overview_hovered_pane.hash(&mut hasher);
@@ -646,6 +647,7 @@ impl App {
         // `.active()` reads it via `cx.is_active(hit_id)` at paint.
         self.effective_active_hit_id().hash(&mut hasher);
         self.pane_tab_scroll.to_bits().hash(&mut hasher);
+        self.native_window_chrome.hash(&mut hasher);
         self.pane_tab_scroll_max().to_bits().hash(&mut hasher);
         self.core.ime.preedit_active.hash(&mut hasher);
         self.core.ime.preedit_text.hash(&mut hasher);

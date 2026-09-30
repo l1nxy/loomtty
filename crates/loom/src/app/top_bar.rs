@@ -106,7 +106,10 @@ impl App {
             cell_h,
             None,
         );
-        mx >= 0.0 && my >= layout.bar_y && my <= layout.bar_y + layout.bar_height
+        layout.bar_height > 0.0
+            && mx >= 0.0
+            && my >= layout.bar_y
+            && my <= layout.bar_y + layout.bar_height
     }
 
     pub(crate) fn ensure_active_pane_tab_visible(&mut self, tab_area_px: f32) {
@@ -144,6 +147,9 @@ impl App {
     }
 
     pub(crate) fn pane_tab_scroll_max(&self) -> f32 {
+        if self.native_window_chrome {
+            return 0.0;
+        }
         // When tabs are extracted into a dedicated side bar, the top bar
         // holds no pane tabs, so the horizontal scroll concept is
         // meaningless. Returning 0.0 early also prevents stale scroll
@@ -271,7 +277,11 @@ impl App {
         } else {
             ch * self.core.config.statusbar.padding_ratio
         };
-        let bar_height = ch + padding;
+        let bar_height = if self.native_window_chrome {
+            0.0
+        } else {
+            ch + padding
+        };
         let bar_y = self.status_bar_y(vh);
         // Shape-based widths so the tabs_area_px visibility window and the
         // session label's Fixed slot both reflect real glyph advance rather

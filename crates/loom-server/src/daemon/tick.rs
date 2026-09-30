@@ -689,7 +689,9 @@ fn build_scrollback_only_sync(
     // Zero out viewport — client will skip viewport update when rows==0.
     sync.rows = 0;
     sync.cells.clear();
-    sync.grapheme_extras = Default::default();
+    sync.grapheme_extras
+        .0
+        .retain(|(index, _)| (*index as usize) < sync.scrollback.len());
     sync.hyperlink_extras = Default::default();
     sync
 }
@@ -742,6 +744,36 @@ fn scrollback_sync_plan(
 #[cfg(test)]
 mod tests {
     use super::scrollback_sync_plan;
+
+    #[test]
+    #[cfg(unix)]
+    fn scrollback_only_sync_keeps_history_graphemes_without_viewport_extras() {
+        let mut pane = loom_term::pane::Pane::new_with_opts(
+            1,
+            8,
+            2,
+            "/bin/sh",
+            Some("printf 'e\\314\\201\\r\\nA\\r\\nf\\314\\202'; sleep 5"),
+            None,
+        )
+        .expect("pane");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            pane.process_pty_output();
+            if pane.snapshot(0).grapheme_extras.0.len() == 2 && pane.history_size() > 0 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "PTY produced no Unicode history"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let sync = super::build_scrollback_only_sync(&pane, 0, 0, pane.scrollback_total());
+        assert_eq!(sync.rows, 0);
+        assert!(sync.cells.is_empty());
+        assert_eq!(sync.grapheme_extras.0, vec![(0, "\u{301}".into())]);
+    }
 
     #[test]
     fn scrollback_sync_plan_rewinds_with_replace_when_total_drops() {

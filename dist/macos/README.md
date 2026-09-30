@@ -435,9 +435,10 @@ cargo test -p loomtty --lib --features macos-app-intents macos::scripting
 
 ### Validation for this implementation
 
-On Apple Silicon macOS, `cargo test --workspace` passed **1,656 tests**
+On Apple Silicon macOS, `cargo test --workspace --features loomtty/macos-app-intents`
+passed **1,669 tests**
 (12 documentation examples and one bundle-only test ignored), including
-**345 client tests**. Coverage includes Services request identity, shared
+**353 client tests**. Coverage includes Services request identity, shared
 paste-path regressions, Quick Terminal geometry,
 animation reversal, shortcut replacement, session exclusion, appearance
 switching, user color overrides, dictionary query bounds and password/modal
@@ -450,14 +451,34 @@ Chrome regressions check modal layering, stale commands/paste payloads, text
 editing, settings scroll bounds, and pointer/accessibility geometry across tab
 bar positions. Cocoa callbacks for detached terminal/control objects are tested
 without launching the UI.
-`cargo clippy --workspace --all-targets` completed with existing warnings;
+Incremental grid synchronization now sends grapheme overflow when needed,
+detects combining marks arriving in a later PTY chunk, evicts overwritten
+graphemes, and preserves their indices through history-only updates and trimming.
+This keeps the text consumed by Copy and accessibility consistent with the PTY.
+The fix requires the updated server as well as the client.
+`cargo clippy --workspace --all-targets` completed with existing warnings both
+with and without `loomtty/macos-app-intents`;
 `cargo fmt`, plist validation, script syntax validation, and ad-hoc bundle
 signature verification also completed.
 
 A bundled startup smoke test exposed the pinned winit fork's requirement to
 retain its own application delegate. The integration now extends that delegate
 without changing its ivars or replacing its lifecycle handlers. The process
-stayed alive after that correction, but the desktop was locked, so window
-presentation, menu clicks, tab interactions, Secure Input transitions, and
-Dock reopen still need the manual checks above. Compilation and unit tests
-are not a substitute for those checks.
+stayed alive after that correction. On an unlocked desktop, live checks now
+cover new windows and native tabs, independent session input, moving a tab to
+a window, closing sibling windows, and reopening the last session after all
+windows close. Settings controls and its theme menu appear in the accessibility
+tree; the Find field accepts Chinese via its accessibility setter and reports
+matching results. Select All, Copy and paste into Find preserve the selected text.
+
+An isolated client/server run verified Chinese, combining accents arriving in
+separate output chunks, removal of an overwritten accent, and preservation of
+the complete emoji ZWJ sequence in accessibility text and copied text. The
+woman-technologist emoji still renders as separate woman/laptop components;
+text preservation does not establish full emoji shaping support.
+
+VoiceOver speech/navigation, IME composition, Secure Input transitions, physical
+Look Up gestures, multi-display/Spaces restoration, Finder/text Services,
+live Apple-event commands and Shortcuts discovery/execution still need their
+manual checks above. Full Xcode remains necessary for App Intents metadata;
+Command Line Tools alone cannot finish that validation.

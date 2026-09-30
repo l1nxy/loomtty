@@ -11,6 +11,101 @@ fn grid_with_line(text: &str) -> ClientPaneGrid {
 }
 
 #[test]
+fn history_only_sync_retains_viewport_graphemes_and_trims_new_history() {
+    let mut grid = ClientPaneGrid::new(2, 1, 2);
+    grid.grapheme_map.insert(0, "e\u{301}".into());
+    grid.hyperlink_cell_map.insert(0, 1);
+    grid.hyperlink_map.insert(1, "https://example.com".into());
+    let sync = FullPaneSync {
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+            received_ack: 0,
+            echo_ack: 0,
+        },
+        cols: 2,
+        rows: 0,
+        title: String::new(),
+        scrollback: vec![PackedCell::with_ch('s'); 6],
+        scrollback_rows: 3,
+        scrollback_replace: false,
+        cells: vec![],
+        grapheme_extras: GraphemeExtras(vec![
+            (0, "\u{301}".into()),
+            (2, "\u{302}".into()),
+            (4, "\u{303}".into()),
+        ]),
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    };
+    grid.apply_full_sync_owned(&sync);
+    assert_eq!(grid.grapheme_map.len(), 3);
+    assert_eq!(grid.grapheme_map[&0], "s\u{302}");
+    assert_eq!(grid.grapheme_map[&2], "s\u{303}");
+    assert_eq!(grid.grapheme_map[&4], "e\u{301}");
+    assert_eq!(grid.hyperlink_cell_map[&0], 1);
+    assert_eq!(grid.hyperlink_map[&1], "https://example.com");
+}
+
+#[test]
+fn delta_evicts_overwritten_graphemes_without_erasing_other_cells() {
+    let mut grid = grid_with_scrollback();
+    let base = (grid.scrollback.len() * grid.cols as usize) as u32;
+    grid.grapheme_map.insert(0, "s\u{301}".into());
+    grid.grapheme_map.insert(base, "e\u{301}".into());
+    grid.grapheme_map.insert(base + 1, "a\u{302}".into());
+    grid.apply_delta(&CellDelta {
+        pane_id: 1,
+        generation: 4,
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: CURSOR_BLOCK,
+        mode_flags: 0,
+        regions: vec![DamageRegion {
+            line: 0,
+            left: 0,
+            right: 0,
+            cells: vec![PackedCell::with_ch('X')],
+        }],
+    });
+    assert!(!grid.grapheme_map.contains_key(&base));
+    assert_eq!(grid.grapheme_map[&0], "s\u{301}");
+    assert_eq!(grid.grapheme_map[&(base + 1)], "a\u{302}");
+
+    // Exercise the production, borrowed wire decoder too.
+    let mut encoder = loom_protocol::codec::StateEncoder::new();
+    encoder.push_cell(&PackedCell::with_ch('Y'));
+    let data = encoder.finish().to_vec();
+    grid.apply_delta_borrowed(&CellDeltaBorrowed::new(
+        PaneFrameMeta {
+            pane_id: 1,
+            generation: 5,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+            received_ack: 0,
+            echo_ack: 0,
+        },
+        grid.cols,
+        vec![BorrowedRegionMeta {
+            line: 0,
+            left: 1,
+            right: 1,
+            sm_offset: 0,
+            sm_len: data.len(),
+        }],
+        data,
+    ));
+    assert!(!grid.grapheme_map.contains_key(&(base + 1)));
+    assert_eq!(grid.grapheme_map[&0], "s\u{301}");
+}
+
+#[test]
 fn word_bounds_select_identifier() {
     let grid = grid_with_line("echo hello_world test");
     assert_eq!(grid.word_bounds_at(7, 0), Some((5, 15)));

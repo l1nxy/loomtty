@@ -108,6 +108,27 @@ fn extract_damage_resets_after_read() {
 }
 
 #[test]
+fn grapheme_damage_tracks_combining_marks_arriving_in_later_chunks() {
+    let mut pane = new_test_pane();
+    pane.process_chunks(&[b"e".to_vec()]);
+    let plain = pane.viewport_row_fingerprint(0);
+    assert!(!pane.damage_requires_grapheme_sync(&[(0, 0, 3)]));
+
+    pane.process_chunks(&["\u{301}".as_bytes().to_vec()]);
+    assert_ne!(pane.viewport_row_fingerprint(0), plain);
+    assert!(pane.damage_requires_grapheme_sync(&[(0, 0, 0)]));
+    assert!(!pane.damage_requires_grapheme_sync(&[(0, 1, 3)]));
+    assert_eq!(
+        pane.snapshot(1).grapheme_extras.0,
+        vec![(0, "\u{301}".into())]
+    );
+
+    pane.process_chunks(&[b"\rX".to_vec()]);
+    assert!(!pane.damage_requires_grapheme_sync(&[(0, 0, 3)]));
+    assert!(pane.snapshot(2).grapheme_extras.0.is_empty());
+}
+
+#[test]
 fn snapshot_incremental_only_includes_new_scrollback() {
     let pane = new_test_pane();
 

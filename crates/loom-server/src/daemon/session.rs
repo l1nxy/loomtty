@@ -776,10 +776,15 @@ impl Session {
                 let g = self.generation.entry(pane_id).or_insert(0);
                 *g += 1;
 
+                let needs_graphemes = pane.damage_requires_grapheme_sync(&content_ranges);
                 for client in clients.values_mut() {
                     if client.session_name == self.session_name {
                         let acc = client.damage.entry(pane_id).or_default();
-                        acc.merge_ranges(&content_ranges);
+                        if needs_graphemes {
+                            acc.mark_full();
+                        } else {
+                            acc.merge_ranges(&content_ranges);
+                        }
                         acc.cursor_dirty = true;
                     }
                 }
@@ -911,6 +916,38 @@ mod tests {
             session_name: session_name.to_string(),
             last_sent_cursor: HashMap::new(),
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn grapheme_output_uses_full_sync_for_connected_clients() {
+        let mut session = Session::new("unicode", test_shell(), 8.0, TerminalColors::default());
+        let pane = Pane::new_with_opts(
+            1,
+            16,
+            3,
+            test_shell(),
+            Some("printf 'e\\314\\201'; sleep 5"),
+            None,
+        )
+        .expect("pane");
+        session.panes.insert(1, pane);
+        let mut clients =
+            HashMap::from([(1, test_client(1, "unicode")), (2, test_client(2, "other"))]);
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            session.process_pty_and_damage(&mut clients);
+            if !session.panes[&1].snapshot(0).grapheme_extras.0.is_empty() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "PTY produced no combining mark"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(clients[&1].damage[&1].full);
+        assert!(!clients[&2].damage.contains_key(&1));
     }
 
     #[test]

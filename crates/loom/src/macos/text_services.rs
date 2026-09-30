@@ -232,6 +232,13 @@ fn write_selection(key: u64, pasteboard: &NSPasteboard, types: &NSArray<NSString
     pasteboard.setString_forType(&NSString::from_str(&text), &kind)
 }
 fn read_selection(key: u64, pasteboard: &NSPasteboard) -> bool {
+    // AppKit treats false as invalid provider data and shows an error alert.
+    // A destination that expired while the service was running is our own
+    // cancellation, not a provider failure. Acknowledge without reading or
+    // dispatching its payload; never revive the request for a replacement pane.
+    if !STATE.with(|state| state.borrow().entries.contains_key(&key)) {
+        return true;
+    }
     let Some(request) = request_from_pasteboard(key, pasteboard) else {
         return false;
     };
@@ -363,7 +370,7 @@ mod tests {
     }
 
     #[test]
-    fn receive_only_service_enforces_utf8_limit_and_rejects_expired_callbacks() {
+    fn receive_only_service_enforces_utf8_limit_and_discards_expired_callbacks() {
         with_service_entry(None, |key| {
             let pasteboard = NSPasteboard::pasteboardWithUniqueName();
             let kind = unsafe { NSPasteboardTypeString };
@@ -385,6 +392,9 @@ mod tests {
                     request_from_pasteboard(key, &pasteboard).is_some(),
                     accepted
                 );
+                if !accepted {
+                    assert!(!read_selection(key, &pasteboard));
+                }
             }
             let queued = request_from_pasteboard(key, &pasteboard).unwrap();
             STATE.with(|state| {
@@ -394,7 +404,8 @@ mod tests {
                 state.entry(123, queued.target.clone());
                 assert!(!state.accepts_request(&queued));
             });
-            assert!(!read_selection(key, &pasteboard));
+            assert!(read_selection(key, &pasteboard));
+            assert!(request_from_pasteboard(key, &pasteboard).is_none());
         });
     }
 

@@ -308,6 +308,10 @@ configured large-paste confirmation. It does not rewrite terminal output.
 
 Requests stay bound to their original pane and connection; switching panes,
 reconnecting, opening a modal, or entering password input invalidates them.
+An expired callback is acknowledged and discarded without blaming the provider
+with an invalid-data alert. Switching to another native tab/window leaves the
+request bound to the original terminal; it never retargets the new foreground
+terminal.
 Selections containing concealed cells are not offered to Services. Transfers
 are limited to 1 MiB of UTF-8 text in either direction. The service's private
 pasteboard is used, preserving the normal clipboard.
@@ -742,7 +746,7 @@ source and restore it afterward; direct Unicode insertion is not IME evidence.
 VoiceOver speech/navigation, IME composition, the Secure Input menu checkmark,
 physical Look Up gestures, external-display restoration/physical Space switching,
 Finder Services with a remote window active, folder-to-app-icon drops, other
-text-Service modes/late results/nonempty clipboard preservation, and
+text-Service late results during reconnect, and
 Shortcuts discovery/execution still need their manual checks above.
 
 With Xcode 27.0 (27A266a), the Swift bridge/ABI tests and release build passed.
@@ -771,3 +775,28 @@ callback independently of Services. Finder's folder context menu had no Open
 With entry and its File → Open With command was disabled for the selected
 folder. Folder-to-app-icon drag delivery remains unverified: the computer-use
 drag did not reliably trigger an open event, so it is not recorded as passing.
+
+
+Further live Services checks used a local temporary provider implementing
+Apple's [Services provider protocol](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/SysServices/Articles/providing.html).
+Its receive-only action appeared with no selection and delivered exactly
+`QA_RETURN 汉语 👋` inside one bracketed-paste pair (33 bytes). With a 15-second
+provider delay, switching native tabs before completion kept the returned text
+bound to the original tab; the new tab's raw PTY received only the explicit
+Ctrl-C used to end capture.
+
+Switching between two panes in the same window before that delayed return
+invalidated the request: neither PTY received service text. This initially
+caused AppKit to display an invalid-provider-data alert because the expired
+requestor returned false. The callback now acknowledges its own cancellation
+without reading or dispatching the obsolete payload; malformed data for a live
+request still fails. Repeating the test with the rebuilt release showed no
+alert and both captures contained only Ctrl-C. Provider start/finish timestamps
+confirmed that pane selection changed before the return. The client suite
+passed 373 tests (one bundle-only test ignored), and workspace clippy passed.
+
+A separate built-in Traditional Chinese conversion preserved a nonempty rich
+clipboard: the existing `public.tiff` representation retained its exact byte
+count and SHA-256 hash before/after invocation, while the PTY received the exact
+35-byte bracketed Unicode result. Only clipboard types, sizes, and hashes were
+recorded; clipboard contents were neither logged nor displayed.

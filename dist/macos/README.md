@@ -138,10 +138,12 @@ CLI working directories are preserved.
 
 Finder → Services provides **New loomtty Window Here** and **New loomtty Tab
 Here** for selected local files/folders. Files open their containing folder;
-multiple items in one folder are deduplicated. Folders also advertise loomtty
-as an alternate Open With application. Installing the `.app` in Applications
-lets Launch Services discover these entries; no default file association is
-changed by the bundle.
+multiple items in one folder are deduplicated. The bundle declares support for
+folder document-open events. Finder on macOS 27 disables Open With for ordinary
+folders, so use its Services entries for folders. For a file, Open With → Other
+→ All Applications can explicitly select loomtty and open its containing folder.
+Installing the `.app` in Applications lets Launch Services discover the Services
+entries; no default file association is changed by the bundle.
 Both services declare an empty `NSRequiredContext` so macOS exposes them by
 default; `NSSendFileTypes` limits their input to files and folders. Omitting
 that context registers the services without automatically showing them in
@@ -739,7 +741,7 @@ source and restore it afterward; direct Unicode insertion is not IME evidence.
 
 VoiceOver speech/navigation, IME composition, the Secure Input menu checkmark,
 physical Look Up gestures, external-display restoration/physical Space switching,
-Finder Services with a remote window active, folder Open With, other
+Finder Services with a remote window active, folder-to-app-icon drops, other
 text-Service modes/late results/nonempty clipboard preservation, and
 Shortcuts discovery/execution still need their manual checks above.
 
@@ -756,3 +758,16 @@ reports `Bundle dev.loomtty.intentsliveqa is not trusted for binding, skipping`
 and `Unable to get teamId`; `security find-identity -v -p codesigning` found zero
 valid identities. This is a signing prerequisite for further live acceptance,
 not evidence that any action has executed successfully.
+
+
+Finder document-open acceptance on `ec88526` used a separate
+`dev.loomtty.openurlqa` application identity. With the app stopped, selecting
+`launch.txt` under `中文 folder's $()` via Open With → Other → All Applications
+launched one native window (`tiny-snake`); its Window menu listed exactly that
+window. The shell's `pwd -P` output matched the file's containing directory
+byte-for-byte, including Chinese characters, spaces, apostrophe and `$()`.
+Always Open With remained unchecked. This validates the native document-open
+callback independently of Services. Finder's folder context menu had no Open
+With entry and its File → Open With command was disabled for the selected
+folder. Folder-to-app-icon drag delivery remains unverified: the computer-use
+drag did not reliably trigger an open event, so it is not recorded as passing.

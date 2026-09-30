@@ -457,9 +457,9 @@ cargo test -p loomtty --lib --features macos-app-intents macos::scripting
 ### Validation for this implementation
 
 On Apple Silicon macOS, `cargo test --workspace --features loomtty/macos-app-intents`
-passed **1,679 tests**
+passed **1,682 tests**
 (12 documentation examples and one bundle-only test ignored), including
-**356 client tests**. Coverage includes Services request identity, shared
+**359 client tests**. Coverage includes Services request identity, shared
 paste-path regressions, Quick Terminal geometry,
 animation reversal, shortcut replacement, session exclusion, appearance
 switching, user color overrides, dictionary query bounds and password/modal
@@ -517,6 +517,15 @@ The native menu's position and appearance were checked on Retina; a timed PTY
 counter continued updating terminal pixels while the menu remained open.
 Unit tests cover coordinate conversion, replaced session/connection rejection,
 and password/disconnection permissions.
+
+IME candidate placement now shares the renderer's window coordinates, including
+top status-bar and side tab-bar offsets. Its cache includes cell size and display
+scale and is invalidated when the input context changes. Terminal composition
+anchors to the text cell independently of block, underline, or hidden cursor
+painting. Regressions cover all tab-bar/status-bar placements, painted preedit
+alignment, fixed-position font/scale changes, and hidden/underline cursors.
+The current UI automation attempt delivered literal `nihao` without entering
+system Pinyin composition, so it does not count as a live IME pass.
 
 The installed macOS Simplified-to-Traditional Chinese text Service returned
 the expected conversion to an isolated raw PTY, preserving emoji and combining

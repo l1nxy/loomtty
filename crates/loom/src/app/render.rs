@@ -86,6 +86,21 @@ struct PaneVisualState {
 }
 
 impl App {
+    fn tiles_in_window(&self, tiles: &[(u64, GeoRect, bool)]) -> Vec<(u64, GeoRect, bool)> {
+        let content_x = self.content_origin_x();
+        let content_y = self.content_origin_y();
+        tiles
+            .iter()
+            .map(|(pane_id, rect, is_active)| {
+                (
+                    *pane_id,
+                    GeoRect::new(rect.x + content_x, rect.y + content_y, rect.w, rect.h),
+                    *is_active,
+                )
+            })
+            .collect()
+    }
+
     fn pane_rect_range(&self, start: usize, end: usize, pane: &GeoRect) -> Option<PaneRectRange> {
         if start >= end {
             return None;
@@ -2250,38 +2265,30 @@ impl App {
         self.debug_metrics
             .end_phase(crate::app::debug_metrics::Phase::Build);
 
-        // Update IME cursor area
+        // Drawing and native IME placement must share window coordinates,
+        // including the top status bar and side tab bar offsets.
+        let offset_tiles = self.tiles_in_window(&tiles);
+
+        // Update IME cursor area, including size/scale changes at a fixed cursor.
         if self.pending_resize.is_none()
             && let Some(window) = &self.window
-            && let Some((x, y)) = self.ime_input_anchor(&tiles, cache_cell_width, cache_cell_height)
+            && let Some((x, y)) =
+                self.ime_input_anchor(&offset_tiles, cache_cell_width, cache_cell_height)
         {
-            let cx = x as i32;
-            let cy = y as i32;
-            let pos = (cx, cy);
-            if self.core.ime.last_pos != Some(pos) {
-                self.core.ime.last_pos = Some(pos);
+            let area = loom_app::app::ImeCursorArea {
+                x: x as i32,
+                y: y as i32,
+                width: cache_cell_width.into(),
+                height: cache_cell_height.into(),
+                scale: window.scale_factor(),
+            };
+            if self.core.ime.update_area(area) {
                 window.set_ime_cursor_area(
-                    winit::dpi::PhysicalPosition::new(cx as f64, cy as f64),
-                    winit::dpi::PhysicalSize::new(
-                        cache_cell_width as f64,
-                        cache_cell_height as f64,
-                    ),
+                    winit::dpi::PhysicalPosition::new(area.x as f64, area.y as f64),
+                    winit::dpi::PhysicalSize::new(area.width, area.height),
                 );
             }
         }
-
-        let content_y = self.content_origin_y();
-        let content_x = self.content_origin_x();
-        let offset_tiles: Vec<(u64, GeoRect, bool)> = tiles
-            .iter()
-            .map(|(pane_id, rect, is_active)| {
-                (
-                    *pane_id,
-                    GeoRect::new(rect.x + content_x, rect.y + content_y, rect.w, rect.h),
-                    *is_active,
-                )
-            })
-            .collect();
 
         self.debug_metrics
             .begin_phase(crate::app::debug_metrics::Phase::Layout);
@@ -2594,6 +2601,56 @@ mod tests {
             "transient IME preedit SDF must not pollute cached UI chrome",
         );
         let _ = (glyphs, color_glyphs);
+    }
+
+    #[test]
+    fn ime_candidate_anchor_matches_painted_preedit_with_window_chrome() {
+        for tab_position in [
+            TabBarPosition::Integrated,
+            TabBarPosition::Left,
+            TabBarPosition::Right,
+        ] {
+            for bar_position in [StatusBarPosition::Top, StatusBarPosition::Bottom] {
+                let mut app = make_content_app(tab_position);
+                app.core.config.statusbar.position = bar_position;
+                app.glyph_cache = Some(test_cache());
+                app.core.search_state = Some(SearchState {
+                    query: "你好".into(),
+                    matches: Vec::new(),
+                    current_match_idx: 0,
+                    pane_id: 42,
+                    original_scroll_offset: 0,
+                });
+                app.handle_ime(winit::event::Ime::Preedit("zhong".into(), Some((5, 5))));
+                let content_tiles = [(42, GeoRect::new(10.0, 20.0, 360.0, 240.0), true)];
+                let window_tiles = app.tiles_in_window(&content_tiles);
+                let (cw, ch) = app.ui_cell_metrics();
+                let content_anchor = app.ime_input_anchor(&content_tiles, cw, ch).unwrap();
+                let candidate_anchor = app.ime_input_anchor(&window_tiles, cw, ch).unwrap();
+                assert_eq!(
+                    candidate_anchor,
+                    (
+                        content_anchor.0 + app.content_origin_x(),
+                        content_anchor.1 + app.content_origin_y(),
+                    )
+                );
+
+                let mut sdf = Vec::new();
+                app.build_ime_preedit(
+                    &window_tiles,
+                    900.0,
+                    700.0,
+                    &mut sdf,
+                    &mut Vec::new(),
+                    &mut Vec::new(),
+                );
+                let preedit = sdf
+                    .iter()
+                    .find(|rect| rect.color == [0.15, 0.15, 0.25, 0.95])
+                    .unwrap();
+                assert_eq!(preedit.pos, [candidate_anchor.0, candidate_anchor.1]);
+            }
+        }
     }
 
     #[test]

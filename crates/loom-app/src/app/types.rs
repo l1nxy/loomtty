@@ -156,11 +156,34 @@ pub struct SearchMatch {
 }
 
 /// IME composition state.
+#[derive(Default)]
 pub struct ImeState {
     pub preedit_active: bool,
     pub preedit_text: String,
     pub preedit_cursor: Option<usize>,
-    pub last_pos: Option<(i32, i32)>,
+    pub last_area: Option<ImeCursorArea>,
+}
+
+/// Physical candidate-window anchor and the scale used by the native window.
+/// Scale belongs in the cache key: an unchanged pixel rectangle can map to a
+/// different logical rectangle after moving between displays.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImeCursorArea {
+    pub x: i32,
+    pub y: i32,
+    pub width: f64,
+    pub height: f64,
+    pub scale: f64,
+}
+
+impl ImeState {
+    pub fn update_area(&mut self, area: ImeCursorArea) -> bool {
+        if self.last_area == Some(area) {
+            return false;
+        }
+        self.last_area = Some(area);
+        true
+    }
 }
 
 /// Command palette state.

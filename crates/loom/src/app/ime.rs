@@ -71,9 +71,13 @@ impl App {
                 self.core.ime.preedit_active = false;
                 self.core.ime.preedit_text.clear();
                 self.core.ime.preedit_cursor = None;
+                self.core.ime.last_area = None;
                 self.schedule_redraw();
             }
-            Ime::Enabled => {}
+            Ime::Enabled => {
+                self.core.ime.last_area = None;
+                self.schedule_redraw();
+            }
         }
     }
 }
@@ -86,6 +90,36 @@ mod tests {
 
     fn make_app() -> App {
         App::new(LoomConfig::default(), "test-session")
+    }
+
+    #[test]
+    fn candidate_area_refreshes_after_font_scale_or_ime_context_changes() {
+        use loom_app::app::ImeCursorArea;
+        let mut app = make_app();
+        let area = ImeCursorArea {
+            x: 100,
+            y: 200,
+            width: 8.0,
+            height: 16.0,
+            scale: 1.0,
+        };
+        assert!(app.core.ime.update_area(area));
+        assert!(!app.core.ime.update_area(area));
+        let resized = ImeCursorArea {
+            height: 20.0,
+            ..area
+        };
+        assert!(app.core.ime.update_area(resized));
+        let scaled = ImeCursorArea {
+            scale: 2.0,
+            ..resized
+        };
+        assert!(app.core.ime.update_area(scaled));
+        assert!(!app.core.ime.update_area(scaled));
+        app.handle_ime(Ime::Disabled);
+        assert!(app.core.ime.update_area(scaled));
+        app.handle_ime(Ime::Enabled);
+        assert!(app.core.ime.update_area(scaled));
     }
 
     #[test]

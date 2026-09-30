@@ -195,12 +195,7 @@ impl AppModel {
             settings_category: SettingsCategory::default(),
             settings_scroll_offset: 0,
             help_visible: false,
-            ime: ImeState {
-                preedit_active: false,
-                preedit_text: String::new(),
-                preedit_cursor: None,
-                last_pos: None,
-            },
+            ime: ImeState::default(),
             selection: None,
             pending_paste: None,
             broadcast_mode: false,

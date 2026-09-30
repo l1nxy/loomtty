@@ -69,7 +69,7 @@ fn new_session(state: &Arc<Mutex<Server>>) {
 
 fn client_binary() -> PathBuf {
     if let Ok(self_exe) = std::env::current_exe()
-        && let Some(dir) = self_exe.parent()
+        && let Some(dir) = client_directory(&self_exe)
     {
         let sibling = dir.join(if cfg!(windows) {
             "loomtty.exe"
@@ -81,6 +81,20 @@ fn client_binary() -> PathBuf {
         }
     }
     PathBuf::from("loomtty")
+}
+
+fn client_directory(executable: &std::path::Path) -> Option<PathBuf> {
+    // Bundled macOS servers live in their own helper app, while development
+    // builds and other platforms keep the two binaries beside one another.
+    if executable.ends_with("Contents/Helpers/loomtty-server.app/Contents/MacOS/loomtty-server") {
+        // The outer application's Contents directory.
+        executable
+            .ancestors()
+            .nth(5)
+            .map(|contents| contents.join("MacOS"))
+    } else {
+        executable.parent().map(std::path::Path::to_path_buf)
+    }
 }
 
 fn spawn_client(args: &[&str]) {
@@ -99,5 +113,26 @@ fn spawn_client(args: &[&str]) {
     }
     if let Err(e) = cmd.spawn() {
         log::error!("failed to spawn loomtty: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn helper_tray_finds_client_in_outer_app() {
+        let server = std::path::Path::new(
+            "/Applications/中文 loomtty.app/Contents/Helpers/loomtty-server.app/Contents/MacOS/loomtty-server",
+        );
+        assert_eq!(
+            client_directory(server).unwrap().join("loomtty"),
+            PathBuf::from("/Applications/中文 loomtty.app/Contents/MacOS/loomtty")
+        );
+        let development = std::path::Path::new("target/debug/loomtty-server");
+        assert_eq!(
+            client_directory(development),
+            Some(PathBuf::from("target/debug"))
+        );
     }
 }

@@ -10,6 +10,7 @@
     <command name="count" code="corecnte" description="Count objects.">
       <cocoa class="NSCountCommand"/>
       <direct-parameter type="specifier"/>
+      <parameter name="each" code="kocl" type="type" optional="yes" hidden="yes"><cocoa key="ObjectClass"/></parameter>
       <result type="integer"/>
     </command>
     <command name="exists" code="coredoex" description="Test whether an object exists.">
@@ -35,6 +36,8 @@
       <property name="focused terminal" code="fTrm" type="terminal" access="r"><cocoa key="focusedTerminal"/></property>
       <element type="tab" access="r"/>
       <element type="terminal" access="r"/>
+      <responds-to command="focus"><cocoa method="handleLoomScriptCommand:"/></responds-to>
+      <responds-to command="close window"><cocoa method="handleLoomScriptCommand:"/></responds-to>
     </class>
     <class name="tab" code="Ltab" description="A native tab attached to a loom session.">
       <cocoa class="LoomScriptTab"/>
@@ -44,6 +47,8 @@
       <property name="ready" code="rEdy" type="boolean" access="r"/>
       <property name="focused terminal" code="fTrm" type="terminal" access="r"><cocoa key="focusedTerminal"/></property>
       <element type="terminal" access="r"/>
+      <responds-to command="focus"><cocoa method="handleLoomScriptCommand:"/></responds-to>
+      <responds-to command="close tab"><cocoa method="handleLoomScriptCommand:"/></responds-to>
     </class>
     <class name="terminal" code="Ltrm" description="One live pane. Its ID expires on disconnection or session change.">
       <cocoa class="LoomScriptTerminal"/>
@@ -51,6 +56,9 @@
       <property name="name" code="pnam" type="text" access="r"/>
       <property name="working directory" code="wDir" type="text" access="r"><cocoa key="workingDirectory"/></property>
       <property name="session name" code="sNam" type="text" access="r"><cocoa key="sessionName"/></property>
+      <responds-to command="split terminal"><cocoa method="handleLoomScriptCommand:"/></responds-to>
+      <responds-to command="focus"><cocoa method="handleLoomScriptCommand:"/></responds-to>
+      <responds-to command="close terminal"><cocoa method="handleLoomScriptCommand:"/></responds-to>
     </class>
     <command name="new window" code="Loomnwin" description="Create a normal window and wait for its terminal connection (up to 30 seconds).">
       <cocoa class="LoomScriptCommand"/>

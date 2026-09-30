@@ -8,6 +8,12 @@ Silicon, plus a Homebrew cask.
   it (`codesign --sign -`), and packages `loomtty-<version>-macos-arm64.dmg`.
 - [`Info.plist`](Info.plist) — bundle metadata template (`@VERSION@` is
   substituted at build time). Bundle id `dev.loomtty`.
+- [`ServerInfo.plist`](ServerInfo.plist) — the tray daemon's separate helper
+  identity, `dev.loomtty.server`. It lives under `Contents/Helpers`; the sibling
+  `Contents/MacOS/loomtty-server` entry remains a symlink for CLI compatibility.
+  This prevents Apple Events and app launch requests from selecting the daemon
+  as though it were the GUI. Existing running daemons need to exit normally
+  before the new identity takes effect.
 - [`loomtty.rb`](loomtty.rb) — Homebrew cask: installs the `.app` and symlinks
   the `loomtty` / `loomtty-server` CLI binaries onto the PATH.
 
@@ -436,7 +442,7 @@ cargo test -p loomtty --lib --features macos-app-intents macos::scripting
 ### Validation for this implementation
 
 On Apple Silicon macOS, `cargo test --workspace --features loomtty/macos-app-intents`
-passed **1,675 tests**
+passed **1,676 tests**
 (12 documentation examples and one bundle-only test ignored), including
 **353 client tests**. Coverage includes Services request identity, shared
 paste-path regressions, Quick Terminal geometry,
@@ -480,8 +486,16 @@ its glyph ID. The emulator's allocated columns remain unchanged, so joined
 sequences can leave space before following text. Regression tests cover these
 clusters with ligatures enabled/disabled and font substitution for keycaps.
 
+An isolated release client/server also passed live Apple-event checks from
+Script Editor: new windows, native tabs, both split directions, exact target
+input, focus, object properties, and window/tab/terminal counts. The working
+directory contained Chinese, a space, an apostrophe, and literal `$()`; `pwd`
+confirmed it was passed unchanged. Closing terminals/tabs/windows preserved the
+other test window; input to an expired terminal ID failed with `-1728`.
+The bundled dictionary regression now verifies actual Objective-C class names,
+object command handlers, and the hidden count argument required by Cocoa.
+
 VoiceOver speech/navigation, IME composition, Secure Input transitions, physical
-Look Up gestures, multi-display/Spaces restoration, Finder/text Services,
-live Apple-event commands and Shortcuts discovery/execution still need their
-manual checks above. Full Xcode remains necessary for App Intents metadata;
+Look Up gestures, multi-display/Spaces restoration, Finder/text Services, and
+Shortcuts discovery/execution still need their manual checks above. Full Xcode remains necessary for App Intents metadata;
 Command Line Tools alone cannot finish that validation.

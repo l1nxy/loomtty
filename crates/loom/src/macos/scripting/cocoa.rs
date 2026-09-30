@@ -83,9 +83,12 @@ fn specifier(id: &str) -> Option<Retained<NSScriptObjectSpecifier>> {
 // These are separate Cocoa classes so each has the correct scripting class
 // description. The shared immutable getters never borrow the Rust application.
 macro_rules! proxy_class {
-    ($name:ident) => {
+    ($name:ident, $runtime_name:literal) => {
         define_class!(
             #[unsafe(super = NSObject)]
+            // The sdef names these classes. objc2's default includes the Rust
+            // module path and crate version, which Cocoa cannot match to it.
+            #[name = $runtime_name]
             #[ivars = String]
             struct $name;
             unsafe impl NSObjectProtocol for $name {}
@@ -110,6 +113,13 @@ macro_rules! proxy_class {
                 fn ready(&self) -> bool { object(self.ivars()).is_some_and(|o| o.ready) }
                 #[unsafe(method_id(objectSpecifier))]
                 fn object_specifier(&self) -> Option<Retained<NSScriptObjectSpecifier>> { specifier(self.ivars()) }
+                #[unsafe(method_id(handleLoomScriptCommand:))]
+                fn handle_command(&self, command: &NSScriptCommand) -> Option<Retained<AnyObject>> {
+                    // Direct object parameters become Cocoa command receivers.
+                    // Use the same queue as application-level commands.
+                    perform(command, sel!(performDefaultImplementation));
+                    None
+                }
             }
         );
         impl $name {
@@ -121,9 +131,9 @@ macro_rules! proxy_class {
         }
     }
 }
-proxy_class!(LoomScriptWindow);
-proxy_class!(LoomScriptTab);
-proxy_class!(LoomScriptTerminal);
+proxy_class!(LoomScriptWindow, "LoomScriptWindow");
+proxy_class!(LoomScriptTab, "LoomScriptTab");
+proxy_class!(LoomScriptTerminal, "LoomScriptTerminal");
 
 fn proxy(id: &str) -> Option<Retained<AnyObject>> {
     Some(match object(id)?.kind {
@@ -353,6 +363,21 @@ mod tests {
         install(&mut delegate);
         delegate.register();
         let registry = NSScriptSuiteRegistry::sharedScriptSuiteRegistry();
+        // Apple's CocoaStandard.sdef supplies this hidden argument. AppleScript
+        // uses it for "count every terminal of application"; omitting it makes
+        // NSCountCommand return zero despite a populated collection.
+        let count = registry
+            .commandDescriptionWithAppleEventClass_andAppleEventCode(
+                u32::from_be_bytes(*b"core"),
+                u32::from_be_bytes(*b"cnte"),
+            )
+            .unwrap();
+        assert!(
+            count
+                .argumentNames()
+                .iter()
+                .any(|key| key.to_string() == "ObjectClass")
+        );
         for code in [*b"capp", *b"cwin", *b"Ltab", *b"Ltrm"] {
             assert!(
                 registry
@@ -400,6 +425,36 @@ mod tests {
         snapshot.terminals.push("terminal-42".into());
         publish(snapshot);
         let terminal = proxy("terminal-42").unwrap();
+        assert_eq!(
+            terminal.class().name().to_str().unwrap(),
+            "LoomScriptTerminal"
+        );
+        // Serialization alone succeeds even when the sdef's Cocoa class name
+        // does not exist. Property reads and ID resolution need the actual
+        // proxy class to have the corresponding scripting description.
+        let class_description: Option<Retained<objc2_foundation::NSScriptClassDescription>> =
+            unsafe { msg_send![&terminal, classDescription] };
+        let class_description = class_description.expect("proxy has a scripting class");
+        assert_eq!(
+            class_description.appleEventCode(),
+            u32::from_be_bytes(*b"Ltrm")
+        );
+        for code in [*b"splt", *b"focs", *b"ctrm"] {
+            let command = registry
+                .commandDescriptionWithAppleEventClass_andAppleEventCode(
+                    u32::from_be_bytes(*b"Loom"),
+                    u32::from_be_bytes(code),
+                )
+                .unwrap();
+            assert!(
+                class_description.supportsCommand(&command),
+                "missing object handler for {code:?}"
+            );
+            assert_eq!(
+                class_description.selectorForCommand(&command),
+                Some(sel!(handleLoomScriptCommand:))
+            );
+        }
         let name: Retained<NSString> = unsafe { msg_send![&terminal, name] };
         assert_eq!(name.to_string(), "中文 shell");
         let descriptor = specifier("terminal-42").unwrap();

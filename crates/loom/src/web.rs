@@ -432,10 +432,14 @@ fn server_exe_path() -> PathBuf {
     } else {
         "loomtty-server"
     };
-    exe.parent()
+    let path = exe
+        .parent()
         .map(|p| p.join(bin))
         .filter(|p| p.exists())
-        .unwrap_or_else(|| PathBuf::from(bin))
+        .unwrap_or_else(|| PathBuf::from(bin));
+    #[cfg(target_os = "macos")]
+    let path = path.canonicalize().unwrap_or(path);
+    path
 }
 
 /// Best-effort "open this URL in the default browser".

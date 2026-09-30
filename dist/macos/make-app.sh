@@ -58,9 +58,15 @@ trap 'rm -rf "$BUILD_DIR"' EXIT
 APP="$BUILD_DIR/loomtty.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-# Binaries (the daemon sits next to the client, where the client looks for it).
+# The tray server is an AppKit process too. Give it its own bundle identity so
+# Launch Services/AppleScript do not mistake it for the GUI application.
+# Keep the sibling CLI entry point for existing clients and Homebrew links.
+SERVER_APP="$APP/Contents/Helpers/loomtty-server.app"
+mkdir -p "$SERVER_APP/Contents/MacOS"
 install -m755 "$BIN_DIR/loomtty"        "$APP/Contents/MacOS/loomtty"
-install -m755 "$BIN_DIR/loomtty-server" "$APP/Contents/MacOS/loomtty-server"
+install -m755 "$BIN_DIR/loomtty-server" "$SERVER_APP/Contents/MacOS/loomtty-server"
+sed "s/@VERSION@/$VERSION/g" "$SCRIPT_DIR/ServerInfo.plist" > "$SERVER_APP/Contents/Info.plist"
+ln -s ../Helpers/loomtty-server.app/Contents/MacOS/loomtty-server "$APP/Contents/MacOS/loomtty-server"
 
 # Info.plist (substitute version) + icon.
 sed "s/@VERSION@/$VERSION/g" "$SCRIPT_DIR/Info.plist" > "$APP/Contents/Info.plist"
@@ -92,7 +98,7 @@ rm -f "$APP/Contents/Frameworks/"*.original
 
 # Sign inside-out: the extra helper binary first, then the bundle (which seals
 # the main executable + the rest).
-codesign --force --timestamp=none --sign "$SIGN_ID" "$APP/Contents/MacOS/loomtty-server"
+codesign --force --timestamp=none --sign "$SIGN_ID" "$SERVER_APP"
 codesign --force --timestamp=none --sign "$SIGN_ID" "$APP"
 codesign --verify --deep --strict "$APP" && echo "codesign: verified"
 # Preserve the last working bundle until all generation and signing succeeded.

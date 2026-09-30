@@ -736,6 +736,10 @@ fn spawn_server(_session_name: &str) -> io::Result<()> {
         .map(|p| p.join(server_bin))
         .filter(|p| p.exists())
         .unwrap_or_else(|| std::path::PathBuf::from(server_bin));
+    // The macOS app's sibling entry is a symlink into a separately identified
+    // helper bundle. Launch the real path so AppKit uses the helper's Info.plist.
+    #[cfg(target_os = "macos")]
+    let server_exe = server_exe.canonicalize().unwrap_or(server_exe);
 
     // Ensure socket directory exists
     let sock_path = transport::server_socket_path();

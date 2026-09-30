@@ -866,13 +866,9 @@ pub struct PaneFrameMeta {
     pub cursor_shape: u8,
     /// Terminal mode flags (mouse mode, alt screen, kitty keyboard levels, etc.)
     pub mode_flags: u16,
-    /// Highest input_seq the server has *received* for this pane, regardless of
-    /// whether the PTY has produced output yet. Bumped synchronously inside
-    /// `handle_input`. Used by the client to validate cursor predictions early
-    /// (Overwatch/Quake-style packet-level ack) — particularly the case where
-    /// the shell silently rejects a Backspace at the prompt boundary, producing
-    /// no PTY output. Without this, late_ack never advances and a hold-Backspace
-    /// session predicts unboundedly past column 0.
+    /// Highest input_seq the server has received for this pane. Receipt does
+    /// not prove that the shell has processed the input; in particular an
+    /// unchanged cursor here cannot distinguish a delayed from a rejected edit.
     pub received_ack: u64,
     /// Highest input_seq that has been *late-acked* — i.e. the PTY has drained
     /// output following that input. Used to validate cell predictions, since

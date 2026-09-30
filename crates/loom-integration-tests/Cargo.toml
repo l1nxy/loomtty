@@ -9,8 +9,13 @@ publish = false
 # Per-crate tests live in each crate's own dev-dependencies.
 
 [dev-dependencies]
+loom-app = { path = "../loom-app" }
+loom-config = { path = "../loom-config" }
 loom-protocol = { path = "../loom-protocol" }
 loom-session = { path = "../loom-session" }
 
 tokio = { workspace = true }
 tempfile = "3"
+
+[target.'cfg(unix)'.dev-dependencies]
+loom-term = { path = "../loom-term" }

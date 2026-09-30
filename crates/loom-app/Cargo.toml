@@ -13,3 +13,7 @@ crossbeam-channel = { workspace = true }
 unicode-width = "0.2"
 log = { workspace = true }
 serde = { workspace = true }
+
+[[bench]]
+name = "prediction"
+harness = false

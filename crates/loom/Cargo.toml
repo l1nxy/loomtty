@@ -62,6 +62,7 @@ notify-rust = "4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 global-hotkey = "0.7"
+dispatch2 = "0.3"
 serde = { workspace = true }
 muda = "0.15.3"
 objc2 = "0.6"

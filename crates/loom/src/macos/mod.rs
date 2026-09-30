@@ -1,6 +1,7 @@
 //! macOS application shell: one client core/renderer per native window or tab,
 //! a single AppKit menu bar, and process-wide input/lifecycle integration.
 mod accessibility;
+pub(crate) mod context_menu;
 mod lookup;
 mod menu;
 mod native;
@@ -27,6 +28,7 @@ use crate::app::{App, RemoteConnectionConfig, Selection};
 
 #[derive(Clone, Debug)]
 enum Command {
+    ContextMenu(context_menu::Request),
     ServiceText(text_services::Request),
     Accessibility(accessibility::Action),
     AccessibilityRefresh,
@@ -105,7 +107,10 @@ impl MacApplication {
             let _ = hotkey_proxy.send_event(());
         }));
         muda::MenuEvent::set_event_handler(Some(move |event: muda::MenuEvent| {
-            let _ = tx.send(Command::Menu(event.id));
+            let command = context_menu::command(&event.id)
+                .map(Command::ContextMenu)
+                .unwrap_or(Command::Menu(event.id));
+            let _ = tx.send(command);
             let _ = menu_proxy.send_event(());
         }));
         let restoration = if !explicit_window
@@ -275,6 +280,7 @@ impl MacApplication {
     }
 
     fn close_window(&mut self, id: WindowId, event_loop: &ActiveEventLoop) {
+        context_menu::cancel(id);
         let Some(index) = self
             .windows
             .iter()
@@ -333,6 +339,7 @@ impl MacApplication {
 
     fn dispatch(&mut self, command: Command, event_loop: &ActiveEventLoop) {
         match command {
+            Command::ContextMenu(request) => self.handle_context_menu(request),
             Command::ServiceText(request) => self.handle_service_text(request),
             Command::Accessibility(action) => self.handle_accessibility(action),
             Command::AccessibilityRefresh => {}

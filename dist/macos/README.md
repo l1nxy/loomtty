@@ -80,6 +80,15 @@ and window shortcuts in the table are reserved by the native menu. The Window
 menu also supports moving a tab into a window, merging windows, showing the
 tab bar, and bringing all windows forward. AppKit's tab-bar **+** creates a tab.
 
+Terminal right-click menus use AppKit's native `NSMenu`, including system
+appearance, keyboard navigation, disabled items, and dismissal. Copy, guarded
+Paste, Select All, Search, link actions, splits, and Close Pane operate on the
+clicked pane. TUI mouse reporting still receives right clicks; hold Shift to
+show the terminal menu instead. Output and rendering continue while the menu
+is open. Actions retain their window/session/connection identity and reject
+stale targets after a reconnect; splits target the original pane atomically.
+Password input disables text extraction, selection, search, and link actions.
+
 Closing the last window keeps loomtty running in the Dock. Clicking the Dock
 icon reopens the last session, or brings an existing window forward. Closing
 one window or detaching one session does not exit sibling windows. Local pane
@@ -410,6 +419,12 @@ cargo test -p loomtty --lib --features macos-app-intents macos::scripting
 - Use menu Copy/Paste/Find, paste into search/palette, and verify large-paste
   confirmation. Drag paths containing spaces/apostrophes into the terminal;
   an open modal must not let a drop type into a hidden terminal.
+- Right-click active and inactive panes. Test native menu keyboard navigation,
+  Copy/Paste, Select All, Search, links, both splits, and Close Pane. Keep output
+  streaming while the menu is open; both output and rendering must continue.
+  Reconnect or close the target window during tracking and verify stale actions
+  do not affect another terminal. Check Retina positioning and Shift-right-click
+  in mouse-reporting TUIs.
 - In Finder, invoke New loomtty Window/Tab Here on a folder, a file, and several
   files from the same folder. Test names containing spaces, apostrophes, `$()`,
   and Chinese text. `pwd` must show the chosen directory with no extra shell
@@ -442,9 +457,9 @@ cargo test -p loomtty --lib --features macos-app-intents macos::scripting
 ### Validation for this implementation
 
 On Apple Silicon macOS, `cargo test --workspace --features loomtty/macos-app-intents`
-passed **1,676 tests**
+passed **1,679 tests**
 (12 documentation examples and one bundle-only test ignored), including
-**353 client tests**. Coverage includes Services request identity, shared
+**356 client tests**. Coverage includes Services request identity, shared
 paste-path regressions, Quick Terminal geometry,
 animation reversal, shortcut replacement, session exclusion, appearance
 switching, user color overrides, dictionary query bounds and password/modal
@@ -495,7 +510,23 @@ other test window; input to an expired terminal ID failed with `-1728`.
 The bundled dictionary regression now verifies actual Objective-C class names,
 object command handlers, and the hidden count argument required by Cocoa.
 
-VoiceOver speech/navigation, IME composition, Secure Input transitions, physical
-Look Up gestures, multi-display/Spaces restoration, Finder/text Services, and
+Native context menus passed live release checks for disabled Copy, Unicode
+Copy/Paste with bracketed-paste markers, keyboard navigation, both split
+directions, Search and Close Pane on an inactive pane, and Escape dismissal.
+The native menu's position and appearance were checked on Retina; a timed PTY
+counter continued updating terminal pixels while the menu remained open.
+Unit tests cover coordinate conversion, replaced session/connection rejection,
+and password/disconnection permissions.
+
+The installed macOS Simplified-to-Traditional Chinese text Service returned
+the expected conversion to an isolated raw PTY, preserving emoji and combining
+accents and enclosing the response in bracketed-paste markers. A test password
+prompt removed AX text and acquired Secure Input with the client's PID visible
+in `ioreg`; hiding the app released it, as did finishing the prompt. The native
+menu labelled automatic protection and disabled text-transform services.
+
+VoiceOver speech/navigation, IME composition, the remaining Secure Input focus
+transitions, physical Look Up gestures, multi-display/Spaces restoration,
+Finder Services, other text-Service modes/late results/clipboard preservation, and
 Shortcuts discovery/execution still need their manual checks above. Full Xcode remains necessary for App Intents metadata;
 Command Line Tools alone cannot finish that validation.

@@ -5,9 +5,18 @@ use loom_protocol::message::ClientMessage;
 impl App {
     pub(crate) fn handle_context_menu_click(&mut self, idx: usize) {
         let target_pane_id = self.core.context_menu.target_pane_id;
-        if let Some(item) = self.core.context_menu.items.get(idx).cloned()
-            && item.enabled
-        {
+        if let Some(item) = self.core.context_menu.items.get(idx).cloned() {
+            self.execute_context_menu_item(target_pane_id, item);
+        }
+        self.core.context_menu.visible = false;
+    }
+
+    pub(crate) fn execute_context_menu_item(
+        &mut self,
+        target_pane_id: Option<u64>,
+        item: ContextMenuItem,
+    ) {
+        if item.enabled {
             if let Some(pane_id) = target_pane_id {
                 self.send(ClientMessage::FocusPane { pane_id });
                 self.remember_workspace_pane(self.core.workspaces.active_workspace_idx, pane_id);
@@ -277,6 +286,13 @@ impl App {
             items,
         };
 
+        #[cfg(target_os = "macos")]
+        {
+            // The shared menu model remains available for GPU settings
+            // dropdowns, but terminal right-click menus belong to AppKit.
+            self.core.context_menu.visible = false;
+            crate::macos::context_menu::open(self);
+        }
         self.schedule_redraw();
     }
 }

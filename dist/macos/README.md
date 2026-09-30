@@ -168,7 +168,9 @@ new fullscreen Spaces; their previous Space numbers cannot be restored.
 Use the macOS three-finger Look Up gesture, Force Touch, or Edit → Look Up
 (Ctrl+Cmd+D) for a native dictionary popover. Gestures query the word under
 the pointer; the menu prefers selected text. Pointer coordinates account for
-Retina scale and the current pane viewport. Queries leave the terminal
+Retina scale and the current pane viewport. Menu/keyboard queries anchor to the
+first visible selected character's baseline, including pane padding and chrome,
+instead of the mouse position. Queries leave the terminal
 selection unchanged and are disabled for password input, overview, and modal
 UI. Selected text and pointer words containing concealed cells are not sent to
 the dictionary. Queries are checked before copying terminal text, with a 2 KiB
@@ -464,9 +466,9 @@ cargo test -p loomtty --lib --features macos-app-intents macos::scripting
 ### Validation for this implementation
 
 On Apple Silicon macOS, `cargo test --workspace --features loomtty/macos-app-intents`
-passed **1,694 tests**
+passed **1,695 tests**
 (12 documentation examples and one bundle-only test ignored), including
-**371 client tests**. Coverage includes Services request identity, shared
+**372 client tests**. Coverage includes Services request identity, shared
 paste-path regressions, Quick Terminal geometry,
 animation reversal, shortcut replacement, session exclusion, appearance
 switching, user color overrides, dictionary query bounds and password/modal
@@ -569,6 +571,18 @@ on a wide-character spacer, preserve combining characters, and reject oversized
 grapheme payloads. Pointer tests cover 1×/2× display scale with a top status bar
 and left tab bar. These tests do not verify physical trackpad gestures or the
 system dictionary popover.
+
+A live release check on 2026-09-30 verified both Ctrl+Cmd+D and Edit → Look Up
+with `hello`, displaying the installed English and Chinese-English dictionaries.
+It exposed mouse-based placement for selected-text queries; the corrected
+implementation positions the popover at the selected text's baseline. Retina
+screenshots confirmed the anchor at both the top-left and middle of the terminal.
+After dismissing the popover, terminal input resumed. Closing the last native
+window preserved the client process and detached its session; reopening it
+preserved the terminal contents and supported a new `你好` lookup. The query
+highlight contained the exact Chinese text, while the installed dictionary
+reported no results. Look Up was disabled with Settings open. No physical
+trackpad gesture, external display, or system IME composition was exercised.
 
 Secure Input received a further live release check on 2026-09-30 using the
 `6dbc5b4` client in an isolated server runtime. Only an empty test password was

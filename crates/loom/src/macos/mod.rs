@@ -649,6 +649,11 @@ impl MacApplication {
         let Some(text) = lookup::text_at(app, point, selection) else {
             return;
         };
+        let point = if selection {
+            lookup::selection_point(app).unwrap_or(point)
+        } else {
+            point
+        };
         if let Some(view) = self.view_hooks.get_mut(&id)
             && view.allow_lookup()
         {

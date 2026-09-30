@@ -13,10 +13,10 @@ use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::{Window, WindowId};
 
 use super::{Command, native, text_selection};
+use crate::app::App;
 
 const MAX_QUERY_CHARS: usize = 512;
 const MAX_QUERY_BYTES: usize = MAX_QUERY_CHARS * 4;
-use crate::app::App;
 
 thread_local! {
     static VIEWS: RefCell<HashMap<usize, WindowId>> = RefCell::new(HashMap::new());
@@ -149,6 +149,48 @@ impl Drop for ViewHooks {
     }
 }
 
+/// Menu and keyboard lookup follow the selected text, even when the mouse is
+/// outside the terminal. AppKit expects the first character's baseline in points.
+pub fn selection_point(app: &App) -> Option<NSPoint> {
+    let selection = app.core.selection.as_ref()?;
+    let grid = app.core.pane_grids.get(&selection.pane_id)?;
+    let (a, b) = (selection.start, selection.end);
+    let (a, b) = if (a.1, a.0) <= (b.1, b.0) {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    let row = a.1.max(grid.viewport_top());
+    if row > b.1 {
+        return None;
+    }
+    let viewport_row = grid.buffer_to_viewport_row(row)?;
+    let col = if row == a.1 { a.0 } else { 0 };
+    let (col, _) = grid.snap_selection_to_wide_chars(row, col, col);
+    let (_, rect, _) = app
+        .core
+        .workspaces
+        .visible_tiles_2d(
+            app.core.anim_mgr.view_offset_x.value() as f32,
+            app.core.anim_mgr.view_offset_y.value() as f32,
+        )
+        .into_iter()
+        .find(|(pane, _, _)| *pane == selection.pane_id)?;
+    let (cw, ch) = app.cell_dimensions();
+    let baseline = app.glyph_cache.as_ref().map_or(ch, |cache| cache.ascent);
+    let inset = app.core.config.appearance.border_width + app.core.config.appearance.padding;
+    let x = rect.x + inset + col as f32 * cw;
+    let y = rect.y + inset + viewport_row as f32 * ch + baseline;
+    let view = &app.core.workspaces.view_size;
+    if x < 0.0 || x >= view.width || y < 0.0 || y >= view.height {
+        return None;
+    }
+    Some(NSPoint::new(
+        (x + app.content_origin_x()) as f64 / app.dpi_scale,
+        (y + app.content_origin_y()) as f64 / app.dpi_scale,
+    ))
+}
+
 pub fn text_at(app: &App, point: NSPoint, prefer_selection: bool) -> Option<String> {
     if app.modal_captures_keyboard() || app.core.overview.active {
         return None;
@@ -187,6 +229,45 @@ fn bounded_query(text: String) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selected_lookup_anchors_to_first_visible_character_baseline() {
+        use loom_config::config::{StatusBarPosition, TabBarPosition};
+        use loom_protocol::message::{FLAG_WIDE_CHAR, FLAG_WIDE_CHAR_SPACER};
+        for scale in [1.0, 2.0] {
+            let mut config = loom_config::LoomConfig::default();
+            config.statusbar.position = StatusBarPosition::Top;
+            config.tabbar.position = TabBarPosition::Left;
+            let mut app = App::new(config, "lookup-anchor");
+            app.dpi_scale = scale;
+            app.core
+                .workspaces
+                .active_mut()
+                .add_column_right(1, loom_layout::column::ColumnWidth::Proportion(1.0));
+            let mut grid = crate::grid::ClientPaneGrid::new(8, 4, 0);
+            grid.viewport[10].flags = FLAG_WIDE_CHAR.to_le_bytes();
+            grid.viewport[11].flags = FLAG_WIDE_CHAR_SPACER.to_le_bytes();
+            app.core.pane_grids.insert(1, grid);
+            assert!(selection_point(&app).is_none());
+            app.core.selection = Some(crate::app::Selection {
+                pane_id: 1,
+                start: (6, 2),
+                end: (3, 1),
+                active: false,
+            });
+            let rect = app.core.workspaces.active().visible_tiles(0.0)[0].1;
+            let inset =
+                app.core.config.appearance.border_width + app.core.config.appearance.padding;
+            let expected = NSPoint::new(
+                (rect.x + inset + app.content_origin_x() + 2.0 * 8.0) as f64 / scale,
+                (rect.y + inset + app.content_origin_y() + 2.0 * 16.0) as f64 / scale,
+            );
+            assert_eq!(selection_point(&app), Some(expected));
+            app.core.selection.as_mut().unwrap().end = (0, 4);
+            app.core.selection.as_mut().unwrap().start = (0, 5);
+            assert!(selection_point(&app).is_none());
+        }
+    }
 
     #[test]
     fn dictionary_selection_rejects_concealed_wide_cells_and_oversized_graphemes() {

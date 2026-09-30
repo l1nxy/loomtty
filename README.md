@@ -66,12 +66,15 @@ Run `loomtty init` for an interactive config wizard.
 **Leader:** `Alt` (configurable). loomtty defaults to sticky / zellij-style
 input, so you hold `Alt` and press the key — e.g. `Alt n` opens a new column.
 Set `[input] mode = "prefix"` for tmux-style tap-leader-then-key.
+On macOS, use **left Option** for Alt by default; right Option still types
+special characters. Configure `window.macos_option_as_alt` to change this.
 
 | Keys | Action |
 |------|--------|
 | `Alt h` `j` `k` `l` | Focus pane left / down / up / right |
 | `Alt n` | New column |
 | `Alt d` | Split down (new row) |
+| `Alt Shift+d` | Stack a tile below in the current column |
 | `Alt x` | Close pane |
 | `Alt f` | Full-width column |
 | `Alt r` | Resize mode |

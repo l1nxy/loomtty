@@ -824,19 +824,22 @@ tail truncation and a full-label tooltip. The scroll viewport fits the window;
 new/close buttons remain fixed at the right. Only visible segments plus a
 small overscan range have native controls, with no fixed maximum pane count.
 
-**Pane → Go to Pane (1–8)** (`Cmd+1` through `8`) selects a pane;
-`Cmd+9` selects the last pane. `Cmd+Shift+[` / `]`, `Ctrl+Shift+Tab` / `Ctrl+Tab`,
-and `Cmd+[` / `]` cycle through panes, including stacked tiles, in tab-strip order.
-`Cmd+Option+Arrow` uses directional pane navigation. Clicking a terminal also
-changes the selected pane. **View → Sessions…**
+The existing loomtty bindings remain the defaults: hold left `Option` (`Alt`)
+and press `h/j/k/l` to focus, `n` for a new column, `d` for a new workspace
+below, `Shift+d` for a stacked tile, or `x` to close. `Option+/` opens the
+keybindings help. Right Option retains normal macOS character input by default;
+`window.macos_option_as_alt` controls which Option keys act as Alt.
+
+**Pane → Go to Pane (1–9)** (`Cmd+Option+1` through `9`), directional Pane commands,
+and clicking a terminal also change the selected pane. **View → Sessions…**
 and **View → Overview** retain the existing session and workspace navigation.
 The GPU pane tab strip is not drawn on macOS and reserves no space, including
 when an older configuration selects a left/right bar. Terminal hints remain.
 
 AppKit window tabs are a separate session-level feature, explicitly named
 **File → New Session in Window Tab**. They support system reordering, moving
-to a window, and merging windows. The Window menu's Previous/Next Session
-Window Tab commands switch these session tabs. `Cmd+T` does not create a session. Linux and Windows retain their existing
+to a window, and merging windows; `Cmd+Shift+[` / `]` switches those session
+tabs. `Cmd+T` does not create a session. Linux and Windows retain their existing
 chrome.
 
 ### Font size and weight

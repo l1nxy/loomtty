@@ -122,18 +122,6 @@ impl Default for KeybindConfig {
                 "super+shift+p".to_string(),
                 "toggle_command_palette".to_string(),
             );
-            for (key, action) in [
-                ("ctrl+tab", "next_pane_tab"),
-                ("ctrl+shift+tab", "previous_pane_tab"),
-                ("super+]", "next_pane_tab"),
-                ("super+[", "previous_pane_tab"),
-                ("super+alt+left", "focus_left"),
-                ("super+alt+right", "focus_right"),
-                ("super+alt+up", "focus_up"),
-                ("super+alt+down", "focus_down"),
-            ] {
-                direct_bindings.insert(key.into(), action.into());
-            }
             // Cmd+N/T/Q and window management are owned by the native app menu.
         }
         #[cfg(not(target_os = "macos"))]

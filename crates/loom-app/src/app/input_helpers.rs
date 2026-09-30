@@ -233,25 +233,6 @@ impl AppModel {
         panes
     }
 
-    /// Adjacent pane in visible tab order, including stacked tiles; wraps
-    /// within this workspace and never creates or switches a session.
-    pub fn adjacent_pane_tab(&self, forward: bool) -> Option<u64> {
-        let workspace = self.workspaces.active();
-        let panes: Vec<_> = workspace
-            .columns
-            .iter()
-            .flat_map(|column| column.tiles.iter().map(|tile| tile.pane_id))
-            .collect();
-        let current = workspace.active_pane_id();
-        let index = panes.iter().position(|pane| Some(*pane) == current)?;
-        let next = if forward {
-            (index + 1) % panes.len()
-        } else {
-            (index + panes.len() - 1) % panes.len()
-        };
-        Some(panes[next])
-    }
-
     /// Format a pane tab label as `"{idx} {title}"`.
     ///
     /// Returns the natural label without truncation or trailing padding.
@@ -295,40 +276,5 @@ impl AppModel {
             }
         }
         positions
-    }
-}
-
-#[cfg(test)]
-mod pane_tab_navigation_tests {
-    use super::*;
-    use loom_config::config::LoomConfig;
-    use loom_layout::{column::Column, tile::Tile};
-
-    #[test]
-    fn pane_cycle_matches_column_and_tile_order_and_wraps() {
-        let mut app = AppModel::new(LoomConfig::default(), "same-session");
-        let ws = app.workspaces.active_mut();
-        let mut first = Column::new(10);
-        first.tiles.push(Tile::new(20));
-        ws.columns = vec![first, Column::new(30)];
-        ws.active_column_idx = 0;
-        assert_eq!(app.adjacent_pane_tab(true), Some(20));
-        assert_eq!(app.adjacent_pane_tab(false), Some(30));
-        app.workspaces.active_mut().columns[0].active_tile_idx = 1;
-        assert_eq!(app.adjacent_pane_tab(true), Some(30));
-        assert_eq!(app.adjacent_pane_tab(false), Some(10));
-        app.workspaces.active_mut().active_column_idx = 1;
-        assert_eq!(app.adjacent_pane_tab(true), Some(10));
-        assert_eq!(app.session_name, "same-session");
-    }
-
-    #[test]
-    fn pane_cycle_handles_empty_and_single_pane() {
-        let mut app = AppModel::new(LoomConfig::default(), "empty");
-        app.workspaces.active_mut().columns.clear();
-        assert_eq!(app.adjacent_pane_tab(true), None);
-        app.workspaces.active_mut().columns.push(Column::new(42));
-        assert_eq!(app.adjacent_pane_tab(true), Some(42));
-        assert_eq!(app.adjacent_pane_tab(false), Some(42));
     }
 }

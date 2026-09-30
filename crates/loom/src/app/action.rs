@@ -39,25 +39,6 @@ impl App {
                     self.send(ClientMessage::ClosePane { pane_id });
                 }
             }
-            Action::NextPaneTab | Action::PreviousPaneTab => {
-                let forward = matches!(action, Action::NextPaneTab);
-                if let Some(pane) = self.core.adjacent_pane_tab(forward) {
-                    self.apply_ui_action(super::ui::UiAction::FocusPaneTab(pane));
-                }
-            }
-            Action::LastPaneTab => {
-                if let Some(pane) = self
-                    .core
-                    .workspaces
-                    .active()
-                    .columns
-                    .last()
-                    .and_then(|column| column.tiles.last())
-                    .map(|tile| tile.pane_id)
-                {
-                    self.apply_ui_action(super::ui::UiAction::FocusPaneTab(pane));
-                }
-            }
             Action::FocusLeft => {
                 self.send(ClientMessage::FocusLeft);
             }
@@ -650,38 +631,85 @@ impl App {
 #[cfg(all(test, target_os = "macos"))]
 mod macos_shortcut_tests {
     use super::*;
-    use loom_input::leader::InputResult;
+    use loom_input::{keybind::BindingMode, leader::InputResult};
     use std::time::Duration;
 
-    #[test]
-    fn native_pane_aliases_resolve_through_the_configured_input_pipeline() {
+    fn default_input() -> InputHandler {
         let config = LoomConfig::default();
+        assert_eq!(config.input.mode, loom_config::config::InputMode::Sticky);
+        assert_eq!(config.keys.leader, "alt");
         let mut input = InputHandler::new(Duration::from_secs(1), Duration::from_millis(300));
         input.reload_bindings(
             &config.keys.leader,
-            match config.input.mode {
-                loom_config::config::InputMode::Prefix => "prefix",
-                loom_config::config::InputMode::Sticky => "sticky",
-            },
+            "sticky",
             &config.keys.bindings,
             &config.keys.modes,
             &config.keys.direct_bindings,
         );
         App::rebuild_binding_set(&mut input, &config);
-        for (key, ctrl, shift, alt, cmd, expected) in [
-            ("tab", true, false, false, false, Action::NextPaneTab),
-            ("tab", true, true, false, false, Action::PreviousPaneTab),
-            ("]", false, false, false, true, Action::NextPaneTab),
-            ("[", false, false, false, true, Action::PreviousPaneTab),
-            ("left", false, false, true, true, Action::FocusLeft),
-            ("right", false, false, true, true, Action::FocusRight),
-            ("up", false, false, true, true, Action::FocusUp),
-            ("down", false, false, true, true, Action::FocusDown),
+        input
+    }
+
+    #[test]
+    fn macos_preserves_loom_default_pane_bindings() {
+        for (key, shift, expected) in [
+            ("h", false, Action::FocusLeft),
+            ("j", false, Action::FocusDown),
+            ("k", false, Action::FocusUp),
+            ("l", false, Action::FocusRight),
+            ("n", false, Action::NewColumnRight),
+            ("d", false, Action::NewWorkspaceBelow),
+            ("d", true, Action::NewTileBelow),
+            ("x", false, Action::ClosePane),
+            ("f", false, Action::ColumnWidthFull),
+            ("/", false, Action::ToggleHelp),
+        ] {
+            let mut input = default_input();
+            assert!(
+                matches!(
+                    input.process_key_event(key, false, shift, true, false, BindingMode::NORMAL),
+                    InputResult::Action(action) if action == expected
+                ),
+                "Alt+{key}, shift={shift}"
+            );
+        }
+    }
+
+    #[test]
+    fn default_resize_binding_enters_the_resize_table() {
+        let mut input = default_input();
+        assert!(matches!(
+            input.process_key_event("r", false, false, true, false, BindingMode::NORMAL),
+            InputResult::Consumed
+        ));
+        assert_eq!(input.active_table_name(), Some("resize"));
+    }
+
+    #[test]
+    fn ghostty_navigation_chords_are_not_claimed_by_default() {
+        for (key, ctrl, shift, alt, cmd) in [
+            ("tab", true, false, false, false),
+            ("tab", true, true, false, false),
+            ("]", false, false, false, true),
+            ("[", false, false, false, true),
+            ("left", false, false, true, true),
+            ("right", false, false, true, true),
+            ("up", false, false, true, true),
+            ("down", false, false, true, true),
         ] {
             assert!(
-                matches!(input.process_key(key, ctrl, shift, alt, cmd),
-                InputResult::Action(action) if action == expected),
-                "{key}"
+                matches!(
+                    default_input().process_key_event(
+                        key,
+                        ctrl,
+                        shift,
+                        alt,
+                        cmd,
+                        BindingMode::NORMAL
+                    ),
+                    InputResult::PassThrough
+                ),
+                "{key}, ctrl={ctrl}, shift={shift}, alt={alt}, cmd={cmd}"
             );
         }
     }

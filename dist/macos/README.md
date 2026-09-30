@@ -659,9 +659,28 @@ local server. In all three cases, shell `pwd` preserved Chinese, spaces, an
 apostrophe, and literal `$()` in the directory name. The temporary installed
 QA copy was removed after validation.
 
+Native text Services passed live checks on 2026-09-30 against commit `8360289`
+in a debug QA bundle using an isolated server socket. The system's fullwidth
+conversion returned `ｈｅｌｌｏ　ｓｅｒｖｉｃｅｓ` to the selected terminal. Its
+Traditional Chinese conversion changed `汉语测试 hello 👋` to
+`漢語測試 hello 👋`; a raw-mode PTY capture verified the exact UTF-8 payload
+between one `ESC[200~` / `ESC[201~` pair (35 bytes total). The text clipboard's
+SHA-256 digest was unchanged before/after that conversion; the clipboard was
+empty, so this does not establish preservation of nonempty or rich clipboard
+formats. Opening Settings removed terminal text conversions from Services.
+
+A second raw-mode check converted 1,700 ASCII letters plus a marker and newlines
+to 5,206 bytes of fullwidth text. The large-paste confirmation appeared. Cancel
+sent no payload (the capture contained only the later explicit Ctrl-C). On a
+repeat invocation, Paste delivered all 5,206 bytes inside one bracketed-paste
+pair, including all 1,700 converted letters. These checks exercised AppKit's
+installed conversion providers through the actual Services menu. They do not
+cover send-only/return-only providers, delayed provider results during a pane
+switch/reconnect, or password-mode Service availability.
+
 VoiceOver speech/navigation, IME composition, the Secure Input menu checkmark,
 physical Look Up gestures, multi-display/Spaces restoration,
 Finder Services with a remote window active, folder Open With, other
-text-Service modes/late results/clipboard preservation, and
+text-Service modes/late results/nonempty clipboard preservation, and
 Shortcuts discovery/execution still need their manual checks above. Full Xcode remains necessary for App Intents metadata;
 Command Line Tools alone cannot finish that validation.

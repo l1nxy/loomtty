@@ -258,6 +258,13 @@ impl App {
                 self.core.input.toggle_lock();
             }
             Action::ToggleSettings => {
+                #[cfg(target_os = "macos")]
+                if self.native_window_chrome {
+                    self.enter_modal_close_peers(ModalKind::None);
+                    crate::macos::show_settings();
+                    self.schedule_redraw();
+                    return;
+                }
                 if self.core.settings_panel_visible {
                     // Route close through the gate so a live submodal
                     // (theme dropdown is a `ContextMenu(OverSettings)`)

@@ -107,7 +107,10 @@ mode = "sticky"        # "sticky" (zellij-style) or "prefix" (tmux-style)
 
 Every option, default, and valid range is documented in
 [`crates/loom-config/src/schema.rs`](crates/loom-config/src/schema.rs). You can
-also edit settings live from the in-app settings panel.
+also edit settings live from the in-app settings panel. On macOS, **⌘,** opens
+a native Settings window with searchable categories and standard macOS controls.
+Changes save automatically; invalid values show an error without changing the
+configuration. **⌘W** closes Settings and returns to the terminal.
 
 For isolated runs, `LOOM_CONFIG_FILE` overrides the config file and
 `LOOM_STATE_DIR` overrides the session-state directory (use absolute paths).

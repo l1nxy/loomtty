@@ -794,6 +794,8 @@ impl App {
                     let old = &self.core.config.font;
                     let new = &new_config.font;
                     new.family != old.family
+                        || new.ui.as_ref().map(|ui| (&ui.family, ui.size))
+                            != old.ui.as_ref().map(|ui| (&ui.family, ui.size))
                         || (new.size - old.size).abs() > 0.01
                         || new.features != old.features
                         || new.disable_ligatures != old.disable_ligatures

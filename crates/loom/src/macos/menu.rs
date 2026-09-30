@@ -333,6 +333,33 @@ impl MenuBar {
         }
     }
 
+    pub fn update_for_settings(&self) {
+        self.panes.set_enabled(false);
+        for entry in &self.entries {
+            if matches!(entry.command, Command::Action(Action::ClosePane)) {
+                entry.item.set_text("Close Settings");
+            }
+            match entry.command {
+                Command::CloseWindow
+                | Command::SelectAll
+                | Command::Action(
+                    Action::ClosePane | Action::ClipboardCopy | Action::ClipboardPaste,
+                ) => entry.item.set_enabled(true),
+                Command::Action(Action::ToggleSettings) => {}
+                Command::Action(_)
+                | Command::NewPane
+                | Command::NextTab
+                | Command::PreviousTab
+                | Command::MergeWindows
+                | Command::MoveTabToWindow
+                | Command::ToggleTabBar
+                | Command::FontSize(_)
+                | Command::ToggleFullscreen => entry.item.set_enabled(false),
+                _ => {}
+            }
+        }
+    }
+
     pub fn update_quick_terminal(&self, shortcut: Option<&str>, error: Option<&str>) {
         if let Some(entry) = self
             .entries
@@ -396,6 +423,11 @@ impl MenuBar {
     ) {
         let changed = self.bindings.as_ref() != Some(&keys.direct_bindings);
         for entry in &self.entries {
+            if matches!(entry.command, Command::Action(Action::ClosePane))
+                && entry.item.text() != "Close Pane"
+            {
+                entry.item.set_text("Close Pane");
+            }
             if matches!(entry.command, Command::ToggleFullscreen) {
                 let title = if quick {
                     "Toggle Fill Screen"

@@ -10,6 +10,7 @@ mod pane_tabs;
 mod restore;
 mod scripting;
 mod services;
+mod settings;
 mod text_selection;
 mod text_services;
 pub(crate) use native::system_dark_appearance;
@@ -31,6 +32,7 @@ use crate::app::{App, RemoteConnectionConfig, Selection};
 
 #[derive(Clone, Debug)]
 enum Command {
+    Settings(settings::Event),
     ContextMenu(context_menu::Request),
     ServiceText(text_services::Request),
     Accessibility(accessibility::Action),
@@ -81,6 +83,7 @@ pub(crate) struct MacApplication {
     proxy: EventLoopProxy<()>,
     commands: Receiver<Command>,
     menu: Option<menu::MenuBar>,
+    settings: Option<settings::SettingsWindow>,
     _delegate: native::Delegate,
     secure_input: native::SecureInput,
     manual_secure_input: bool,
@@ -176,6 +179,7 @@ impl MacApplication {
             proxy,
             commands,
             menu: None,
+            settings: None,
             _delegate: delegate,
             secure_input: native::SecureInput::default(),
             manual_secure_input: false,
@@ -361,7 +365,36 @@ impl MacApplication {
     }
 
     fn dispatch(&mut self, command: Command, event_loop: &ActiveEventLoop) {
+        if self
+            .settings
+            .as_ref()
+            .is_some_and(|settings| settings.is_key())
+        {
+            if matches!(
+                command,
+                Command::CloseWindow | Command::Action(Action::ClosePane)
+            ) {
+                self.settings.as_ref().unwrap().close();
+                return;
+            }
+            let action = match command {
+                Command::Action(Action::ClipboardCopy) => Some(objc2::sel!(copy:)),
+                Command::Action(Action::ClipboardPaste) => Some(objc2::sel!(paste:)),
+                Command::SelectAll => Some(objc2::sel!(selectAll:)),
+                _ => None,
+            };
+            if let Some(action) = action {
+                let mtm = objc2::MainThreadMarker::new().expect("AppKit main thread");
+                unsafe {
+                    objc2_app_kit::NSApplication::sharedApplication(mtm)
+                        .sendAction_to_from(action, None, None);
+                }
+                return;
+            }
+        }
         match command {
+            Command::Settings(event) => self.handle_settings(event),
+            Command::Action(Action::ToggleSettings) => self.handle_settings(settings::Event::Show),
             Command::ContextMenu(request) => self.handle_context_menu(request),
             Command::ServiceText(request) => self.handle_service_text(request),
             Command::Accessibility(action) => self.handle_accessibility(action),
@@ -531,6 +564,16 @@ impl MacApplication {
                 }
             }
             Command::Quit | Command::SystemQuit => {
+                if let Some(settings) = &self.settings {
+                    settings.end_editing();
+                }
+                // End-editing actions are queued. Save them before terminating
+                // the event loop, which otherwise stops draining commands.
+                while let Ok(pending) = self.commands.try_recv() {
+                    if let Command::Settings(event @ settings::Event::Change(..)) = pending {
+                        self.handle_settings(event);
+                    }
+                }
                 // Capture before teardown; closing windows during Quit must not
                 // overwrite the snapshot with an empty application.
                 self.save_restoration(true);
@@ -552,12 +595,13 @@ impl MacApplication {
                     app.schedule_redraw();
                 }
                 if let Ok(config) = LoomConfig::load() {
+                    if let Some(settings) = &mut self.settings {
+                        settings.refresh(config.clone());
+                    }
                     self.last_config = config;
                 }
             }
-            Command::Action(Action::ToggleSettings | Action::ToggleHelp)
-                if self.active_index().is_none() =>
-            {
+            Command::Action(Action::ToggleHelp) if self.active_index().is_none() => {
                 self.create_window(event_loop, false, true, None);
                 self.dispatch(command, event_loop);
             }
@@ -1054,10 +1098,74 @@ impl MacApplication {
                 app.is_some_and(|app| app.modal_captures_keyboard()),
                 app.is_some_and(|app| app.native_quick_terminal),
             );
+            if self
+                .settings
+                .as_ref()
+                .is_some_and(|settings| settings.is_key())
+            {
+                menu.update_for_settings();
+            }
         }
         self.save_restoration(false);
         self.update_scripting();
     }
+
+    fn handle_settings(&mut self, event: settings::Event) {
+        match event {
+            settings::Event::Show => {
+                for app in &mut self.windows {
+                    app.enter_modal_close_peers(loom_app::app::ModalKind::None);
+                    app.schedule_redraw();
+                }
+                let config = LoomConfig::load().unwrap_or_else(|_| self.last_config.clone());
+                let window = self.settings.get_or_insert_with(|| {
+                    settings::SettingsWindow::new(
+                        config.clone(),
+                        self.command_sender.clone(),
+                        self.proxy.clone(),
+                    )
+                });
+                window.show(config);
+            }
+            settings::Event::Change(field, value) => {
+                match settings::save(field, &value) {
+                    Ok(config) => {
+                        self.last_config = config.clone();
+                        for app in &mut self.windows {
+                            app.reload_config();
+                            app.suppress_next_config_reload();
+                            app.schedule_redraw();
+                        }
+                        if let Some(window) = &mut self.settings {
+                            window.refresh(config);
+                            window.status("Changes saved. Some renderer and server settings apply after restart.", false);
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(window) = &self.settings {
+                            window.revert();
+                            window.status(
+                                &format!(
+                                    "Could not save {}: {error}",
+                                    crate::app::ui::settings_panel::schema::meta(field).label
+                                ),
+                                true,
+                            );
+                        }
+                    }
+                }
+            }
+            event => {
+                if let Some(window) = &mut self.settings {
+                    window.navigate(event);
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn show_settings() {
+    native::dispatch(Command::Settings(settings::Event::Show));
 }
 
 // Each window computes its next deadline. Combining them prevents the last

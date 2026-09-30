@@ -69,6 +69,7 @@ base64 = "0.22"
 winnow = "0.7"
 percent-encoding = "2"
 colorsys = "0.6"
+twox-hash = { version = "2", default-features = false, features = ["xxhash64"] }
 rustybuzz = "0.20"
 unicode-segmentation = "1.11"
 taffy = "0.7"

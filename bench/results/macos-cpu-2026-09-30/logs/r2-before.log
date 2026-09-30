@@ -1,0 +1,52 @@
+[2026-09-30T01:37:21Z INFO  loomtty_server::daemon] shell integration scripts at /private/tmp/loom-cpu-paired-02-20260930/r2-before/tmp/loom/shell-integration
+[2026-09-30T01:37:21Z INFO  loomtty_server::daemon] loomtty-server listening on /private/tmp/loom-cpu-paired-02-20260930/r2-before/tmp/loom/loom.sock
+[2026-09-30T01:37:21Z INFO  loomtty] config: font=Menlo size=10, session=bench-5226-2
+[2026-09-30T01:37:21Z INFO  loom_gpu::blade] GPU adapter: Apple M6 (driver: Metal)
+[2026-09-30T01:37:21Z INFO  loom_gpu::blade] Surface format: Bgra8Unorm
+[2026-09-30T01:37:21Z INFO  loom_gpu] using blade (Vulkan/Metal) backend
+[2026-09-30T01:37:21Z INFO  loom_render::shaper] CJK: loaded 'PingFang SC' from /System/Library/PrivateFrameworks/FontServices.framework/Resources/Reserved/PingFangUI.ttc
+[2026-09-30T01:37:21Z INFO  loom_render::shaper] primary font: Menlo (monospaced=true)
+[2026-09-30T01:37:21Z INFO  loom_render::shaper] emoji font: Apple Color Emoji
+[2026-09-30T01:37:21Z INFO  loom_render::shaper] CJK: CTFontCreateForString selected 'PingFang SC' (ps='PingFangSC-Regular') for U+6C34 '水'
+[2026-09-30T01:37:21Z INFO  loom_render::shaper] CJK: fuzzy matched fontdb face 'PingFang SC' (weight=500) for system-selected 'PingFang SC'
+[2026-09-30T01:37:21Z INFO  loom_render::shaper] CoreText discovery: loading primary CTFont from '/System/Library/Fonts/Menlo.ttc' face_index=0
+[2026-09-30T01:37:21Z INFO  loom_render::shaper] CoreText discovery: primary CTFont ps_name='Menlo-Regular' family='Menlo'
+[2026-09-30T01:37:21Z INFO  loom_render::shaper] CoreText discovery: loading CJK CTFont from '/System/Library/PrivateFrameworks/FontServices.framework/Resources/Reserved/PingFangUI.ttc' face_index=20
+[2026-09-30T01:37:21Z INFO  loom_render::shaper] CoreText: loaded face[20] of '/System/Library/PrivateFrameworks/FontServices.framework/Resources/Reserved/PingFangUI.ttc' by PostScript name 'PingFangSC-Medium'
+[2026-09-30T01:37:21Z INFO  loom_render::shaper] CoreText discovery: CJK CTFont ps_name='PingFangSC-Regular' family='PingFang SC'
+[2026-09-30T01:37:21Z INFO  loom_render::shaper] CoreText discovery: loading emoji CTFont from '/System/Library/Fonts/Apple Color Emoji.ttc' face_index=0
+[2026-09-30T01:37:21Z INFO  loom_render::shaper] CoreText discovery: emoji CTFont ps_name='AppleColorEmoji' family='Apple Color Emoji'
+[2026-09-30T01:37:21Z INFO  loomtty::app] UI font resolved: '(system sans-serif)' → /System/Library/Fonts/Supplemental/Arial.ttf
+[2026-09-30T01:37:21Z INFO  loom_render::glyph_cache] CoreText cache: initializing pixel_size=26.7 family='Menlo' primary_path=Some(("/System/Library/Fonts/Menlo.ttc", 0)) emoji_path=Some(("/System/Library/Fonts/Apple Color Emoji.ttc", 0)) cjk_path=Some(("/System/Library/PrivateFrameworks/FontServices.framework/Resources/Reserved/PingFangUI.ttc", 20))
+[2026-09-30T01:37:21Z INFO  loom_render::glyph_cache::rasterize_coretext] CoreText raster: primary[Regular] ps_name='Menlo-Regular' family='Menlo' synth_bold=false synth_italic=false
+[2026-09-30T01:37:21Z INFO  loom_render::glyph_cache::rasterize_coretext] CoreText raster: primary[Bold] ps_name='Menlo-Bold' family='Menlo' synth_bold=false synth_italic=false
+[2026-09-30T01:37:21Z INFO  loom_render::glyph_cache::rasterize_coretext] CoreText raster: primary[Italic] ps_name='Menlo-Italic' family='Menlo' synth_bold=false synth_italic=false
+[2026-09-30T01:37:21Z INFO  loom_render::glyph_cache::rasterize_coretext] CoreText raster: primary[BoldItalic] ps_name='Menlo-BoldItalic' family='Menlo' synth_bold=false synth_italic=false
+[2026-09-30T01:37:21Z INFO  loom_render::glyph_cache::rasterize_coretext] CoreText raster: primary metrics ascent=24.75 descent=6.29 leading=0.00 units_per_em=2048
+[2026-09-30T01:37:21Z INFO  loom_render::glyph_cache::rasterize_coretext] CoreText raster: emoji font ps_name='AppleColorEmoji' family='Apple Color Emoji' is_color(sbix)=true
+[2026-09-30T01:37:21Z INFO  loom_render::shaper] CoreText: loaded face[20] of '/System/Library/PrivateFrameworks/FontServices.framework/Resources/Reserved/PingFangUI.ttc' by PostScript name 'PingFangSC-Medium'
+[2026-09-30T01:37:21Z INFO  loom_render::glyph_cache::rasterize_coretext] CoreText raster: CJK font ps_name='PingFangSC-Regular' family='PingFang SC' pt_size=26.7
+[2026-09-30T01:37:21Z INFO  loom_render::glyph_cache::metrics_coretext] CT metrics: raw CTFont ascent=24.7526 descent=6.2891 leading=0.0000 units_per_em=2048 pt_size=26.7
+[2026-09-30T01:37:21Z INFO  loom_render::glyph_cache::metrics_coretext] CT metrics: max ASCII advance = 16.0547 (measured from printable ASCII)
+[2026-09-30T01:37:21Z INFO  loom_render::glyph_cache::metrics_coretext] font metrics (CoreText): ascent=24.75 descent=6.29 leading=0.00 face_h=31.04 face_w=16.05 cw=16.0 ch=31.0 baseline=25.0
+[2026-09-30T01:37:21Z INFO  loom_render::glyph_cache::cjk_coretext] CJK sizing: '水' advance in CJK font = 27.0133
+[2026-09-30T01:37:21Z INFO  loom_render::glyph_cache::cjk_coretext] CJK sizing: primary font lacks '水', estimating advance = 32.0000
+[2026-09-30T01:37:21Z INFO  loom_render::glyph_cache::cjk_coretext] CJK size adjustment (CoreText): primary_ic=32.00 (1.200em) cjk_ic=27.01 (1.013em) scale=1.185 px=26.7→31.6
+[2026-09-30T01:37:21Z INFO  loom_render::glyph_cache::rasterize_coretext] CoreText: CJK font resized to 31.6px
+[2026-09-30T01:37:21Z INFO  loomtty::app::event] cell: 16.0x31.0 ascent=25.0 (dpi_scale=2.00)
+[2026-09-30T01:37:21Z INFO  loomtty::app::event] connecting to session 'bench-5226-2'
+[2026-09-30T01:37:21Z WARN  loomtty_server::daemon] failed to get peer credentials, rejecting: Socket is not connected (os error 57)
+[2026-09-30T01:37:21Z INFO  loomtty::app::event] config watcher active: /private/tmp/loom-cpu-paired-02-20260930/r2-before/settings/loomtty.toml (watching parent /private/tmp/loom-cpu-paired-02-20260930/r2-before/settings)
+[2026-09-30T01:37:21Z INFO  loomtty_server::daemon::connection] client handshake ok (v0.1.0), session=bench-5226-2
+[2026-09-30T01:37:21Z INFO  loomtty_server::daemon::connection] client requested session: bench-5226-2
+[2026-09-30T01:37:21Z INFO  loomtty_server::daemon::session] create_pane 1: viewport=1024x768 col_px=1024.0 cell=16x31 inset=0 → 64x24
+[2026-09-30T01:37:21Z INFO  loom_layout::workspace] add_column_right: pane=1 viewport=1024x768 existing_cols=0 default_width=Proportion(0.5)
+[2026-09-30T01:37:21Z INFO  loom_layout::workspace]   after: col[0] width=Proportion(1.0) effective=1024.0px
+[2026-09-30T01:37:21Z INFO  loomtty_server::daemon::connection] client 1 connected to session 'bench-5226-2'
+[2026-09-30T01:37:21Z INFO  loomtty::connection] server handshake ok (v0.1.0)
+[2026-09-30T01:38:07Z INFO  loomtty_server::daemon::tick] session 'bench-5226-2': all panes exited, removing session
+[2026-09-30T01:38:07Z INFO  loomtty_server::daemon::tick] all sessions ended and no clients, idle shutdown in 300s
+[2026-09-30T01:38:07Z INFO  loomtty::app::sync] server shut down, exiting
+[2026-09-30T01:38:07Z INFO  loomtty_server::daemon] received SIGTERM
+[2026-09-30T01:38:07Z INFO  loomtty_server::daemon::connection] shutting down gracefully
+[2026-09-30T01:38:07Z INFO  loomtty_server::daemon] accept loop shutting down

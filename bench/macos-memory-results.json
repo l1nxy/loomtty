@@ -1,0 +1,120 @@
+{
+  "date": "2026-09-30",
+  "platform": "macOS 27.0, Apple M6, arm64",
+  "rust": "1.94.0",
+  "baseline_commit": "fe438ab",
+  "baseline_branch": "fix/macos-adaptation",
+  "client_method": "Release client, Menlo 10 pt, scale factor 2, Metal; 2-second idle CPU interval, then 480 refreshes at 120 Hz with 24 rows of ANSI color/ASCII/CJK/emoji; sample client RSS every 100 ms for 6 seconds. init_ms ends at the connecting-to-session log, before connection completion. Three interleaved before/after runs.",
+  "client_samples": [
+    {
+      "version": "before",
+      "iteration": 0,
+      "init_ms": 831.61,
+      "idle_rss_mib": 1075.078125,
+      "active_peak_rss_mib": 1079.53125,
+      "idle_cpu_seconds": 0.01,
+      "active_cpu_seconds": 1.19
+    },
+    {
+      "version": "after",
+      "iteration": 0,
+      "init_ms": 133.59,
+      "idle_rss_mib": 94.96875,
+      "active_peak_rss_mib": 100.3125,
+      "idle_cpu_seconds": 0.0,
+      "active_cpu_seconds": 1.18
+    },
+    {
+      "version": "before",
+      "iteration": 1,
+      "init_ms": 258.74,
+      "idle_rss_mib": 1074.3125,
+      "active_peak_rss_mib": 1079.28125,
+      "idle_cpu_seconds": 0.0,
+      "active_cpu_seconds": 1.22
+    },
+    {
+      "version": "after",
+      "iteration": 1,
+      "init_ms": 136.79,
+      "idle_rss_mib": 95.234375,
+      "active_peak_rss_mib": 100.125,
+      "idle_cpu_seconds": 0.01,
+      "active_cpu_seconds": 1.11
+    },
+    {
+      "version": "before",
+      "iteration": 2,
+      "init_ms": 216.67,
+      "idle_rss_mib": 1074.796875,
+      "active_peak_rss_mib": 1079.625,
+      "idle_cpu_seconds": 0.01,
+      "active_cpu_seconds": 1.15
+    },
+    {
+      "version": "after",
+      "iteration": 2,
+      "init_ms": 150.97,
+      "idle_rss_mib": 95.3125,
+      "active_peak_rss_mib": 100.6875,
+      "idle_cpu_seconds": 0.0,
+      "active_cpu_seconds": 1.22
+    }
+  ],
+  "font_samples": [
+    {
+      "version": "before",
+      "iteration": 0,
+      "discovery_ms": 131.91,
+      "init_ms": 170.37,
+      "workload_ms": 13.17,
+      "max_rss_bytes": 1047527424,
+      "peak_footprint_bytes": 1031767432
+    },
+    {
+      "version": "before",
+      "iteration": 1,
+      "discovery_ms": 80.52,
+      "init_ms": 108.83,
+      "workload_ms": 12.18,
+      "max_rss_bytes": 1047527424,
+      "peak_footprint_bytes": 1031767456
+    },
+    {
+      "version": "before",
+      "iteration": 2,
+      "discovery_ms": 71.26,
+      "init_ms": 99.87,
+      "workload_ms": 11.72,
+      "max_rss_bytes": 1047527424,
+      "peak_footprint_bytes": 1031783840
+    },
+    {
+      "version": "after",
+      "iteration": 0,
+      "discovery_ms": 42.84,
+      "init_ms": 46.31,
+      "workload_ms": 6.13,
+      "max_rss_bytes": 22855680,
+      "peak_footprint_bytes": 8667856
+    },
+    {
+      "version": "after",
+      "iteration": 1,
+      "discovery_ms": 21.62,
+      "init_ms": 24.0,
+      "workload_ms": 3.8,
+      "max_rss_bytes": 22708224,
+      "peak_footprint_bytes": 8520400
+    },
+    {
+      "version": "after",
+      "iteration": 2,
+      "discovery_ms": 18.55,
+      "init_ms": 21.05,
+      "workload_ms": 3.73,
+      "max_rss_bytes": 22675456,
+      "peak_footprint_bytes": 8487632
+    }
+  ]
+}

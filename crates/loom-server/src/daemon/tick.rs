@@ -10,18 +10,33 @@ use super::connection;
 use super::damage::DamageAccumulator;
 use super::server::Server;
 
-/// Spawn the tick loop (16ms = ~60fps). Processes PTY output, extracts damage,
-/// encodes frames, and sends to clients.
+/// Wait once per iteration so a PTY notification is never consumed without
+/// processing its output. Only pending frames/cursor commits need a timer; an
+/// idle server has no periodic wakeups, and new output can interrupt the wait.
+async fn wait_for_tick(input_notify: &Notify, retry_at: Option<Instant>) {
+    if let Some(deadline) = retry_at {
+        tokio::select! {
+            _ = input_notify.notified() => {},
+            _ = tokio::time::sleep_until(deadline) => {},
+        }
+    } else {
+        input_notify.notified().await;
+    }
+}
+
+/// Process PTY output when notified, extract damage, encode and send frames.
 pub(crate) async fn run_tick_loop(
     tick_state: Arc<Mutex<Server>>,
     tick_shutdown: Arc<Notify>,
     input_notify: Arc<Notify>,
+    frame_interval: Duration,
 ) {
     // No fixed-rate ticker: the loop wakes on input_notify which fires
     // for both client input AND PTY output (event-driven, near-zero idle CPU).
-    // A 16ms throttle after each wake prevents busy-looping when PTY output
-    // arrives faster than frame rate.
-    let frame_interval = Duration::from_millis(16);
+    // Do not sleep after an empty drain: doing so delays the *next* output
+    // burst/terminal reply even though there is nothing to render now.
+    let mut retry_at = None;
+    let mut next_frame = Instant::now();
 
     // ── Frame buffer pool (optimization #2) ─────────────────────
     // Reusable Vec<u8> buffers to avoid per-frame allocation.
@@ -57,8 +72,12 @@ pub(crate) async fn run_tick_loop(
     loop {
         had_pty_data = false;
         cursor_held_pending = false;
-        // Sleep until notified (PTY output or client input)
-        input_notify.notified().await;
+        wait_for_tick(&input_notify, retry_at.take()).await;
+        // PTY parsing and terminal replies above/below never wait on this
+        // deadline. Only expensive viewport snapshots and client rendering
+        // are coalesced to at most one batch per display frame.
+        let send_frame = Instant::now() >= next_frame;
+        let mut frame_pending = false;
 
         // ── Phase 1 (locked): process PTY, extract damage, collect snapshots ──
         //
@@ -235,6 +254,24 @@ pub(crate) async fn run_tick_loop(
 
                     // Don't re-insert this session (already removed above)
                 } else {
+                    if !send_frame {
+                        // Leave accumulated damage intact and arrange a timer
+                        // even if this is the last PTY chunk in the burst.
+                        // DEC 2026 holds updates until the app ends its batch;
+                        // do not poll indefinitely on intentionally held data.
+                        frame_pending |= s.clients.values().any(|client| {
+                            client.session_name == *session_name
+                                && client.damage.iter().any(|(pane_id, damage)| {
+                                    !damage.is_empty()
+                                        && session
+                                            .panes
+                                            .get(pane_id)
+                                            .is_some_and(|pane| !pane.is_sync_output())
+                                })
+                        });
+                        s.sessions.insert(session_name.clone(), session);
+                        continue;
+                    }
                     // Collect damage snapshots for clients of this session.
                     // Skip panes with synchronized output (DEC 2026) active —
                     // damage accumulates and is sent when sync mode is turned off.
@@ -533,6 +570,7 @@ pub(crate) async fn run_tick_loop(
         // (SwitchSession) between Phase 1 and Phase 2; sending old-session
         // data to such a client would corrupt its state.
         if !pending_sends.is_empty() {
+            next_frame = Instant::now() + frame_interval;
             struct EncodedFrame {
                 client_id: u64,
                 session_name: String,
@@ -634,6 +672,7 @@ pub(crate) async fn run_tick_loop(
                                 } else {
                                     damage.mark_full();
                                 }
+                                frame_pending = true;
                             }
                             // Bytes consumed the Vec; cannot recover for pool
                             drop(e);
@@ -651,27 +690,18 @@ pub(crate) async fn run_tick_loop(
             }
         }
 
-        // Adaptive throttle: if this tick processed PTY data, skip the sleep
-        // and loop immediately — more data is likely queued behind.
+        // Keep draining PTYs promptly; frame pacing must never delay replies.
         //
         // IMPORTANT: do NOT consume input_notify permits here (e.g. via
         // select! { notified => ... }) — doing so races with the PTY reader
         // and can deadlock when the reader thread is blocked on a full channel
         // while the tick loop waits for a notification that was already consumed.
+        if frame_pending || cursor_held_pending {
+            retry_at = Some(next_frame);
+        }
         if had_pty_data {
             tokio::task::yield_now().await;
             input_notify.notify_one();
-        } else {
-            tokio::time::sleep(frame_interval).await;
-            // After the frame interval, wake the loop if a cursor debounce
-            // is still holding a pending value. Re-marked `cursor_dirty`
-            // alone would otherwise wait on `input_notify` indefinitely,
-            // leaving the held cursor uncommitted until unrelated activity
-            // arrives. The 2-tick dwell needs exactly one extra wake so
-            // the second observation can confirm the pending value.
-            if cursor_held_pending {
-                input_notify.notify_one();
-            }
         }
     }
 }
@@ -742,7 +772,145 @@ fn scrollback_sync_plan(
 
 #[cfg(test)]
 mod tests {
-    use super::scrollback_sync_plan;
+    use super::{scrollback_sync_plan, wait_for_tick};
+    use std::sync::Arc;
+    use tokio::sync::Notify;
+    use tokio::time::{Duration, Instant};
+
+    #[cfg(unix)]
+    #[tokio::test(start_paused = true)]
+    async fn coalesced_frame_flushes_latest_generation_without_another_notification() {
+        use super::run_tick_loop;
+        use crate::daemon::{client::ClientState, server::Server, session::Session};
+        use loom_protocol::codec::{self, Frame};
+        use loom_term::pane::{Pane, TerminalColors};
+        use std::collections::HashMap;
+        use tokio::sync::{Mutex, mpsc};
+
+        let colors = TerminalColors::default();
+        let pane = Pane::new_with_opts(1, 8, 3, "/bin/sh", Some("exec cat"), None).unwrap();
+        let mut session = Session::new("frame-pacing-test", "/bin/sh", 0.0, colors.clone());
+        session.last_title.insert(1, String::new());
+        session.panes.insert(1, pane);
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut client = ClientState {
+            id: 1,
+            tx,
+            damage: HashMap::new(),
+            last_acked_generation: 0,
+            max_input_seq: HashMap::new(),
+            received_input_seq: HashMap::new(),
+            history_sent: HashMap::new(),
+            send_failures: 0,
+            cell_width: 8.0,
+            cell_height: 16.0,
+            viewport_width: 64.0,
+            viewport_height: 48.0,
+            session_name: session.session_name.clone(),
+            last_sent_cursor: HashMap::new(),
+        };
+        client.damage.entry(1).or_default().mark_full();
+        let mut server = Server::new("/bin/sh", 0.0, colors);
+        server.session_config.restore_agents = false;
+        server
+            .sessions
+            .insert(session.session_name.clone(), session);
+        server.clients.insert(1, client);
+        let state = Arc::new(Mutex::new(server));
+        let notify = Arc::new(Notify::new());
+        let interval = Duration::from_millis(8); // honors non-default frame rate
+        let task = tokio::spawn(run_tick_loop(
+            state.clone(),
+            Arc::new(Notify::new()),
+            notify.clone(),
+            interval,
+        ));
+        notify.notify_one();
+        let first = rx.recv().await.unwrap();
+        assert!(matches!(
+            codec::read_frame(&mut first.as_ref()).await.unwrap(),
+            Frame::FullPaneSync(_)
+        ));
+        let started = Instant::now();
+
+        // Multiple updates inside one frame interval must be coalesced. No
+        // PTY thread sends a later notification in this test, so only the
+        // pending-frame timer can deliver the final generation.
+        for generation in [98, 99] {
+            {
+                let mut server = state.lock().await;
+                server
+                    .sessions
+                    .get_mut("frame-pacing-test")
+                    .unwrap()
+                    .generation
+                    .insert(1, generation);
+                server
+                    .clients
+                    .get_mut(&1)
+                    .unwrap()
+                    .damage
+                    .entry(1)
+                    .or_default()
+                    .mark_full();
+            }
+            notify.notify_one();
+            tokio::task::yield_now().await;
+            assert!(rx.try_recv().is_err(), "sent before the frame deadline");
+        }
+        let final_frame = tokio::time::timeout(Duration::from_millis(30), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let Frame::FullPaneSync(sync) = codec::read_frame(&mut final_frame.as_ref()).await.unwrap()
+        else {
+            panic!("expected coalesced full sync");
+        };
+        assert_eq!(sync.meta.generation, 99);
+        assert!(started.elapsed() >= interval);
+        assert!(started.elapsed() < Duration::from_millis(30));
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(rx.try_recv().is_err(), "idle loop kept sending frames");
+        task.abort();
+        let _ = task.await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_wait_has_no_periodic_wakeups() {
+        let notify = Arc::new(Notify::new());
+        let task_notify = notify.clone();
+        let task = tokio::spawn(async move { wait_for_tick(&task_notify, None).await });
+        tokio::time::advance(Duration::from_secs(60)).await;
+        assert!(!task.is_finished());
+        notify.notify_one();
+        task.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn output_interrupts_cursor_retry_without_losing_next_permit() {
+        let notify = Arc::new(Notify::new());
+        let started = Instant::now();
+        let task_notify = notify.clone();
+        let task = tokio::spawn(async move {
+            wait_for_tick(&task_notify, Some(started + Duration::from_millis(16))).await;
+        });
+        tokio::time::advance(Duration::from_millis(5)).await;
+        notify.notify_one();
+        task.await.unwrap();
+        assert_eq!(started.elapsed(), Duration::from_millis(5));
+        // A permit queued while processing must survive to the next iteration.
+        notify.notify_one();
+        wait_for_tick(&notify, None).await;
+        assert_eq!(started.elapsed(), Duration::from_millis(5));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pending_cursor_is_committed_without_more_output() {
+        let notify = Notify::new();
+        let started = Instant::now();
+        wait_for_tick(&notify, Some(started + Duration::from_millis(16))).await;
+        assert_eq!(started.elapsed(), Duration::from_millis(16));
+    }
 
     #[test]
     #[cfg(unix)]

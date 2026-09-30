@@ -14,6 +14,9 @@ colorsys = { workspace = true }
 log = { workspace = true }
 anyhow = { workspace = true }
 gethostname = "1.1"
+memchr = "2"
+bytemuck = { workspace = true }
+twox-hash = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }

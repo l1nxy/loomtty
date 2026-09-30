@@ -78,6 +78,34 @@ fn grid_contains(pane: &Pane, needle: &str) -> bool {
 // ── Original tests ──────────────────────────────────────────────────
 
 #[test]
+fn viewport_fingerprint_tracks_content_at_both_row_edges() {
+    use alacritty_terminal::term::cell::Flags;
+    use alacritty_terminal::vte::ansi::Color;
+
+    let mut pane = new_test_pane();
+    let initial = pane.viewport_row_fingerprint(0).unwrap();
+    assert_eq!(pane.viewport_row_fingerprint(1), Some(initial));
+    assert_eq!(pane.viewport_row_fingerprint(3), None);
+    for col in [0, 3] {
+        let point = Point::new(Line(0), Column(col));
+        let original = pane.term.grid()[point].clone();
+        for field in 0..4 {
+            let cell = &mut pane.term.grid_mut()[point];
+            match field {
+                0 => cell.c = '中',
+                1 => cell.fg = Color::Indexed(42),
+                2 => cell.bg = Color::Indexed(43),
+                _ => cell.flags.insert(Flags::BOLD | Flags::ITALIC),
+            }
+            assert_ne!(pane.viewport_row_fingerprint(0), Some(initial));
+            assert_eq!(pane.viewport_row_fingerprint(1), Some(initial));
+            pane.term.grid_mut()[point] = original.clone();
+            assert_eq!(pane.viewport_row_fingerprint(0), Some(initial));
+        }
+    }
+}
+
+#[test]
 fn set_cell_size_rounds_to_window_size_pixels() {
     let mut pane = new_test_pane();
     pane.set_cell_size(9.4, 17.6);

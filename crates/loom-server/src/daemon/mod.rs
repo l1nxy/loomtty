@@ -177,8 +177,9 @@ pub async fn prepare_daemon_with(
     let tick_state = state.clone();
     let tick_shutdown = shutdown.clone();
     let tick_input_notify = input_notify.clone();
+    let frame_interval = std::time::Duration::from_millis(config.render.frame_interval_ms.max(1));
     tokio::spawn(async move {
-        tick::run_tick_loop(tick_state, tick_shutdown, tick_input_notify).await;
+        tick::run_tick_loop(tick_state, tick_shutdown, tick_input_notify, frame_interval).await;
     });
 
     // Signal handling

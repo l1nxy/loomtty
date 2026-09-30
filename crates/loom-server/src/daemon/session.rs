@@ -640,12 +640,9 @@ impl Session {
                 self.last_tick_had_pty_data = true;
                 // Promote any pending received-but-unacked input seqs for
                 // this pane. PTY output flowing back is strong evidence the
-                // application has reacted to recent inputs; with the event-
-                // driven tick loop throttled at ~16ms (`tick.rs`) and sub-ms
-                // typical PTY echo latency, the very common case is "all
-                // inputs from the prior interval have been echoed and are
-                // included in this drain", so the framebuffer state below
-                // genuinely reflects them.
+                // application has reacted to recent inputs. This remains a
+                // heuristic: the event-driven loop can drain a prefix of a
+                // burst before all of its echoes have arrived.
                 //
                 // Residual coalescing race: if a burst of inputs is written
                 // to the PTY and only a prefix of their echoes is present in

@@ -1,0 +1,151 @@
+    Checking loom-render v0.1.0 (/Users/linxy/.codex/worktrees/5306/loomtty/crates/loom-render)
+warning: unnecessary `>= y + 1` or `x - 1 >=`
+   --> crates/loom-term/src/pane/tests.rs:925:9
+    |
+925 |         p.prompt_marks.len() >= marks_before + 1
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: change it to: `p.prompt_marks.len() > marks_before`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#int_plus_one
+    = note: `#[warn(clippy::int_plus_one)]` on by default
+
+warning: length comparison to zero
+   --> crates/loom-term/src/pane/tests.rs:340:16
+    |
+340 |             || read_grid_row(p, 0).len() > 0
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: using `!is_empty` is clearer and more explicit: `!read_grid_row(p, 0).is_empty()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#len_zero
+    = note: `#[warn(clippy::len_zero)]` on by default
+
+warning: casting to the same type is unnecessary (`usize` -> `usize`)
+   --> crates/loom-term/src/pane/tests.rs:593:18
+    |
+593 |     let target = (n_lines - 50) as usize;
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ help: try: `(n_lines - 50)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#unnecessary_cast
+    = note: `#[warn(clippy::unnecessary_cast)]` on by default
+
+warning: `loom-term` (lib test) generated 3 warnings (run `cargo clippy --fix --lib -p loom-term --tests` to apply 3 suggestions)
+warning: doc list item without indentation
+    --> crates/loom-protocol/src/codec/tests.rs:1944:9
+     |
+1944 |     /// This test pins both the name bytes and the payload shape.
+     |         ^
+     |
+     = help: if this is supposed to be its own paragraph, add a blank line
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#doc_lazy_continuation
+     = note: `#[warn(clippy::doc_lazy_continuation)]` on by default
+help: indent this line
+     |
+1944 |     ///     This test pins both the name bytes and the payload shape.
+     |         ++++
+
+warning: `loom-protocol` (lib test) generated 1 warning
+warning: the loop variable `i` is only used to index `cells`
+    --> crates/loom-app/src/grid/tests.rs:1727:14
+     |
+1727 |     for i in 0..5 {
+     |              ^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#needless_range_loop
+     = note: `#[warn(clippy::needless_range_loop)]` on by default
+help: consider using an iterator
+     |
+1727 -     for i in 0..5 {
+1727 +     for <item> in cells.iter_mut().take(5) {
+     |
+
+warning: this `if` statement can be collapsed
+    --> crates/loom-app/src/prediction/tests.rs:1392:5
+     |
+1392 | /     if let Some(o) = overlay {
+1393 | |         if let Some(cell) = o.get_cell(0, 1) {
+1394 | |             assert_eq!(cell.replacement.fg, PackedColor::rgb(255, 0, 0));
+1395 | |         }
+1396 | |     }
+     | |_____^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#collapsible_if
+     = note: `#[warn(clippy::collapsible_if)]` on by default
+help: collapse nested if block
+     |
+1392 ~     if let Some(o) = overlay
+1393 ~         && let Some(cell) = o.get_cell(0, 1) {
+1394 |             assert_eq!(cell.replacement.fg, PackedColor::rgb(255, 0, 0));
+1395 ~         }
+     |
+
+warning: manual `RangeInclusive::contains` implementation
+   --> crates/loom-motion/src/transition.rs:182:21
+    |
+182 |                     v >= 0.0 && v <= 1.0,
+    |                     ^^^^^^^^^^^^^^^^^^^^ help: use: `(0.0..=1.0).contains(&v)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#manual_range_contains
+    = note: `#[warn(clippy::manual_range_contains)]` on by default
+
+warning: very complex type used. Consider factoring parts into `type` definitions
+   --> crates/loom-config/src/config.rs:207:20
+    |
+207 |         let cases: &[(&str, fn(&mut LoomConfig))] = &[
+    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#type_complexity
+    = note: `#[warn(clippy::type_complexity)]` on by default
+
+warning: `loom-app` (lib test) generated 2 warnings (run `cargo clippy --fix --lib -p loom-app --tests` to apply 1 suggestion)
+warning: `loom-motion` (lib test) generated 1 warning (run `cargo clippy --fix --lib -p loom-motion --tests` to apply 1 suggestion)
+warning: `loom-config` (lib test) generated 1 warning
+    Checking loom-gpu v0.1.0 (/Users/linxy/.codex/worktrees/5306/loomtty/crates/loom-gpu)
+    Checking loom-ui v0.1.0 (/Users/linxy/.codex/worktrees/5306/loomtty/crates/loom-ui)
+warning: items after a test module
+    --> crates/loom-gpu/src/blade.rs:2114:1
+     |
+2114 | mod shader_tests {
+     | ^^^^^^^^^^^^^^^^
+...
+2206 | const RECT_SHADER: &str = r#"
+     | ^^^^^^^^^^^^^^^^^^^^^^^
+...
+2255 | const VERTEX_SHADER: &str = r#"
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2308 | const WGSL_COLOR_FUNCS: &str = r#"
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2340 | const WGSL_CORNER_FUNCS: &str = r#"
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2359 | const ALPHA_FRAGMENT: &str = r#"
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2395 | const COLOR_FRAGMENT: &str = r#"
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2417 | const BACKGROUND_IMAGE_SHADER: &str = r#"
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#items_after_test_module
+     = note: `#[warn(clippy::items_after_test_module)]` on by default
+     = help: move the items to before the test module was defined
+
+    Checking loomtty v0.1.0 (/Users/linxy/.codex/worktrees/5306/loomtty/crates/loom)
+warning: `loom-gpu` (lib test) generated 1 warning (run `cargo clippy --fix --lib -p loom-gpu --tests` to apply 1 suggestion)
+warning: this function has too many arguments (8/7)
+   --> crates/loom/src/app/ui/transient.rs:97:5
+    |
+ 97 | /     pub(in crate::app) fn build_bell_flash(
+ 98 | |         &mut self,
+ 99 | |         tiles: &[(u64, GeoRect, bool)],
+100 | |         zoom: f32,
+...   |
+105 | |         color_glyphs: &mut Vec<GlyphInstance>,
+106 | |     ) {
+    | |_____^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#too_many_arguments
+    = note: `#[warn(clippy::too_many_arguments)]` on by default
+
+warning: `loomtty` (lib test) generated 1 warning
+    Finished `dev` profile [optimized + debuginfo] target(s) in 1.88s

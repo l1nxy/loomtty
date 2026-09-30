@@ -176,10 +176,9 @@ pub(crate) async fn run_tick_loop(
                     // logged (not just swallowed) so that class of failure
                     // is diagnosable instead of surfacing only as a client
                     // that mysteriously refuses to reattach.
-                    if let Err(e) = loom_session::restore::delete_session(
-                        session_name,
-                        &transport::state_dir(),
-                    ) {
+                    if let Err(e) =
+                        loom_session::restore::delete_session(session_name, &transport::state_dir())
+                    {
                         log::warn!(
                             "session '{}': failed to delete saved-session file: {e}",
                             session_name

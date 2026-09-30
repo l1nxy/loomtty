@@ -4,6 +4,8 @@ use anyhow::Result;
 use std::ffi::CString;
 
 mod daemon;
+#[cfg(target_os = "macos")]
+mod login_env;
 mod session;
 mod shell_integration;
 mod tray;
@@ -48,6 +50,13 @@ fn main() -> Result<()> {
 
     #[cfg(target_os = "linux")]
     set_process_name("loomtty");
+
+    // Pick up PATH etc. from the user's login shell when launched from
+    // Finder/launchd, so commands the daemon spawns directly find
+    // Homebrew/version-manager binaries. Joins its helper thread before
+    // returning, so we're single-threaded again for the set_var below.
+    #[cfg(target_os = "macos")]
+    login_env::import();
 
     // Set environment variables BEFORE creating the tokio runtime, since
     // Runtime::new() spawns worker threads and std::env::set_var is unsound

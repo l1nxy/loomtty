@@ -168,6 +168,9 @@ pub(crate) fn ct_detect_ligatures(font: &CTFont, text: &str, font_id: fontdb::ID
     );
 
     for run in runs.iter() {
+        if !run_uses_font(&run, font) {
+            continue;
+        }
         let glyph_count = run.glyph_count() as usize;
         if glyph_count == 0 {
             continue;
@@ -255,6 +258,9 @@ pub(crate) fn ct_shape_run(
 
     let mut out = Vec::new();
     for run in runs.iter() {
+        if !run_uses_font(&run, font) {
+            continue;
+        }
         let glyph_count = run.glyph_count() as usize;
         if glyph_count == 0 {
             continue;

@@ -546,8 +546,33 @@ prompt removed AX text and acquired Secure Input with the client's PID visible
 in `ioreg`; hiding the app released it, as did finishing the prompt. The native
 menu labelled automatic protection and disabled text-transform services.
 
-VoiceOver speech/navigation, IME composition, the remaining Secure Input focus
-transitions, physical Look Up gestures, multi-display/Spaces restoration,
+Secure Input received a further live release check on 2026-09-30 using the
+`6dbc5b4` client in an isolated server runtime. Only an empty test password was
+submitted. `ioreg` ownership was checked after each transition:
+
+| Transition | Observed Secure Input owner |
+| --- | --- |
+| Test password prompt focused | QA client PID |
+| New ordinary sibling window focused | None |
+| Sibling closed; password window focused again | QA client PID |
+| Settings opened over the password prompt | None |
+| Settings dismissed | QA client PID |
+| Empty password submitted | None |
+| Native Secure Keyboard Entry menu enabled | QA client PID |
+| Application hidden | None |
+| Window raised and terminal focused again | QA client PID |
+| Last window closed | None; client process stayed alive |
+| Last session reopened | Same QA client PID |
+| Client quit | None; client process exited |
+
+Password AX elements exposed no value. The isolated server still listed both
+test sessions with zero attached clients after Quit; it was then shut down
+separately. This checks the OS's actual ownership rather than inferring it from
+the menu state. The automation could not capture the open application menu's
+checkmark, so that visual check remains manual.
+
+VoiceOver speech/navigation, IME composition, the Secure Input menu checkmark,
+physical Look Up gestures, multi-display/Spaces restoration,
 Finder Services, other text-Service modes/late results/clipboard preservation, and
 Shortcuts discovery/execution still need their manual checks above. Full Xcode remains necessary for App Intents metadata;
 Command Line Tools alone cannot finish that validation.

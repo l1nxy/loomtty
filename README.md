@@ -108,6 +108,12 @@ Every option, default, and valid range is documented in
 [`crates/loom-config/src/schema.rs`](crates/loom-config/src/schema.rs). You can
 also edit settings live from the in-app settings panel.
 
+For isolated runs, `LOOM_CONFIG_FILE` overrides the config file and
+`LOOM_STATE_DIR` overrides the session-state directory (use absolute paths).
+Both the client and server must receive the same overrides. On macOS, a private
+`TMPDIR` also isolates the server socket. See [bench/README.md](bench/README.md)
+for the macOS terminal comparison suite.
+
 ## Shell Integration
 
 Sourcing the snippet for your shell enables OSC 133 prompt marks — jump-to-prompt

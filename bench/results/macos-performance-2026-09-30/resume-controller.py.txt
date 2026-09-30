@@ -1,0 +1,70 @@
+import argparse, hashlib, json, random, sys, time
+from pathlib import Path
+sys.path.insert(0, '/Users/linxy/.codex/worktrees/5306/loomtty/bench')
+from macos_bench import ROOT, check_build_interference, report, run_one, save_json
+parser = argparse.ArgumentParser()
+parser.add_argument('directory', type=Path)
+ns = parser.parse_args()
+data = json.loads((ns.directory / 'results.json').read_text())
+for name, expected in data['benchmark_sha256'].items():
+    assert hashlib.sha256((ROOT / 'bench' / name).read_bytes()).hexdigest() == expected, name
+args = argparse.Namespace(**data['settings'])
+for name in ('loom', 'loom_server', 'output'):
+    setattr(args, name, Path(getattr(args, name)))
+paired = args.apps == ['before', 'after']
+if paired:
+    args.before = Path(args.before)
+    for label, directory in [('before', args.before), ('after', args.loom.parent)]:
+        assert hashlib.sha256((directory / 'loomtty').read_bytes()).hexdigest() == data['versions'][label]['sha256']
+        assert hashlib.sha256((directory / 'loomtty-server').read_bytes()).hexdigest() == data['versions'][label]['server_sha256']
+expected_display = next((r['display'] for r in data['runs'] if 'error' not in r and 'display' in r), None)
+data.setdefault('resume_log', []).append({'started_at_unix': time.time(), 'reason': 'Resume only missing runs after detected concurrent builds; retain failed attempts, exclude them from medians.', 'controller_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest()})
+rng = random.Random(args.seed)
+for round_index in range(args.rounds):
+    if paired:
+        order = ['before', 'after'] if round_index % 2 == 0 else ['after', 'before']
+    else:
+        order = args.apps.copy()
+        rng.shuffle(order)
+    for label in order:
+        if any(r['app'] == label and r['round'] == round_index and 'error' not in r for r in data['runs']):
+            continue
+        for attempt in range(1, 11):
+            quiet_since = None
+            deadline = time.monotonic() + 1200
+            while True:
+                if time.monotonic() > deadline:
+                    raise TimeoutError('no stable build-free window within 20 minutes')
+                try:
+                    check_build_interference()
+                except RuntimeError:
+                    quiet_since = None
+                else:
+                    if quiet_since is None:
+                        quiet_since = time.monotonic()
+                    elif time.monotonic() - quiet_since >= 30:
+                        break
+                time.sleep(5)
+            variant = argparse.Namespace(**vars(args))
+            if paired and label == 'before':
+                variant.loom = args.before / 'loomtty'
+                variant.loom_server = args.before / 'loomtty-server'
+            app = 'loomtty' if paired else label
+            directory = ns.directory / f'r{round_index}-{label}-retry-{time.time_ns()}'
+            print(f'Round {round_index + 1}/{args.rounds} {label}, retry {attempt}', flush=True)
+            run = run_one(app, round_index, directory, variant)
+            run['app'] = label
+            run['source_directory'] = str(directory)
+            if paired and 'error' not in run and run.get('display') != expected_display:
+                run['error'] = 'display/cell metrics differ between before/after runs'
+            data['runs'].append(run)
+            save_json(ns.directory / 'results.json', data)
+            report(data, ns.directory)
+            if 'error' not in run:
+                break
+            print(f"FAILED: {run['error']}", flush=True)
+            if not run['error'].startswith('concurrent Rust build/test processes detected:'):
+                raise RuntimeError(run['error'])
+        else:
+            raise RuntimeError('too many interrupted attempts')
+print('All requested independent launches completed.', flush=True)

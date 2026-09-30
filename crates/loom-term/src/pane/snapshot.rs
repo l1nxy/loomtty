@@ -1,7 +1,7 @@
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point};
 use loom_protocol::message::*;
-use std::hash::{Hash, Hasher};
+use std::hash::Hasher;
 
 use super::cell::{
     collect_scrollback_cells, collect_viewport_cells, full_damage_rows, pack_cell,
@@ -119,14 +119,14 @@ impl Pane {
             return None;
         }
 
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        // Internal change-detection fingerprint, never a wire value or map
+        // key. Hash the packed POD in one write per cell rather than hashing
+        // each tiny field (including array lengths) separately with SipHash.
+        let mut hasher = twox_hash::XxHash64::with_seed(0);
         for col in 0..cols {
             let point = Point::new(Line(line as i32), Column(col));
             let cell = pack_cell(&grid[point]);
-            cell.ch_bytes.hash(&mut hasher);
-            [cell.fg.tag, cell.fg.b1, cell.fg.b2, cell.fg.b3].hash(&mut hasher);
-            [cell.bg.tag, cell.bg.b1, cell.bg.b2, cell.bg.b3].hash(&mut hasher);
-            cell.flags.hash(&mut hasher);
+            hasher.write(bytemuck::bytes_of(&cell));
         }
         Some(hasher.finish())
     }

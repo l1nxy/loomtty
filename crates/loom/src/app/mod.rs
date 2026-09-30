@@ -490,40 +490,41 @@ impl App {
 
         let id = init.id.or_else(|| terminal_shaper.primary_font_id());
 
-        // Prefer shared font data from the terminal shaper (avoids re-reading
-        // multi-MB font files from disk). Fall back to file path for UI font
-        // overrides whose data isn't in the terminal shaper.
-        let primary = if init.path.is_some() {
-            // UI font override — may differ from terminal font.
-            // Try to share data if it's the terminal font, otherwise read path.
-            id.and_then(|fid| terminal_shaper.font_data_arc(fid))
-                .map(|(data, idx)| UiFontData::Shared(data, idx))
-                .or_else(|| init.path.clone().map(|(p, i)| UiFontData::Path(p, i)))
-        } else {
-            // No override — use terminal primary font data.
-            id.and_then(|fid| terminal_shaper.font_data_arc(fid))
-                .map(|(data, idx)| UiFontData::Shared(data, idx))
+        // CoreText loads file URLs; rustybuzz can share the terminal shaper's
+        // font bytes. Always keep a path fallback for fonts not held as bytes.
+        let font_source = |id: Option<loom_render::fontdb::ID>, path: Option<(String, u32)>| {
+            #[cfg(not(target_os = "macos"))]
+            if let Some((data, index)) = id.and_then(|fid| terminal_shaper.font_data_arc(fid)) {
+                return Some(UiFontData::Shared(data, index));
+            }
+            #[cfg(target_os = "macos")]
+            let _ = id;
+            path.map(|(p, i)| UiFontData::Path(p, i))
         };
-
-        let cjk = terminal_shaper
-            .cjk_font_id()
-            .and_then(|fid| terminal_shaper.font_data_arc(fid))
-            .map(|(data, idx)| UiFontData::Shared(data, idx));
-
-        let emoji = terminal_shaper
-            .emoji_font_id()
-            .and_then(|fid| terminal_shaper.font_data_arc(fid))
-            .map(|(data, idx)| UiFontData::Shared(data, idx));
+        let primary = font_source(
+            id,
+            init.path
+                .clone()
+                .or_else(|| terminal_shaper.primary_font_path()),
+        );
+        let cjk = font_source(
+            terminal_shaper.cjk_font_id(),
+            terminal_shaper.cjk_font_path(),
+        );
+        let emoji = font_source(
+            terminal_shaper.emoji_font_id(),
+            terminal_shaper.emoji_font_path(),
+        );
 
         let pixel_size = init
             .pixel_size
             .unwrap_or_else(|| config_font_size_pt * (96.0 * dpi_scale as f32) / 72.0);
         // Terminal primary font as last-resort fallback — covers Braille,
         // box drawing, Nerd Font icons that the proportional UI font lacks.
-        let terminal_primary = terminal_shaper
-            .primary_font_id()
-            .and_then(|fid| terminal_shaper.font_data_arc(fid))
-            .map(|(data, idx)| UiFontData::Shared(data, idx));
+        let terminal_primary = font_source(
+            terminal_shaper.primary_font_id(),
+            terminal_shaper.primary_font_path(),
+        );
 
         loom_render::ui_shaper::UiTextShaper::new(loom_render::ui_shaper::UiShaperParams {
             primary,
@@ -1952,6 +1953,23 @@ mod tests_app_layout {
     use super::App;
     use loom_config::config::{LoomConfig, StatusBarPosition};
     use winit::dpi::PhysicalSize;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn ui_inherits_terminal_font_without_retaining_raw_font_bytes() {
+        let terminal = loom_render::shaper::TextShaper::new("Menlo");
+        let init = super::UiFontInit {
+            path: None,
+            id: None,
+            pixel_size: Some(24.0),
+        };
+        let mut ui = App::build_ui_shaper(&init, &terminal, 12.0, 2.0, 16.0, 31.0);
+        assert!(ui.has_face());
+        let glyphs = ui.shape("Loom");
+        assert_eq!(glyphs.len(), 4);
+        assert!(glyphs.iter().all(|g| g.glyph_id != 0 && g.x_advance > 0.0));
+        assert_eq!(ui.font_id(), terminal.primary_font_id());
+    }
 
     fn make_app(statusbar_position: StatusBarPosition) -> App {
         let mut config = LoomConfig::default();

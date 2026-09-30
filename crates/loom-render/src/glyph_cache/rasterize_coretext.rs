@@ -387,14 +387,17 @@ fn create_variant(
 /// Check if a font has an sbix (Standard Bitmap Graphics) table, indicating color emoji.
 fn has_sbix_table(font: &CTFont) -> bool {
     let tag = u32::from_be_bytes(*b"sbix");
-    font.get_font_table(tag).is_some()
+    // Query tags only: CTFontCopyTable would materialize the entire emoji
+    // bitmap payload merely to check whether it exists.
+    font.get_available_font_tables()
+        .is_some_and(|tables| tables.iter().any(|table| *table == tag))
 }
 
 /// Convert a character to a glyph index using CoreText.
 fn char_to_glyph(font: &CTFont, ch: char) -> Option<u16> {
     let mut buf = [0u16; 2];
     let utf16: &[u16] = ch.encode_utf16(&mut buf);
-    let mut glyphs = vec![0u16; utf16.len()];
+    let mut glyphs = [0u16; 2];
     let success = unsafe {
         font.get_glyphs_for_characters(utf16.as_ptr(), glyphs.as_mut_ptr(), utf16.len() as isize)
     };
@@ -580,4 +583,42 @@ fn render_color_glyph(font: &CTFont, glyph: u16) -> Option<RasterizedGlyph> {
         is_color: true,
         data: rgba_data,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn styled_shaped_glyph_matches_character_rasterization() {
+        let rasterizer = CoreTextRasterizer::new("Menlo", None, None, None, 24.0).unwrap();
+        let regular = rasterizer.primary_font(FontStyle::Regular);
+        // Menlo's prompt arrow has different glyph indices in Regular/Bold.
+        let gid = char_to_glyph(regular, '❯').unwrap();
+        for style in [FontStyle::Bold, FontStyle::Italic, FontStyle::BoldItalic] {
+            let font = rasterizer.primary_font(style);
+            let shaped = rasterizer
+                .rasterize_glyph_id(font, gid as u32, style, false)
+                .unwrap();
+            // Some style faces lack the arrow. Those must use Regular with
+            // synthetic styling, rather than an unrelated same-index glyph.
+            let direct = rasterizer
+                .rasterize_char('❯', style, font, false)
+                .unwrap_or_else(|| {
+                    rasterizer
+                        .rasterize_glyph_inner(
+                            regular,
+                            gid,
+                            SyntheticStyle {
+                                bold: matches!(style, FontStyle::Bold | FontStyle::BoldItalic),
+                                italic: matches!(style, FontStyle::Italic | FontStyle::BoldItalic),
+                            },
+                            false,
+                        )
+                        .unwrap()
+                });
+            assert_eq!((shaped.width, shaped.height), (direct.width, direct.height));
+            assert_eq!(shaped.data, direct.data);
+        }
+    }
 }

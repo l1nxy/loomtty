@@ -92,6 +92,30 @@ pub(crate) enum FontClass {
     Ui,
 }
 
+/// Pack the small glyph discriminators into one hash input. Equality still
+/// distinguishes every glyph/font/style/width combination without hashing
+/// four separate fields on each cached glyph lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct GlyphIdKey(u64);
+
+impl GlyphIdKey {
+    pub(crate) fn new(glyph: u32, font: FontClass, style: FontStyle, wide: bool) -> Self {
+        let font_bits = match font {
+            FontClass::Primary => 0,
+            FontClass::Emoji => 1,
+            FontClass::Cjk => 2,
+            FontClass::Ui => 3,
+        };
+        let style_bits = match style {
+            FontStyle::Regular => 0,
+            FontStyle::Bold => 1,
+            FontStyle::Italic => 2,
+            FontStyle::BoldItalic => 3,
+        };
+        Self((u64::from(glyph) << 5) | (font_bits << 3) | (style_bits << 1) | u64::from(wide))
+    }
+}
+
 // ─── Per-instance data ───────────────────────────────────────────────
 
 /// Per-instance data for instanced glyph rendering.
@@ -125,6 +149,30 @@ pub struct PaneGlyphRange {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn glyph_key_preserves_all_discriminators_and_full_glyph_id() {
+        let mut keys = std::collections::HashSet::new();
+        for glyph in [0, 1, 255, 65535, u32::MAX] {
+            for font in [
+                FontClass::Primary,
+                FontClass::Emoji,
+                FontClass::Cjk,
+                FontClass::Ui,
+            ] {
+                for style in [
+                    FontStyle::Regular,
+                    FontStyle::Bold,
+                    FontStyle::Italic,
+                    FontStyle::BoldItalic,
+                ] {
+                    for wide in [false, true] {
+                        assert!(keys.insert(GlyphIdKey::new(glyph, font, style, wide)));
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn font_style_hash_distinct() {

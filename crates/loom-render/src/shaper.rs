@@ -9,6 +9,8 @@ use std::sync::Arc;
 use crate::font_resolver;
 use crate::font_resolver::{CmapResolver, FontResolver, ResolvedFont};
 
+type ShapedChar = Option<(u32, fontdb::ID)>;
+
 /// Font data cached for text shaping.
 struct FontData {
     data: Arc<Vec<u8>>,
@@ -106,10 +108,12 @@ pub struct ShapedGlyph {
 
 /// Text shaper using rustybuzz (Linux/Windows) or CoreText (macOS).
 ///
-/// Owns a standalone `fontdb::Database` for font discovery and raw font byte
-/// access. This replaces the previous `cosmic_text::FontSystem` dependency.
+/// Owns a standalone `fontdb::Database` for discovery. rustybuzz retains font
+/// bytes; CoreText loads file-backed fonts without duplicate heap buffers.
 pub struct TextShaper {
     db: fontdb::Database,
+    // CoreText does not populate this cache at startup. Keep raw font access
+    // available for callers that explicitly request it through load_font.
     fonts: HashMap<fontdb::ID, FontData>,
     primary_font_id: Option<fontdb::ID>,
     emoji_font_id: Option<fontdb::ID>,
@@ -145,6 +149,9 @@ pub struct TextShaper {
     dwrite_resolver: Option<Arc<font_resolver::DWriteResolver>>,
     /// Cache: char → shaped (glyph_id, font_id). Avoids re-running shaping per char.
     char_shape_cache: RefCell<HashMap<char, Option<(u32, fontdb::ID)>>>,
+    /// Frequent ASCII lookups need no hashing. Outer None means not shaped yet;
+    /// Some(None) caches a missing glyph just like char_shape_cache.
+    ascii_shape_cache: RefCell<[Option<ShapedChar>; 128]>,
     /// Cache: grapheme cluster string → shaped (glyph_id, font_id).
     grapheme_shape_cache: RefCell<HashMap<String, Option<(u32, fontdb::ID)>>>,
     /// Cache: (text run, font_id) → detected ligatures.
@@ -222,21 +229,25 @@ impl TextShaper {
             #[cfg(windows)]
             dwrite_resolver: None,
             char_shape_cache: RefCell::new(HashMap::new()),
+            ascii_shape_cache: RefCell::new([None; 128]),
             grapheme_shape_cache: RefCell::new(HashMap::new()),
             ligature_cache: RefCell::new(HashMap::new()),
         };
 
         // Preload primary font data for shaping
+        #[cfg(not(target_os = "macos"))]
         if let Some(fid) = primary_font_id {
             shaper.load_font(fid);
         }
         // Preload emoji font data for fallback shaping
+        #[cfg(not(target_os = "macos"))]
         if let Some(eid) = emoji_font_id
             && Some(eid) != primary_font_id
         {
             shaper.load_font(eid);
         }
         // Preload CJK font data for fallback shaping
+        #[cfg(not(target_os = "macos"))]
         if let Some(cid) = cjk_font_id
             && Some(cid) != primary_font_id
             && Some(cid) != emoji_font_id
@@ -326,26 +337,39 @@ impl TextShaper {
                 });
         }
 
-        // Build font resolver from loaded font data
-        let primary_fd = primary_font_id.and_then(|fid| shaper.fonts.get(&fid));
-        let cjk_fd = cjk_font_id.and_then(|fid| shaper.fonts.get(&fid));
-        let emoji_fd = emoji_font_id.and_then(|fid| shaper.fonts.get(&fid));
+        #[cfg(target_os = "macos")]
+        if let Some(fid) = primary_font_id {
+            shaper.resolver = Arc::new(CmapResolver::from_database(
+                &shaper.db,
+                fid,
+                cjk_font_id,
+                emoji_font_id,
+            ));
+        }
 
-        if let Some(pfd) = primary_fd {
-            let resolver = CmapResolver::new(
-                (&pfd.data, pfd.face_index),
-                cjk_fd.map(|fd| (fd.data.as_slice(), fd.face_index)),
-                emoji_fd.map(|fd| (fd.data.as_slice(), fd.face_index)),
-            );
-            #[cfg(windows)]
-            {
-                let dw = Arc::new(font_resolver::DWriteResolver::new(resolver));
-                shaper.resolver = Arc::clone(&dw) as Arc<dyn FontResolver>;
-                shaper.dwrite_resolver = Some(dw);
-            }
-            #[cfg(not(windows))]
-            {
-                shaper.resolver = Arc::new(resolver);
+        // rustybuzz needs the full font data for shaping; CoreText does not.
+        #[cfg(not(target_os = "macos"))]
+        {
+            let primary_fd = primary_font_id.and_then(|fid| shaper.fonts.get(&fid));
+            let cjk_fd = cjk_font_id.and_then(|fid| shaper.fonts.get(&fid));
+            let emoji_fd = emoji_font_id.and_then(|fid| shaper.fonts.get(&fid));
+
+            if let Some(pfd) = primary_fd {
+                let resolver = CmapResolver::new(
+                    (&pfd.data, pfd.face_index),
+                    cjk_fd.map(|fd| (fd.data.as_slice(), fd.face_index)),
+                    emoji_fd.map(|fd| (fd.data.as_slice(), fd.face_index)),
+                );
+                #[cfg(windows)]
+                {
+                    let dw = Arc::new(font_resolver::DWriteResolver::new(resolver));
+                    shaper.resolver = Arc::clone(&dw) as Arc<dyn FontResolver>;
+                    shaper.dwrite_resolver = Some(dw);
+                }
+                #[cfg(not(windows))]
+                {
+                    shaper.resolver = Arc::new(resolver);
+                }
             }
         }
 
@@ -399,6 +423,7 @@ impl TextShaper {
     }
 
     /// Load font data for a given font ID. No-op if already loaded.
+    /// CoreText does not need this; macOS callers normally use font paths.
     pub fn load_font(&mut self, font_id: fontdb::ID) {
         if self.fonts.contains_key(&font_id) {
             return;
@@ -437,11 +462,23 @@ impl TextShaper {
 
     /// Check if a font is loaded for shaping.
     pub fn has_font(&self, font_id: fontdb::ID) -> bool {
+        #[cfg(target_os = "macos")]
+        if [
+            (self.primary_font_id, &self.primary_ct_font),
+            (self.cjk_font_id, &self.cjk_ct_font),
+            (self.emoji_font_id, &self.emoji_ct_font),
+        ]
+        .iter()
+        .any(|(id, font)| *id == Some(font_id) && font.is_some())
+        {
+            return true;
+        }
         self.fonts.contains_key(&font_id)
     }
 
     /// Return a shared reference to the raw font data for `id`. Used by the
     /// UI shaper to avoid re-reading font files from disk.
+    /// On macOS these bytes are only present after an explicit `load_font`.
     pub fn font_data_arc(&self, id: fontdb::ID) -> Option<(Arc<Vec<u8>>, u32)> {
         let fd = self.fonts.get(&id)?;
         Some((Arc::clone(&fd.data), fd.face_index))
@@ -681,6 +718,17 @@ impl TextShaper {
         ch: char,
         faces: &FaceSet<'_>,
     ) -> Option<(u32, fontdb::ID)> {
+        if ch.is_ascii() {
+            let index = ch as usize;
+            if let Some(cached) = self.ascii_shape_cache.borrow()[index] {
+                return cached;
+            }
+            let byte = [ch as u8];
+            let text = std::str::from_utf8(&byte).expect("ASCII is valid UTF-8");
+            let result = self.try_shape_with_face_set(text, faces, Self::shape_single_char);
+            self.ascii_shape_cache.borrow_mut()[index] = Some(result);
+            return result;
+        }
         if let Some(cached) = self.char_shape_cache.borrow().get(&ch) {
             return *cached;
         }
@@ -951,19 +999,66 @@ fn load_ct_font_for_shaping(path: &str, index: u32) -> Option<core_text::font::C
     load_ct_font_from_path(path, index, 12.0)
 }
 
-/// Load a CTFont from a file path + face index at the given size.
-/// Handles TTC collections by using CTFontManagerCreateFontDescriptorsFromData
-/// to enumerate all faces and select the correct one by index.
-/// Shared by both shaper and rasterizer font loading.
+/// Load a file-backed font, including reserved system fonts such as PingFang.
+/// Only cmap/name/variation metadata is read on the fallback path; font bitmap
+/// data stays file-backed instead of being copied into each shaper/rasterizer.
 #[cfg(target_os = "macos")]
 pub(crate) fn load_ct_font_from_path(
     path: &str,
     index: u32,
     size: f64,
 ) -> Option<core_text::font::CTFont> {
-    let data = std::fs::read(path).ok()?;
-    load_ct_font_from_data(path, data.clone(), index, size)
-        .or_else(|| load_ct_font_by_postscript_name(path, &data, index, size))
+    // Reserved fonts may reject URL descriptors as well as byte providers.
+    // fontdb maps the file temporarily, so even this fallback does not read
+    // the entire collection into a Vec or retain it for the lifetime of a font.
+    let mut db = fontdb::Database::new();
+    db.load_font_file(path).ok()?;
+    let face = db.faces().find(|face| face.index == index)?;
+    let id = face.id;
+    if let Some(font) = load_ct_font_from_url(path, index, &face.post_script_name, size) {
+        return Some(font);
+    }
+    db.with_face_data(id, |data, index| {
+        load_ct_font_by_postscript_name(path, data, index, size)
+    })?
+}
+
+/// Load the requested face directly from its file URL. CoreText can share and
+/// lazily map the file instead of owning a new heap copy on every load (the
+/// Apple Color Emoji collection alone can exceed 180 MB).
+#[cfg(target_os = "macos")]
+fn load_ct_font_from_url(
+    path: &str,
+    index: u32,
+    postscript_name: &str,
+    size: f64,
+) -> Option<core_text::font::CTFont> {
+    use core_foundation::array::CFArray;
+    use core_foundation::base::TCFType;
+    use core_foundation::url::CFURL;
+    use core_text::font_descriptor::CTFontDescriptor;
+    use core_text::font_manager::CTFontManagerCreateFontDescriptorsFromURL;
+
+    let url = CFURL::from_path(path, false)?;
+    // SAFETY: `url` is alive for the call. The Create function transfers a
+    // retained CFArray of CTFontDescriptor objects to us; the wrapper releases
+    // it after CTFont has retained the selected descriptor's information.
+    let descriptors: CFArray<CTFontDescriptor> = unsafe {
+        let raw = CTFontManagerCreateFontDescriptorsFromURL(url.as_concrete_TypeRef());
+        if raw.is_null() {
+            return None;
+        }
+        CFArray::wrap_under_create_rule(raw)
+    };
+    let descriptor = descriptors.get(index as isize)?;
+    // CoreText can reorder/filter reserved collection faces (PingFang includes
+    // internal UI faces), so its array index is not always the TTC file index.
+    // Use the exact PostScript-name fallback and Regular variation in that case.
+    if descriptor.font_name() != postscript_name {
+        return None;
+    }
+    let font = core_text::font::new_from_descriptor(&descriptor, size);
+    (font.postscript_name() == postscript_name).then_some(font)
 }
 
 /// Reserved system fonts (e.g. PingFang in FontServices.framework on recent
@@ -1032,76 +1127,6 @@ fn with_variation(
         .create_copy_with_attributes(attrs.to_untyped())
         .ok()?;
     Some(core_text::font::new_from_descriptor(&desc, size))
-}
-
-#[cfg(target_os = "macos")]
-fn load_ct_font_from_data(
-    path: &str,
-    data: Vec<u8>,
-    index: u32,
-    size: f64,
-) -> Option<core_text::font::CTFont> {
-    use core_foundation::base::TCFType;
-
-    if index == 0 {
-        // Fast path: face 0 can be loaded directly via CGFont
-        let provider =
-            core_graphics::data_provider::CGDataProvider::from_buffer(std::sync::Arc::new(data));
-        let cg_font = core_graphics::font::CGFont::from_data_provider(provider).ok()?;
-        return Some(core_text::font::new_from_CGFont(&cg_font, size));
-    }
-
-    // TTC with index > 0: enumerate all faces via CTFontManagerCreateFontDescriptorsFromData
-    let cf_data = core_foundation::data::CFData::from_buffer(&data);
-
-    // CTFontManagerCreateFontDescriptorsFromData returns a CFArray of CTFontDescriptors
-    unsafe extern "C" {
-        fn CTFontManagerCreateFontDescriptorsFromData(
-            data: core_foundation::data::CFDataRef,
-        ) -> core_foundation::array::CFArrayRef;
-    }
-
-    let descriptors_ref =
-        unsafe { CTFontManagerCreateFontDescriptorsFromData(cf_data.as_concrete_TypeRef()) };
-    if descriptors_ref.is_null() {
-        log::warn!(
-            "CoreText: CTFontManagerCreateFontDescriptorsFromData returned null for {}",
-            path
-        );
-        // Fallback: load face 0
-        let provider =
-            core_graphics::data_provider::CGDataProvider::from_buffer(std::sync::Arc::new(data));
-        let cg_font = core_graphics::font::CGFont::from_data_provider(provider).ok()?;
-        return Some(core_text::font::new_from_CGFont(&cg_font, size));
-    }
-
-    let descriptors: core_foundation::array::CFArray<core_text::font_descriptor::CTFontDescriptor> =
-        unsafe { core_foundation::array::CFArray::wrap_under_create_rule(descriptors_ref) };
-
-    let count = descriptors.len();
-    if (index as isize) < count {
-        let desc = descriptors.get(index as isize).unwrap();
-        let ct_font = core_text::font::new_from_descriptor(&desc, size);
-        log::info!(
-            "CoreText: loaded face[{}] from TTC '{}' -> ps='{}' family='{}'",
-            index,
-            path,
-            ct_font.postscript_name(),
-            ct_font.family_name(),
-        );
-        Some(ct_font)
-    } else {
-        log::warn!(
-            "CoreText: face index {} out of range ({} faces in {}), loading face 0",
-            index,
-            count,
-            path,
-        );
-        let provider =
-            core_graphics::data_provider::CGDataProvider::from_buffer(std::sync::Arc::new(data));
-        let cg_font = core_graphics::font::CGFont::from_data_provider(provider).ok()?;
-        Some(core_text::font::new_from_CGFont(&cg_font, size))
-    }
 }
 
 // ─── Font discovery helpers (platform-independent) ────────────────
@@ -1628,6 +1653,125 @@ fn find_emoji_font(db: &fontdb::Database) -> Option<fontdb::ID> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn coretext_file_loading_preserves_collection_faces() {
+        let mut db = fontdb::Database::new();
+        for path in [
+            "/System/Library/Fonts/Menlo.ttc",
+            "/System/Library/Fonts/Apple Color Emoji.ttc",
+        ] {
+            db.load_font_file(path).expect("macOS system font");
+        }
+        assert!(
+            db.faces().any(|face| face.index > 0),
+            "exercise TTC face selection"
+        );
+        for face in db.faces() {
+            let fontdb::Source::File(path) = &face.source else {
+                panic!("expected file")
+            };
+            let font = super::load_ct_font_from_path(path.to_str().unwrap(), face.index, 19.0)
+                .expect("load selected face");
+            assert_eq!(font.postscript_name(), face.post_script_name);
+            assert_eq!(font.pt_size(), 19.0);
+        }
+        assert!(super::load_ct_font_from_path("/missing/font.ttf", 0, 12.0).is_none());
+        assert!(
+            super::load_ct_font_from_path("/System/Library/Fonts/Menlo.ttc", u32::MAX, 12.0)
+                .is_none()
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn coretext_resolver_and_rasterizer_preserve_text_and_color_glyphs() {
+        use crate::font_resolver::ResolvedFont;
+        use crate::glyph_cache::{FontInitParams, FontStyle, GlyphCache};
+        let shaper = super::TextShaper::new("Menlo");
+        assert!(
+            shaper.fonts.is_empty(),
+            "CoreText must not retain duplicate font bytes"
+        );
+        assert!(shaper.has_font(shaper.primary_font_id().unwrap()));
+        let config = loom_config::config::LoomConfig::default();
+        let resolver = shaper.font_resolver();
+        assert_eq!(resolver.resolve_char('A'), ResolvedFont::Primary);
+        assert_eq!(resolver.resolve_char('水'), ResolvedFont::Cjk);
+        assert_eq!(resolver.resolve_char('😀'), ResolvedFont::Emoji);
+        let faces = shaper.face_set().expect("primary font");
+        // The direct ASCII cache must preserve both glyph IDs/font selection
+        // and missing-glyph results of the ordinary fallback path.
+        for byte in 0..128u8 {
+            let ch = byte as char;
+            let expected = shaper.try_shape_with_face_set(
+                &ch.to_string(),
+                &faces,
+                TextShaper::shape_single_char,
+            );
+            assert_eq!(shaper.shape_char_with_fallback(ch, &faces), expected);
+            assert_eq!(shaper.shape_char_with_fallback(ch, &faces), expected);
+            assert_eq!(
+                shaper.ascii_shape_cache.borrow()[byte as usize],
+                Some(expected)
+            );
+        }
+        let system_cjk = coretext_cjk_font().expect("system CJK font");
+        let cjk = shaper.cjk_ct_font.as_ref().expect("loaded CJK font");
+        assert_eq!(cjk.family_name(), system_cjk.family_name());
+        assert_eq!(
+            shaper.shape_char_with_fallback('水', &faces).unwrap().1,
+            shaper.cjk_font_id().unwrap(),
+            "CJK glyph IDs must come from the selected fallback, not substituted Menlo runs"
+        );
+        if cjk.family_name().contains("PingFang") {
+            for ch in ['测', '试'] {
+                assert_eq!(
+                    shaper.shape_char_with_fallback(ch, &faces).unwrap().1,
+                    shaper.cjk_font_id().unwrap(),
+                );
+            }
+        }
+        let mut cache = GlyphCache::new(&FontInitParams {
+            font_size_pt: 12.0,
+            dpi_scale: 2.0,
+            family_name: "Menlo",
+            ui_family_name: None,
+            primary_font_path: shaper.primary_font_path(),
+            emoji_font_path: shaper.emoji_font_path(),
+            emoji_font_id: shaper.emoji_font_id(),
+            cjk_font_path: shaper.cjk_font_path(),
+            cjk_font_id: shaper.cjk_font_id(),
+            ui_font_path: None,
+            ui_font_id: None,
+            ui_pixel_size: None,
+            render_config: &config.render,
+            font_resolver: resolver,
+            cell_width_scale: None,
+            cell_height_scale: None,
+        });
+        for ch in ['A', '水', '😀', '🚀'] {
+            let (gid, fid) = shaper
+                .shape_char_with_fallback(ch, &faces)
+                .expect("shaped glyph");
+            let entry = cache
+                .ensure_glyph_id(gid, fid, FontStyle::Regular, ch != 'A')
+                .expect("rasterized glyph");
+            assert!(entry.width > 0 && entry.height > 0);
+            assert_eq!(entry.is_color, matches!(ch, '😀' | '🚀'));
+        }
+        let (alpha, color, _, _) = cache.take_pending();
+        assert!(!alpha.is_empty() && !color.is_empty());
+        for upload in alpha.iter().chain(&color) {
+            assert!(
+                upload.data.iter().any(|&b| b != 0),
+                "glyph pixels must not be blank"
+            );
+        }
+        // Exercise multi-codepoint emoji shaping through the same native font.
+        assert!(shaper.shape_grapheme_with_fallback("👩‍💻", &faces).is_some());
+    }
 
     #[test]
     fn shaper_new_empty() {

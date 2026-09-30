@@ -76,6 +76,12 @@ pub fn expand_config_path(path: &str) -> PathBuf {
 }
 
 pub fn config_path() -> PathBuf {
+    // Explicit overrides let tools run an isolated instance without changing
+    // the user's normal configuration (or their HOME directory).
+    if let Some(path) = std::env::var_os("LOOM_CONFIG_FILE").filter(|p| !p.is_empty()) {
+        return PathBuf::from(path);
+    }
+
     #[cfg(target_os = "macos")]
     {
         if let Some(home) = dirs::home_dir() {

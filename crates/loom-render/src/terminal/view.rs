@@ -41,51 +41,9 @@ impl RowRenderData {
     }
 }
 
-const ROW_HASH_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
-const ROW_HASH_PRIME: u64 = 0x100000001b3;
-
-struct RowHasher(u64);
-
-impl RowHasher {
-    fn new() -> Self {
-        Self(ROW_HASH_OFFSET_BASIS)
-    }
-}
-
-impl Hasher for RowHasher {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        let mut hash = self.0;
-        for &byte in bytes {
-            hash ^= byte as u64;
-            hash = hash.wrapping_mul(ROW_HASH_PRIME);
-        }
-        self.0 = hash;
-    }
-
-    fn write_u8(&mut self, i: u8) {
-        self.write(&[i]);
-    }
-
-    fn write_u16(&mut self, i: u16) {
-        self.write(&i.to_le_bytes());
-    }
-
-    fn write_u32(&mut self, i: u32) {
-        self.write(&i.to_le_bytes());
-    }
-
-    fn write_u64(&mut self, i: u64) {
-        self.write(&i.to_le_bytes());
-    }
-
-    fn write_usize(&mut self, i: usize) {
-        self.write(&i.to_le_bytes());
-    }
-}
+// Internal row-cache fingerprints: a bulk word-oriented hash avoids the
+// byte-by-byte dependency chain of FNV when every TUI row changes each frame.
+use twox_hash::XxHash64 as RowHasher;
 
 pub(super) struct CellRenderer<'a> {
     pub(super) row: usize,
@@ -787,7 +745,7 @@ fn build_incremental_row_hash_cache(
 }
 
 fn hash_row(params: &ViewBuildParams<'_>, row: usize) -> u64 {
-    let mut hasher = RowHasher::new();
+    let mut hasher = RowHasher::with_seed(0);
     let cols = params.grid.cols as usize;
     let start = row.saturating_mul(cols);
     let end = (start + cols).min(params.grid.cells.len());

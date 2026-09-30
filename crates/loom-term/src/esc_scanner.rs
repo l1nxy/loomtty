@@ -36,7 +36,8 @@ pub(crate) struct ScanResult<'a> {
 /// is the index one past the last ST byte.
 fn find_st(data: &[u8], start: usize) -> Option<(usize, usize)> {
     let mut i = start;
-    while i < data.len() {
+    while let Some(offset) = memchr::memchr2(0x07, 0x1b, &data[i..]) {
+        i += offset;
         // ST is BEL (0x07) or ESC `\`. The bare C1 ST byte 0x9C is intentionally
         // NOT treated as a terminator: on a UTF-8 PTY stream 0x9C is a valid
         // continuation byte (e.g. the trailing byte of U+275C = E2 9D 9C), so
@@ -113,6 +114,19 @@ fn kitty_introducer(input: &mut &[u8]) -> ModalResult<()> {
 // Public scan functions
 // ---------------------------------------------------------------------------
 
+/// Find this side protocol's introducer, skipping unrelated escapes (notably
+/// dense SGR output). Preserve short ESC tails so callers retain exactly the
+/// same partial-sequence handling across PTY reads.
+fn next_intro(data: &[u8], from: usize, intro: &[u8], minimum: usize) -> Option<usize> {
+    let full = memchr::memmem::find(&data[from..], intro).map(|offset| from + offset);
+    let tail = from.max(data.len().saturating_sub(minimum - 1));
+    let partial = memchr::memchr(0x1b, &data[tail..]).map(|offset| tail + offset);
+    match (full, partial) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
+}
+
 /// Scan for OSC sequences: `ESC ] <number> ; <payload> ST`
 ///
 /// ST is either BEL (0x07) or ESC \\ (0x1b 0x5c).
@@ -127,11 +141,11 @@ pub(crate) fn scan_osc<'a>(data: &'a [u8], osc_number_bytes: &[u8]) -> ScanResul
     let intro_len = 1 + osc_number_bytes.len() + 1;
 
     let mut i = 0;
-    while i < data.len() {
-        if data[i] != 0x1b {
-            i += 1;
-            continue;
-        }
+    // Skip ordinary text in bulk instead of rescanning every byte for each
+    // side protocol. Offsets still refer to the original chunk, including
+    // incomplete introducers that must survive the next PTY read.
+    while let Some(next) = next_intro(data, i, b"\x1b]", 1 + intro_len) {
+        i = next;
 
         // Found ESC at position i.
         let remaining = data.len() - i;
@@ -175,11 +189,11 @@ pub(crate) fn scan_csi_dec<'a>(data: &'a [u8]) -> ScanResult<'a> {
     };
 
     let mut i = 0;
-    while i < data.len() {
-        if data[i] != 0x1b {
-            i += 1;
-            continue;
-        }
+    // Skip ordinary text in bulk instead of rescanning every byte for each
+    // side protocol. Offsets still refer to the original chunk, including
+    // incomplete introducers that must survive the next PTY read.
+    while let Some(next) = next_intro(data, i, b"\x1b[?", 5) {
+        i = next;
 
         let remaining = data.len() - i;
 
@@ -238,11 +252,11 @@ pub(crate) fn scan_dcs<'a>(data: &'a [u8]) -> ScanResult<'a> {
     };
 
     let mut i = 0;
-    while i < data.len() {
-        if data[i] != 0x1b {
-            i += 1;
-            continue;
-        }
+    // Skip ordinary text in bulk instead of rescanning every byte for each
+    // side protocol. Offsets still refer to the original chunk, including
+    // incomplete introducers that must survive the next PTY read.
+    while let Some(next) = next_intro(data, i, b"\x1bP", 4) {
+        i = next;
 
         let remaining = data.len() - i;
 
@@ -301,11 +315,11 @@ pub(crate) fn scan_apc_kitty<'a>(data: &'a [u8]) -> ScanResult<'a> {
     };
 
     let mut i = 0;
-    while i < data.len() {
-        if data[i] != 0x1b {
-            i += 1;
-            continue;
-        }
+    // Skip ordinary text in bulk instead of rescanning every byte for each
+    // side protocol. Offsets still refer to the original chunk, including
+    // incomplete introducers that must survive the next PTY read.
+    while let Some(next) = next_intro(data, i, b"\x1b_", 5) {
+        i = next;
 
         let remaining = data.len() - i;
 
@@ -357,6 +371,54 @@ pub(crate) fn scan_apc_kitty<'a>(data: &'a [u8]) -> ScanResult<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scan_offsets_and_partial_tails_across_vector_boundaries() {
+        // Exercise every byte alignment around common SIMD widths and a
+        // large PTY chunk. Searching a suffix must not change reported offsets.
+        for prefix_len in (0..130).chain([4095, 4096, 65535]) {
+            let mut data = vec![b'x'; prefix_len];
+            data.extend_from_slice(b"\x1b]7;file:///tmp\x07\x1b[?1004h\x1bPq~\x1b\\\x1b_Gabc\x07");
+            let partial = data.len();
+            data.push(0x1b);
+            let osc = scan_osc(&data, b"7");
+            let csi = scan_csi_dec(&data);
+            let dcs = scan_dcs(&data);
+            let apc = scan_apc_kitty(&data);
+            assert_eq!(osc.sequences, vec![(prefix_len, &b"file:///tmp"[..])]);
+            assert_eq!(csi.sequences[0].1, b"1004h");
+            assert_eq!(dcs.sequences[0].1, b"~");
+            assert_eq!(apc.sequences[0].1, b"abc");
+            for result in [osc, csi, dcs, apc] {
+                assert_eq!(result.sequences.len(), 1);
+                assert_eq!(result.partial_start, Some(partial));
+            }
+        }
+    }
+
+    #[test]
+    fn terminator_search_skips_text_but_not_stray_escapes_or_utf8() {
+        let mut data = vec![b'x'; 65535];
+        data.extend_from_slice(b"\x1bX\xe2\x9d\x9c\x1bY\x1b\\");
+        assert_eq!(find_st(&data, 3), Some((65542, 65544)));
+        data.truncate(65543); // incomplete ESC-backslash terminator
+        assert_eq!(find_st(&data, 3), None);
+    }
+
+    #[test]
+    fn dense_sgr_does_not_hide_side_protocols_or_partial_escapes() {
+        let mut data = b"\x1b[38;2;1;2;3mX".repeat(4096);
+        let offset = data.len();
+        data.extend_from_slice(b"\x1b]133;A\x07");
+        assert_eq!(scan_osc(&data, b"133").sequences, vec![(offset, &b"A"[..])]);
+        // The original scanner preserves the first ESC in a short tail,
+        // even if it is an unrelated sequence before another introducer.
+        data.extend_from_slice(b"\x1bX\x1b]");
+        assert_eq!(scan_osc(&data, b"133").partial_start, Some(data.len() - 4));
+        assert!(scan_csi_dec(&data).sequences.is_empty());
+        assert!(scan_dcs(&data).sequences.is_empty());
+        assert!(scan_apc_kitty(&data).sequences.is_empty());
+    }
 
     // -----------------------------------------------------------------------
     // scan_osc

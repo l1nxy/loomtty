@@ -118,6 +118,11 @@ pub struct PackedCell {
 
 impl PackedCell {
     pub fn ch(&self) -> char {
+        // Normal ASCII cells are zero-padded. Check all four bytes so a
+        // malformed trailing byte still takes the validating UTF-8 path.
+        if u32::from_le_bytes(self.ch_bytes) < 0x80 {
+            return self.ch_bytes[0] as char;
+        }
         let s = std::str::from_utf8(&self.ch_bytes).unwrap_or("\0");
         s.chars().next().unwrap_or('\0')
     }
@@ -1161,6 +1166,29 @@ mod tests {
         let decoded: &PackedCell = bytemuck::from_bytes(bytes);
         assert_eq!(decoded.ch(), '中');
         assert_eq!(decoded.fg, PackedColor::indexed(196));
+    }
+
+    #[test]
+    fn packed_cell_ascii_fast_path_preserves_utf8_validation() {
+        let mut cell = PackedCell::default();
+        for first in 0..=u8::MAX {
+            for second in [0, b'A', 0x80, 0xc2, 0xff] {
+                for third in [0, b'A', 0x80, 0xc2, 0xff] {
+                    for fourth in [0, b'A', 0x80, 0xc2, 0xff] {
+                        cell.ch_bytes = [first, second, third, fourth];
+                        let expected = std::str::from_utf8(&cell.ch_bytes)
+                            .ok()
+                            .and_then(|s| s.chars().next())
+                            .unwrap_or('\0');
+                        assert_eq!(cell.ch(), expected, "{:x?}", cell.ch_bytes);
+                    }
+                }
+            }
+        }
+        for ch in ['\0', ' ', 'A', '\u{7f}', 'é', '中', '😀', '\u{10ffff}'] {
+            cell.set_ch(ch);
+            assert_eq!(cell.ch(), ch);
+        }
     }
 
     #[test]

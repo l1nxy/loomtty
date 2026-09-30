@@ -1,6 +1,7 @@
 //! Row-level text shaping: ligature detection, grapheme clustering, single-char shaping.
 
 use loom_config::schema::DisableLigatures;
+use loom_protocol::message::{FLAG_HIDDEN, FLAG_WIDE_CHAR, FLAG_WIDE_CHAR_SPACER};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -271,12 +272,16 @@ pub(super) fn precompute_row_shaping_into(
         if idx >= params.grid.cells.len() {
             break;
         }
-        let Some(props) =
-            CellProps::from_packed_cell_fast(&params.grid.cells[idx], params.grid.colors)
-        else {
+        // This pass only needs character/width information. Color conversion
+        // and decoration/style decoding are done when building render data.
+        let cell = &params.grid.cells[idx];
+        let flags = cell.flags_u16();
+        if flags & (FLAG_WIDE_CHAR_SPACER | FLAG_HIDDEN) != 0 {
             continue;
-        };
-        if props.is_hidden || props.ch == ' ' || props.ch == '\0' || props.ch.is_control() {
+        }
+        let ch = cell.ch();
+        let is_wide = flags & FLAG_WIDE_CHAR != 0;
+        if ch == ' ' || ch == '\0' || ch.is_control() {
             continue;
         }
         if data.skip_cols[col] {
@@ -289,7 +294,7 @@ pub(super) fn precompute_row_shaping_into(
                 faces,
                 full_grapheme,
                 col,
-                &props,
+                is_wide,
                 0,
                 cols_usize,
                 &mut data.skip_cols,
@@ -299,23 +304,22 @@ pub(super) fn precompute_row_shaping_into(
             continue;
         }
 
-        if is_regional_indicator(props.ch) {
+        if is_regional_indicator(ch) {
             let next_col = col + 1;
             if next_col < cols_usize {
                 let li = row * cols_usize + next_col;
                 if li < params.grid.cells.len() {
                     let next_ch = params.grid.cells[li].ch();
                     if is_regional_indicator(next_ch) {
-                        let mut cluster =
-                            String::with_capacity(props.ch.len_utf8() + next_ch.len_utf8());
-                        cluster.push(props.ch);
+                        let mut cluster = String::with_capacity(ch.len_utf8() + next_ch.len_utf8());
+                        cluster.push(ch);
                         cluster.push(next_ch);
                         if push_shaped_grapheme(
                             params.shaper,
                             faces,
                             &cluster,
                             col,
-                            &props,
+                            is_wide,
                             1,
                             cols_usize,
                             &mut data.skip_cols,
@@ -328,14 +332,14 @@ pub(super) fn precompute_row_shaping_into(
             }
         }
 
-        let mut look = col + if props.is_wide { 2 } else { 1 };
+        let mut look = col + if is_wide { 2 } else { 1 };
         if look < cols_usize {
             let li = row * cols_usize + look;
             if li < params.grid.cells.len() {
                 let next_ch = params.grid.cells[li].ch();
                 if is_combining_or_modifier(next_ch) {
                     let mut cluster = String::new();
-                    cluster.push(props.ch);
+                    cluster.push(ch);
                     cluster.push(next_ch);
                     look += 1;
                     let mut consumed = 1usize;
@@ -358,7 +362,7 @@ pub(super) fn precompute_row_shaping_into(
                         faces,
                         &cluster,
                         col,
-                        &props,
+                        is_wide,
                         consumed,
                         cols_usize,
                         &mut data.skip_cols,
@@ -378,8 +382,8 @@ pub(super) fn precompute_row_shaping_into(
             // run shape can't see.
             continue;
         }
-        if let Some((gid, fid)) = params.shaper.shape_char_with_fallback(props.ch, faces) {
-            data.char_glyphs.push((col, gid, fid, props.is_wide));
+        if let Some((gid, fid)) = params.shaper.shape_char_with_fallback(ch, faces) {
+            data.char_glyphs.push((col, gid, fid, is_wide));
         }
     }
 
@@ -396,7 +400,7 @@ fn push_shaped_grapheme(
     faces: &FaceSet<'_>,
     cluster: &str,
     col: usize,
-    props: &CellProps,
+    is_wide: bool,
     consumed_cols: usize,
     cols_usize: usize,
     skip_cols: &mut [bool],
@@ -408,8 +412,8 @@ fn push_shaped_grapheme(
     let Some((gid, fid)) = shaper.shape_grapheme_with_fallback(cluster, faces) else {
         return false;
     };
-    grapheme_glyphs.push((col, gid, fid, grapheme_display_cols(cluster, props.is_wide)));
-    let start = col + if props.is_wide { 2 } else { 1 };
+    grapheme_glyphs.push((col, gid, fid, grapheme_display_cols(cluster, is_wide)));
+    let start = col + if is_wide { 2 } else { 1 };
     for k in 0..consumed_cols {
         let c = start + k;
         if c < cols_usize {

@@ -1,0 +1,5 @@
+   Compiling loom-render v0.1.0 (/Users/linxy/.codex/worktrees/5306/loomtty/crates/loom-render)
+   Compiling loom-gpu v0.1.0 (/Users/linxy/.codex/worktrees/5306/loomtty/crates/loom-gpu)
+   Compiling loom-ui v0.1.0 (/Users/linxy/.codex/worktrees/5306/loomtty/crates/loom-ui)
+   Compiling loomtty v0.1.0 (/Users/linxy/.codex/worktrees/5306/loomtty/crates/loom)
+    Finished `release` profile [optimized] target(s) in 7.04s

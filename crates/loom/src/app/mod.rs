@@ -1605,9 +1605,14 @@ impl App {
         cell_h + padding
     }
 
-    /// Height of the bottom hints bar (same size as the status bar).
+    /// Native windows put pane controls in AppKit chrome and use the entire
+    /// content view for terminals; the custom hints row must not reserve space.
     pub fn hints_bar_height(&self) -> f32 {
-        self.chrome_row_height()
+        if self.native_window_chrome {
+            0.0
+        } else {
+            self.chrome_row_height()
+        }
     }
 
     /// Total vertical space occupied by chrome (status bar + hints bar).
@@ -2079,5 +2084,40 @@ mod tests_app_layout {
             Some(content_h - 1.0)
         );
         assert_eq!(app.content_y_from_screen(content_h + 1.0), None);
+    }
+
+    #[test]
+    fn native_resize_sends_full_content_height_and_keeps_bottom_interactive() {
+        use loom_protocol::message::ClientMessage;
+
+        for position in [StatusBarPosition::Top, StatusBarPosition::Bottom] {
+            let mut app = make_app(position);
+            app.native_window_chrome = true;
+            let (tx, rx) = crossbeam_channel::unbounded();
+            app.core.server_tx = Some(tx);
+
+            // AppKit has already removed its title/tab bar from inner_size.
+            // Exercise successive resizes, including a Retina-sized surface.
+            for (width, height) in [(900, 700), (1800, 1400), (800, 611)] {
+                app.apply_resize(PhysicalSize::new(width, height));
+                let view = &app.core.workspaces.view_size;
+                assert_eq!((view.width, view.height), (width as f32, height as f32));
+                assert_eq!(app.content_y_from_screen(0.0), Some(0.0));
+                assert_eq!(
+                    app.content_y_from_screen(height as f32 - 1.0),
+                    Some(height as f32 - 1.0)
+                );
+                assert_eq!(app.content_y_from_screen(height as f32), None);
+                let ClientMessage::Resize {
+                    width: sent_width,
+                    height: sent_height,
+                    ..
+                } = rx.try_recv().expect("resize reaches the server")
+                else {
+                    panic!("expected a Resize message");
+                };
+                assert_eq!((sent_width, sent_height), (width, height));
+            }
+        }
     }
 }

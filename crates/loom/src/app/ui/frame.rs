@@ -149,7 +149,9 @@ impl UiFrame {
         if !self.chrome.top_bar.is_empty() {
             self.top_bar.paint(self.chrome.top_bar, cx, scene);
         }
-        self.hints_bar.paint(cx, scene);
+        if !self.chrome.hints_bar.is_empty() {
+            self.hints_bar.paint(cx, scene);
+        }
         if let (Some(tab_bar), Some(_rect)) = (&mut self.side_tab_bar, self.chrome.side_tab_bar) {
             tab_bar.paint(cx, scene);
         }

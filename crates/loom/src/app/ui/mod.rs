@@ -200,8 +200,7 @@ mod tests {
                 app.native_window_chrome = true;
                 app.core.config.tabbar.position = position;
                 app.core.config.statusbar.position = status;
-                app.core.workspaces.view_size.width = 800.0;
-                app.core.workspaces.view_size.height = 600.0 - app.hints_bar_height();
+                app.preview_resize(winit::dpi::PhysicalSize::new(800, 600));
                 let layout = app.top_bar_layout(800.0, 600.0, 8.0, 24.0, None);
                 let rects = chrome_rects(
                     &app,
@@ -211,10 +210,11 @@ mod tests {
                     app.hints_bar_height(),
                 );
                 assert!(rects.top_bar.is_empty());
+                assert!(rects.hints_bar.is_empty());
                 assert!(rects.side_tab_bar.is_none());
                 assert_eq!(app.total_chrome_width(), 0.0);
-                assert_eq!(app.total_chrome_height(), app.hints_bar_height());
-                assert!(app.hints_bar_height() > 0.0);
+                assert_eq!(app.total_chrome_height(), 0.0);
+                assert_eq!(app.core.workspaces.view_size.height, 600.0);
                 assert_eq!(app.content_origin_x(), 0.0);
                 assert_eq!(app.content_origin_y(), 0.0);
                 assert_eq!(app.content_x_from_screen(1.0, 800.0), Some(1.0));

@@ -6,6 +6,7 @@ mod fullscreen_restore;
 mod lookup;
 mod menu;
 mod native;
+mod pane_tabs;
 mod restore;
 mod scripting;
 mod services;
@@ -37,6 +38,8 @@ enum Command {
     Script(u64),
     Menu(muda::MenuId),
     Action(Action),
+    PaneTab(pane_tabs::Request),
+    NewPane,
     FocusPane {
         window: WindowId,
         session: String,
@@ -82,6 +85,8 @@ pub(crate) struct MacApplication {
     secure_input: native::SecureInput,
     manual_secure_input: bool,
     view_hooks: std::collections::HashMap<WindowId, lookup::ViewHooks>,
+    pane_tabs: std::collections::HashMap<WindowId, pane_tabs::PaneTabs>,
+    command_sender: crossbeam_channel::Sender<Command>,
     last_config: LoomConfig,
     last_session: String,
     last_remote: Option<RemoteConnectionConfig>,
@@ -113,6 +118,7 @@ impl MacApplication {
         let menu_proxy = proxy.clone();
         let hotkey_proxy = proxy.clone();
         let hotkey_tx = tx.clone();
+        let command_sender = tx.clone();
         GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {
             let _ = hotkey_tx.send(Command::Hotkey(event));
             let _ = hotkey_proxy.send_event(());
@@ -177,6 +183,8 @@ impl MacApplication {
             intents: scripting::Bridge::default(),
             accessibility: accessibility::Bridge::default(),
             view_hooks: std::collections::HashMap::new(),
+            pane_tabs: std::collections::HashMap::new(),
+            command_sender,
         }
     }
 
@@ -306,6 +314,7 @@ impl MacApplication {
         self.accessibility.remove(id);
         self.directories.remove(&id);
         self.view_hooks.remove(&id);
+        self.pane_tabs.remove(&id);
         self.normal_frames.remove(&id);
         if app.native_quick_terminal {
             self.quick_terminal = None;
@@ -408,6 +417,44 @@ impl MacApplication {
                 }
             }
             Command::ToggleQuickTerminal => self.toggle_quick_terminal(event_loop),
+            Command::NewPane => {
+                if let Some(i) = self.active_index() {
+                    let app = &self.windows[i];
+                    if let Some(window) = &app.window {
+                        self.dispatch(
+                            Command::PaneTab(pane_tabs::Request {
+                                window: window.id(),
+                                session: app.core.session_name.clone(),
+                                operation: pane_tabs::Operation::New,
+                            }),
+                            event_loop,
+                        );
+                    }
+                }
+            }
+            Command::PaneTab(request) => {
+                if let Some(app) = self.windows.iter_mut().find(|app| request.matches(app)) {
+                    match request.operation {
+                        pane_tabs::Operation::Focus(pane) => {
+                            app.apply_ui_action(crate::app::ui::UiAction::FocusPaneTab(pane));
+                        }
+                        pane_tabs::Operation::New => app.handle_action(Action::NewColumnRight),
+                        pane_tabs::Operation::Close(pane) => {
+                            app.apply_ui_action(crate::app::ui::UiAction::FocusPaneTab(pane));
+                            app.handle_action(Action::ClosePane);
+                        }
+                    }
+                    if let Some(window) = &app.window {
+                        native::focus_window(window);
+                        if let Some(native) = native::native_window(window)
+                            && let Some(view) = native.contentView()
+                        {
+                            native.makeFirstResponder(Some(&view));
+                        }
+                    }
+                    app.schedule_redraw();
+                }
+            }
             Command::FocusPane {
                 window,
                 session,
@@ -931,6 +978,21 @@ impl MacApplication {
         self.accessibility.begin_update();
         for app in &self.windows {
             if let Some(window) = &app.window {
+                if !app.native_quick_terminal {
+                    if let std::collections::hash_map::Entry::Vacant(entry) =
+                        self.pane_tabs.entry(window.id())
+                        && let Some(tabs) = pane_tabs::PaneTabs::new(
+                            app,
+                            self.command_sender.clone(),
+                            self.proxy.clone(),
+                        )
+                    {
+                        entry.insert(tabs);
+                    }
+                    if let Some(tabs) = self.pane_tabs.get_mut(&window.id()) {
+                        tabs.update(app);
+                    }
+                }
                 if let std::collections::hash_map::Entry::Vacant(entry) =
                     self.view_hooks.entry(window.id())
                     && let Some(hooks) = lookup::ViewHooks::install(window)

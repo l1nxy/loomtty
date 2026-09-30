@@ -39,7 +39,7 @@ impl MenuBar {
             entries: Vec::new(),
             secure_input: CheckMenuItem::new("Secure Keyboard Entry", true, false, None),
             bindings: None,
-            panes: Submenu::new("Go to Pane", false),
+            panes: Submenu::new("Go to Pane (1–9)", false),
             pane_entries: Vec::new(),
             pane_context: None,
         };
@@ -80,7 +80,8 @@ impl MenuBar {
 
         let file = Submenu::new("File", true);
         this.add(&file, "New Window", Command::NewWindow, Some("Super+N"))?;
-        this.add(&file, "New Tab", Command::NewTab, Some("Super+T"))?;
+        this.add(&file, "New Pane Tab", Command::NewPane, Some("Super+T"))?;
+        this.add(&file, "New Session in Window Tab", Command::NewTab, None)?;
         file.append(&PredefinedMenuItem::separator())?;
         this.add(
             &file,
@@ -282,7 +283,9 @@ impl MenuBar {
                 .as_ref()
                 .map(|window| (window.id(), app.core.session_name.clone()))
         });
-        let panes = app.map(App::pane_tab_entries).unwrap_or_default();
+        let mut panes = app.map(App::pane_tab_entries).unwrap_or_default();
+        // Shortcut menu stays bounded; the scrolling pane strip exposes all panes.
+        panes.truncate(9);
         let active = app.and_then(|app| app.core.workspaces.active().active_pane_id());
         let enabled = app.is_some_and(|app| !app.modal_captures_keyboard());
         self.panes.set_enabled(enabled && !panes.is_empty());
@@ -421,7 +424,9 @@ impl MenuBar {
                 Command::Action(Action::ToggleSettings | Action::ToggleHelp) => true,
                 Command::Action(Action::ClipboardCopy) => has_window && can_copy && !modal,
                 Command::Action(Action::ClipboardPaste) => has_window,
-                Command::Action(_) | Command::SelectAll | Command::LookUp => has_window && !modal,
+                Command::Action(_) | Command::NewPane | Command::SelectAll | Command::LookUp => {
+                    has_window && !modal
+                }
                 _ => has_window,
             };
             if entry.item.is_enabled() != enabled {

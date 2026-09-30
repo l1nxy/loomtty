@@ -811,16 +811,27 @@ terminal and no invalid-provider alert appeared. After the return, an explicit
 reconnection logs establish the ordering. This check used visible terminal
 output, not a raw-byte capture on the replacement PTY.
 
-### Native tabs and split navigation
+### Native pane tabs and session windows
 
-macOS uses AppKit window tabs (`Cmd+T`, `Cmd+Shift+[` / `]`), including native
-reordering, moving a tab to a window, and merging windows. The GPU pane tab
-strip is not drawn on macOS, including when an older configuration selects a
-left/right tab bar. The old strip reserves no space and has no invisible mouse
-or accessibility targets. The terminal hints row remains available.
+Each regular macOS window has an always-visible AppKit pane selector below
+its titlebar (`NSSegmentedControl` in a titlebar accessory). Its labels represent
+panes in the current session, including panes in other workspaces. Click a label
+to focus that pane; **+** or `Cmd+T` creates a pane in a new column in the same
+session. **×** closes the selected pane. The strip scrolls horizontally when
+needed and follows the active pane. It remains visible with only one pane.
+Labels are measured with their AppKit font and clamped to 80–220 points, with
+tail truncation and a full-label tooltip. The scroll viewport fits the window;
+new/close buttons remain fixed at the right. Only visible segments plus a
+small overscan range have native controls, with no fixed maximum pane count.
 
-Splits remain inside each window/tab. Use **Pane → Go to Pane** (checked active
-pane, `Cmd+Option+1` through `9`), the directional Pane commands, or click the
-terminal itself. **View → Sessions…** and **View → Overview** preserve the
-navigation previously exposed by the custom strip. Linux and Windows retain
-their existing chrome.
+**Pane → Go to Pane (1–9)** (`Cmd+Option+1` through `9`), directional Pane commands,
+and clicking a terminal also change the selected pane. **View → Sessions…**
+and **View → Overview** retain the existing session and workspace navigation.
+The GPU pane tab strip is not drawn on macOS and reserves no space, including
+when an older configuration selects a left/right bar. Terminal hints remain.
+
+AppKit window tabs are a separate session-level feature, explicitly named
+**File → New Session in Window Tab**. They support system reordering, moving
+to a window, and merging windows; `Cmd+Shift+[` / `]` switches those session
+tabs. `Cmd+T` does not create a session. Linux and Windows retain their existing
+chrome.

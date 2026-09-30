@@ -87,9 +87,19 @@ inside it. New windows/tabs inherit the active window's remote connection.
 
 Terminal menu shortcuts (Copy, Paste, Find, Close Pane, etc.) follow
 `keys.direct_bindings`, including custom mappings and removals. Application
-and window shortcuts in the table are reserved by the native menu. The Window
+and window shortcuts yield to conflicting configured terminal bindings. The Window
 menu also supports moving a tab into a window, merging windows, showing the
 tab bar, and bringing all windows forward. AppKit's tab-bar **+** creates a tab.
+
+A bare Meta leader (`[keys] leader = "super"`, `[input] mode = "sticky"`)
+uses Command for loom's pane bindings. Menu accelerators follow the resolved
+input map, including these promoted leader bindings. Native Hide, Quit,
+Minimize, and font-size accelerators yield when that map claims their keys;
+the menu commands remain available. Settings restores its text-editing menu
+bindings. Explicit `keys.direct_bindings` take precedence over leader bindings,
+so remove conflicting direct defaults (such as `super+d` and `super+f`) when
+switching the leader to Command. A direct-binding table replaces the defaults.
+`window.macos_option_as_alt = "none"` keeps Option for normal macOS text input.
 
 Terminal right-click menus use AppKit's native `NSMenu`, including system
 appearance, keyboard navigation, disabled items, and dismissal. Copy, guarded

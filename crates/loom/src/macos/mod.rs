@@ -1093,10 +1093,18 @@ impl MacApplication {
                 self.hotkey_registration.label().as_deref(),
                 self.hotkey_registration.error.as_deref(),
             );
+            // Share the terminal's resolved map (including a sticky Meta
+            // leader); Settings uses only its ordinary direct edit bindings.
+            let fallback =
+                loom_input::keybind::KeybindMap::from_config_only(&config.keys.direct_bindings);
+            let bindings = if settings_key {
+                &fallback.bindings
+            } else {
+                app.map(|app| &app.core.input.direct_keybinds.bindings)
+                    .unwrap_or(&fallback.bindings)
+            };
             menu.update(
-                &app.map(|app| &app.core.config)
-                    .unwrap_or(&self.last_config)
-                    .keys,
+                bindings,
                 app.is_some(),
                 app.is_some_and(|app| app.core.selection.is_some()),
                 app.is_some_and(|app| app.modal_captures_keyboard()),

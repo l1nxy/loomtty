@@ -1,14 +1,13 @@
 use std::collections::HashMap;
 
-use loom_config::keys::KeybindConfig;
-use loom_input::action::Action;
+use loom_input::{action::Action, keybind::KeyCombo};
 use muda::{
     AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu,
     accelerator::Accelerator,
 };
-use objc2::MainThreadMarker;
-use objc2_app_kit::NSApplication;
-use objc2_foundation::ns_string;
+use objc2::{MainThreadMarker, rc::Retained, sel};
+use objc2_app_kit::{NSApplication, NSMenu, NSMenuItem};
+use objc2_foundation::{NSString, ns_string};
 
 use super::Command;
 use crate::app::App;
@@ -19,13 +18,21 @@ struct Entry {
     command: Command,
     /// Config-driven shortcuts track the active window's direct bindings.
     action: Option<Action>,
+    shortcut: Option<Accelerator>,
+}
+
+struct SystemShortcut {
+    item: Retained<NSMenuItem>,
+    key: Retained<NSString>,
+    accelerator: Accelerator,
 }
 
 pub struct MenuBar {
     _menu: Menu,
     entries: Vec<Entry>,
     secure_input: CheckMenuItem,
-    bindings: Option<HashMap<String, String>>,
+    bindings: Option<HashMap<KeyCombo, Action>>,
+    system_shortcuts: Vec<SystemShortcut>,
     panes: Submenu,
     pane_entries: Vec<(CheckMenuItem, Command)>,
     pane_context: Option<(WindowId, String)>,
@@ -39,6 +46,7 @@ impl MenuBar {
             entries: Vec::new(),
             secure_input: CheckMenuItem::new("Secure Keyboard Entry", true, false, None),
             bindings: None,
+            system_shortcuts: Vec::new(),
             panes: Submenu::new("Go to Pane (1–9)", false),
             pane_entries: Vec::new(),
             pane_context: None,
@@ -181,6 +189,8 @@ impl MenuBar {
             ("Focus Above", Action::FocusUp),
             ("Focus Below", Action::FocusDown),
             ("Close Pane", Action::ClosePane),
+            ("Full Width Column", Action::ColumnWidthFull),
+            ("Equalize Adjacent Columns", Action::EqualizeAdjacentColumns),
         ] {
             this.add(&pane, label, Command::Action(action), None)?;
         }
@@ -249,6 +259,7 @@ impl MenuBar {
             .expect("attached Help menu");
         application.setWindowsMenu(Some(&windows));
         application.setHelpMenu(Some(&help));
+        collect_system_shortcuts(&native_menu, &mut this.system_shortcuts);
         Ok(this)
     }
 
@@ -271,6 +282,7 @@ impl MenuBar {
             item,
             command,
             action,
+            shortcut: accelerator,
         });
         Ok(())
     }
@@ -392,14 +404,14 @@ impl MenuBar {
 
     pub fn update(
         &mut self,
-        keys: &KeybindConfig,
+        bindings: &HashMap<KeyCombo, Action>,
         has_window: bool,
         can_copy: bool,
         modal: bool,
         quick: bool,
         settings: bool,
     ) {
-        let changed = self.bindings.as_ref() != Some(&keys.direct_bindings);
+        let changed = self.bindings.as_ref() != Some(bindings);
         for entry in &self.entries {
             if matches!(entry.command, Command::Action(Action::ClosePane)) {
                 let title = if settings {
@@ -421,8 +433,14 @@ impl MenuBar {
                     entry.item.set_text(title);
                 }
             }
-            if changed && let Some(action) = &entry.action {
-                let accelerator = action_accelerator(&keys.direct_bindings, action);
+            if changed {
+                let accelerator = if let Some(action) = &entry.action {
+                    action_accelerator(bindings, action)
+                } else {
+                    entry
+                        .shortcut
+                        .filter(|shortcut| !claims_shortcut(bindings, shortcut))
+                };
                 let _ = entry.item.set_accelerator(accelerator);
             }
             let enabled = match entry.command {
@@ -468,49 +486,178 @@ impl MenuBar {
             }
         }
         if changed {
-            self.bindings = Some(keys.direct_bindings.clone());
+            for system in &self.system_shortcuts {
+                let key = if claims_shortcut(bindings, &system.accelerator) {
+                    ns_string!("")
+                } else {
+                    &system.key
+                };
+                if &*system.item.keyEquivalent() != key {
+                    system.item.setKeyEquivalent(key);
+                }
+            }
+            self.bindings = Some(bindings.clone());
         }
     }
 }
 
-fn action_accelerator(bindings: &HashMap<String, String>, action: &Action) -> Option<Accelerator> {
+fn action_accelerator(
+    bindings: &HashMap<KeyCombo, Action>,
+    action: &Action,
+) -> Option<Accelerator> {
     let mut matches: Vec<_> = bindings
         .iter()
-        .filter(|(_, name)| Action::from_name(name).as_ref() == Some(action))
+        .filter(|(key, bound)| key.super_key && *bound == action)
+        .map(|(key, _)| (key.key.chars().count() != 1, key.display()))
         .collect();
-    matches.sort_by_key(|(key, _)| *key);
-    matches.into_iter().find_map(|(key, _)| {
-        // Non-Command bindings must pass through loom's mode-aware handler.
-        if !key
-            .split('+')
-            .any(|part| part.eq_ignore_ascii_case("super") || part.eq_ignore_ascii_case("cmd"))
-        {
-            return None;
+    // Prefer letter shortcuts over named-key aliases (Cmd+J over Cmd+Down).
+    matches.sort();
+    matches.into_iter().find_map(|(_, key)| key.parse().ok())
+}
+
+fn claims_shortcut(bindings: &HashMap<KeyCombo, Action>, shortcut: &Accelerator) -> bool {
+    bindings
+        .keys()
+        .any(|key| key.display().parse::<Accelerator>().ok().as_ref() == Some(shortcut))
+}
+
+// Predefined AppKit items have their own targets and selectors. Keep those
+// native actions, but release accelerators claimed by the active terminal.
+fn collect_system_shortcuts(menu: &NSMenu, result: &mut Vec<SystemShortcut>) {
+    for item in menu.itemArray() {
+        let shortcut = match item.action() {
+            Some(action) if action == sel!(hide:) => Some("Super+H"),
+            Some(action) if action == sel!(hideOtherApplications:) => Some("Super+Alt+H"),
+            Some(action) if action == sel!(performMiniaturize:) || action == sel!(miniaturize:) => {
+                Some("Super+M")
+            }
+            _ => None,
+        };
+        if let Some(shortcut) = shortcut {
+            result.push(SystemShortcut {
+                key: item.keyEquivalent(),
+                accelerator: shortcut.parse().expect("valid system shortcut"),
+                item: item.clone(),
+            });
         }
-        key.parse::<Accelerator>().ok()
-    })
+        if let Some(submenu) = item.submenu() {
+            collect_system_shortcuts(&submenu, result);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use loom_config::keys::KeybindConfig;
+    use loom_input::{keybind::KeybindMap, leader::InputHandler};
 
     #[test]
     fn menu_tracks_remapped_and_removed_direct_shortcuts() {
-        let mut bindings = HashMap::from([
+        let mut bindings = KeybindMap::from_config_only(&HashMap::from([
             ("super+c".into(), "new_column_right".into()),
             ("super+shift+c".into(), "clipboard_copy".into()),
             ("alt+c".into(), "clipboard_copy".into()),
-        ]);
+        ]))
+        .bindings;
         assert_eq!(
             action_accelerator(&bindings, &Action::ClipboardCopy),
             Some("Super+Shift+C".parse().unwrap())
         );
-        bindings.remove("super+shift+c");
+        bindings.remove(&KeyCombo::parse("super+shift+c"));
         assert_eq!(action_accelerator(&bindings, &Action::ClipboardCopy), None);
         assert_eq!(
             action_accelerator(&bindings, &Action::NewColumnRight),
             Some("Super+C".parse().unwrap())
         );
+    }
+    #[test]
+    fn meta_leader_matches_menu_and_terminal_without_alt_aliases() {
+        use loom_input::{keybind::BindingMode, leader::InputResult};
+        use std::time::Duration;
+        let keys = KeybindConfig {
+            leader: "super".into(),
+            direct_bindings: HashMap::from([
+                ("super+c".into(), "clipboard_copy".into()),
+                ("super+v".into(), "clipboard_paste".into()),
+                ("super+w".into(), "close_pane".into()),
+            ]),
+            ..Default::default()
+        };
+        let mut input = InputHandler::new(Duration::from_secs(1), Duration::from_millis(300));
+        input.reload_bindings(
+            &keys.leader,
+            "sticky",
+            &keys.bindings,
+            &keys.modes,
+            &keys.direct_bindings,
+        );
+        let config = loom_config::config::LoomConfig {
+            keys: keys.clone(),
+            ..Default::default()
+        };
+        App::rebuild_binding_set(&mut input, &config);
+        for (key, action) in [
+            ("h", Action::FocusLeft),
+            ("j", Action::FocusDown),
+            ("k", Action::FocusUp),
+            ("l", Action::FocusRight),
+            ("n", Action::NewColumnRight),
+            ("d", Action::NewWorkspaceBelow),
+            ("x", Action::ClosePane),
+            ("f", Action::ColumnWidthFull),
+            ("=", Action::EqualizeAdjacentColumns),
+        ] {
+            let shortcut: Accelerator = format!("Super+{key}").parse().unwrap();
+            assert!(claims_shortcut(&input.direct_keybinds.bindings, &shortcut));
+            // Close Pane also retains Cmd+W as an explicit direct alias.
+            if key != "x" {
+                assert_eq!(
+                    action_accelerator(&input.direct_keybinds.bindings, &action),
+                    Some(shortcut)
+                );
+            }
+            assert!(
+                matches!(input.process_key_event(key, false, false, false, true, BindingMode::NORMAL),
+                InputResult::Action(actual) if actual == action),
+                "Cmd+{key}"
+            );
+            assert!(
+                matches!(
+                    input.process_key_event(key, false, false, true, false, BindingMode::NORMAL),
+                    InputResult::PassThrough
+                ),
+                "Alt+{key} must not navigate"
+            );
+        }
+        assert!(claims_shortcut(
+            &input.direct_keybinds.bindings,
+            &"Super+Q".parse().unwrap()
+        ));
+        assert_eq!(
+            action_accelerator(&input.direct_keybinds.bindings, &Action::ClipboardCopy),
+            Some("Super+C".parse().unwrap())
+        );
+        assert_eq!(
+            action_accelerator(&input.direct_keybinds.bindings, &Action::OpenSearch),
+            None
+        );
+
+        // Changing back to Alt must restore the native Hide and font-size keys.
+        input.reload_bindings(
+            "alt",
+            "sticky",
+            &keys.bindings,
+            &keys.modes,
+            &keys.direct_bindings,
+        );
+        assert!(!claims_shortcut(
+            &input.direct_keybinds.bindings,
+            &"Super+H".parse().unwrap()
+        ));
+        assert!(!claims_shortcut(
+            &input.direct_keybinds.bindings,
+            &"Super+Equal".parse().unwrap()
+        ));
     }
 }

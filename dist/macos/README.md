@@ -474,7 +474,7 @@ cargo test -p loomtty --lib --features macos-app-intents macos::scripting
 ### Validation for this implementation
 
 On Apple Silicon macOS, `cargo test --workspace --features loomtty/macos-app-intents`
-passed **1,695 tests**
+passed **1,700 tests**
 (12 documentation examples and one bundle-only test ignored), including
 **372 client tests**. Coverage includes Services request identity, shared
 paste-path regressions, Quick Terminal geometry,
@@ -527,6 +527,18 @@ minimized. Terminal output markers remained associated with their own tabs.
 The zoom hook retains winit's window class and forwards its original method;
 replacing an NSWindow's class was rejected after a live AppKit assertion. These
 checks do not cover external-display removal or fullscreen Spaces.
+
+Cold restoration also exposed concurrent daemon starts: the old Unix bind
+fallback replaced an already-live socket and left a second daemon unreachable.
+The daemon now holds a socket-specific file lock for its lifetime and probes
+existing sockets before replacing only stale socket files. The lock file stays
+in place across exits. Five regression tests cover concurrent ownership, live
+older daemons without the lock, stale socket recovery, and non-socket/symlink
+paths. A 12-process headless startup check produced exactly one live daemon;
+another launch preserved that daemon's socket inode and working CLI access.
+Restart after SIGKILL recovered the stale socket. A native cold launch then
+restored two tabs and a minimized window with all three clients attached to
+one helper daemon, holding `loom.lock` and listening only on `loom.sock`.
 
 A live Window-menu check on 2026-09-30 caught muda registering an unattached
 submenu template. Registration now uses the actual menu-bar submenu, allowing

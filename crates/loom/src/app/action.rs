@@ -662,6 +662,7 @@ mod macos_shortcut_tests {
             ("d", true, Action::NewTileBelow),
             ("x", false, Action::ClosePane),
             ("f", false, Action::ColumnWidthFull),
+            ("=", false, Action::EqualizeAdjacentColumns),
             ("/", false, Action::ToggleHelp),
         ] {
             let mut input = default_input();

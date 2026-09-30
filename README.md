@@ -77,6 +77,7 @@ special characters. Configure `window.macos_option_as_alt` to change this.
 | `Alt Shift+d` | Stack a tile below in the current column |
 | `Alt x` | Close pane |
 | `Alt f` | Full-width column |
+| `Alt =` | Equalize the active column and its right neighbor |
 | `Alt r` | Resize mode |
 | `Alt s` / `Alt m` | Scroll / move mode |
 | `Alt b` | Broadcast input to all panes |

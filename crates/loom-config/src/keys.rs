@@ -39,6 +39,7 @@ impl Default for KeybindConfig {
         bindings.insert("s".to_string(), "enter_mode:scroll".to_string());
         bindings.insert("m".to_string(), "enter_mode:move".to_string());
         bindings.insert("f".to_string(), "column_width_full".to_string());
+        bindings.insert("=".to_string(), "equalize_adjacent_columns".to_string());
         bindings.insert("b".to_string(), "toggle_broadcast".to_string());
         bindings.insert("c".to_string(), "consume_into_column".to_string());
         bindings.insert("e".to_string(), "expel_from_column".to_string());

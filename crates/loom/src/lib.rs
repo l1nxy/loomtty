@@ -455,8 +455,6 @@ fn run_gui(event_loop: EventLoop<()>, app: App, _explicit_window: bool) -> Resul
     #[cfg(not(target_os = "macos"))]
     let mut app = app;
     event_loop.run_app(&mut app)?;
-    #[cfg(target_os = "macos")]
-    app.finish_termination();
     Ok(())
 }
 

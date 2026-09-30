@@ -13,7 +13,9 @@ use objc2_app_kit::{
     NSApplication, NSApplicationLaunchIsDefaultLaunchKey, NSApplicationTerminateReply, NSView,
     NSWindow, NSWindowOrderingMode,
 };
-use objc2_foundation::{NSNotification, NSNotificationCenter, NSNumber, NSString, NSURL};
+use objc2_foundation::{
+    NSNotification, NSNotificationCenter, NSNumber, NSObjectNSDelayedPerforming, NSString, NSURL,
+};
 use std::cell::RefCell;
 use winit::event_loop::EventLoopProxy;
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -107,6 +109,34 @@ extern "C" fn terminate(
 ) -> NSApplicationTerminateReply {
     dispatch(Command::SystemQuit);
     NSApplicationTerminateReply::TerminateLater
+}
+
+pub(super) fn request_termination() {
+    // Use the same AppKit path for the application menu and Dock/logout.
+    // Defer outside winit's callback without occupying the serial main queue:
+    // its reply block must remain runnable during terminate:'s nested loop.
+    let mtm = MainThreadMarker::new().expect("macOS main thread");
+    // SAFETY: NSApplication implements terminate: with a nullable sender.
+    unsafe {
+        NSApplication::sharedApplication(mtm).performSelector_withObject_afterDelay(
+            sel!(terminate:),
+            None,
+            0.0,
+        );
+    }
+}
+
+pub(super) fn finish_termination() {
+    // AppKit is running a nested termination loop after TerminateLater. An
+    // event_loop.exit() cannot unwind it: waiting until run_app returns to
+    // reply deadlocks and makes winit repeatedly post stop events. Reply on
+    // the next main-queue turn, after the Rust application callback releases
+    // its mutable borrow. AppKit can then deliver applicationWillTerminate
+    // through winit and complete the usual exiting cleanup.
+    dispatch2::DispatchQueue::main().exec_async(|| {
+        let mtm = MainThreadMarker::new().expect("macOS main thread");
+        NSApplication::sharedApplication(mtm).replyToApplicationShouldTerminate(true);
+    });
 }
 
 extern "C" fn new_window_for_tab(_this: &AnyObject, _sel: Sel, _sender: Option<&AnyObject>) {

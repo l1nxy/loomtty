@@ -192,19 +192,6 @@ impl MacApplication {
         }
     }
 
-    /// Complete a Dock/logout termination after winit releases its event
-    /// handler. Replying inside user_event synchronously calls AppKit's
-    /// applicationWillTerminate and would re-enter winit's borrowed handler.
-    pub fn finish_termination(&self) {
-        if self.system_terminate_pending {
-            let mtm = objc2::MainThreadMarker::new().expect("macOS main thread");
-            let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
-            // winit already delivered exiting and released every window.
-            app.setDelegate(None);
-            app.replyToApplicationShouldTerminate(true);
-        }
-    }
-
     fn active_index(&self) -> Option<usize> {
         self.active.and_then(|id| {
             self.windows.iter().position(|app| {
@@ -346,6 +333,7 @@ impl MacApplication {
         self.secure_input.update(false);
         if self.windows.iter().all(|app| app.native_quick_terminal)
             && self.last_config.window.macos_quit_after_last_window_closed
+            && !self.system_terminate_pending
         {
             self.save_restoration(true);
             event_loop.exit();
@@ -563,7 +551,16 @@ impl MacApplication {
                     }
                 }
             }
-            Command::Quit | Command::SystemQuit => {
+            Command::Quit => {
+                if !self.system_terminate_pending {
+                    native::request_termination();
+                }
+            }
+            Command::SystemQuit => {
+                if self.system_terminate_pending {
+                    return;
+                }
+                self.system_terminate_pending = true;
                 if let Some(settings) = &self.settings {
                     settings.end_editing();
                 }
@@ -586,8 +583,7 @@ impl MacApplication {
                     self.close_window(id, event_loop);
                 }
                 self.secure_input.update(false);
-                event_loop.exit();
-                self.system_terminate_pending = matches!(command, Command::SystemQuit);
+                native::finish_termination();
             }
             Command::Reload => {
                 for app in &mut self.windows {

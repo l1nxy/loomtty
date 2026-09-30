@@ -745,8 +745,7 @@ source and restore it afterward; direct Unicode insertion is not IME evidence.
 
 VoiceOver speech/navigation, IME composition, the Secure Input menu checkmark,
 physical Look Up gestures, external-display restoration/physical Space switching,
-Finder Services with a remote window active, folder-to-app-icon drops, other
-text-Service late results during reconnect, and
+Finder Services with a remote window active, folder-to-app-icon drops, and
 Shortcuts discovery/execution still need their manual checks above.
 
 With Xcode 27.0 (27A266a), the Swift bridge/ABI tests and release build passed.
@@ -800,3 +799,14 @@ clipboard: the existing `public.tiff` representation retained its exact byte
 count and SHA-256 hash before/after invocation, while the PTY received the exact
 35-byte bracketed Unicode result. Only clipboard types, sizes, and hashes were
 recorded; clipboard contents were neither logged nor displayed.
+
+
+A follow-up on `cc5bf19` exercised a delayed Service across an actual local
+server crash/reconnect. The temporary provider waited 30 seconds; the isolated
+server was terminated after about 7 seconds. The client removed the stale socket,
+started a replacement daemon, and exposed a new terminal accessibility identity
+before the provider returned. No stale `QA_RETURN` text appeared in the new
+terminal and no invalid-provider alert appeared. After the return, an explicit
+`printf` command produced `RECONNECTED_OK`. Provider timestamps and client
+reconnection logs establish the ordering. This check used visible terminal
+output, not a raw-byte capture on the replacement PTY.

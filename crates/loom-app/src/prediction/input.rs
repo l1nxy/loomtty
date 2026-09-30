@@ -25,7 +25,9 @@ impl PredictionEngine {
     }
 
     fn clear_local_edit_state(&mut self, pane_id: u64) {
-        self.overlays.remove(&pane_id);
+        if self.overlays.remove(&pane_id).is_some() {
+            self.bump_visual_serial_for_pane(pane_id);
+        }
         self.force_visible_panes.remove(&pane_id);
     }
 
@@ -81,9 +83,8 @@ impl PredictionEngine {
             let orig_idx = (row_idx as usize) * (cols as usize) + (dest as usize);
             let orig_ch = grid.viewport.get(orig_idx).map(|c| c.ch()).unwrap_or('\0');
 
-            let mut shifted = src_cell;
-            let f = shifted.flags_u16() & !(FLAG_WIDE_CHAR | FLAG_WIDE_CHAR_SPACER);
-            shifted.flags = f.to_le_bytes();
+            // Moving complete cells preserves wide glyph/spacer pairs.
+            let shifted = src_cell;
 
             let dc = &mut orow.cells[dest as usize];
             dc.active = true;
@@ -93,6 +94,7 @@ impl PredictionEngine {
             dc.min_echo_ack = min_ack;
             dc.original_ch = orig_ch;
             dc.unknown = src_unknown;
+            dc.typed = false;
         }
 
         // Mark rightmost cells as unknown.
@@ -159,6 +161,7 @@ impl PredictionEngine {
         cc.min_echo_ack = min_ack;
         cc.original_ch = orig_ch;
         cc.unknown = false;
+        cc.typed = true;
 
         // Wide char spacer.
         if char_width == 2 {
@@ -181,6 +184,7 @@ impl PredictionEngine {
             sc.min_echo_ack = min_ack;
             sc.original_ch = spacer_orig;
             sc.unknown = false;
+            sc.typed = false;
         }
 
         char_width
@@ -242,6 +246,19 @@ impl PredictionEngine {
         force_visible: bool,
         force_track: bool,
     ) {
+        let context_flags = Self::context_flags(grid);
+        let needs_echo_evidence = Self::requires_local_edit_start(grid);
+        if grid.password_input
+            || grid.mode_flags & MODE_PASSWORD_INPUT != 0
+            || (needs_echo_evidence
+                && !Self::starts_local_edit(data)
+                && !Self::backspace_only(data))
+        {
+            // Navigation, mode switches, Enter and other controls have
+            // application-defined semantics. End the verified edit run.
+            self.clear_local_edit_state(pane_id);
+            return;
+        }
         if self.mode == loom_config::config::PredictionMode::Never && !force_track {
             if Self::ends_local_edit(data) {
                 self.clear_local_edit_state(pane_id);
@@ -280,9 +297,18 @@ impl PredictionEngine {
             .entry(pane_id)
             .or_insert_with(|| PaneOverlay::new(cols));
 
-        if overlay.cols != cols {
+        if overlay.cols != cols || overlay.context_flags != context_flags {
             *overlay = PaneOverlay::new(cols);
+            self.force_visible_panes.remove(&pane_id);
         }
+        overlay.context_flags = context_flags;
+        overlay.needs_echo_evidence = needs_echo_evidence;
+        overlay
+            .last_server_cursor
+            .get_or_insert((grid.cursor_line, grid.cursor_col));
+        overlay.expires_at.get_or_insert_with(|| {
+            Instant::now() + std::time::Duration::from_secs(super::PREDICTION_TIMEOUT_SECS)
+        });
 
         let (mut crow, mut ccol) = overlay
             .cursor_position()
@@ -295,9 +321,8 @@ impl PredictionEngine {
         // The hidden-track / Never-mode path needs an anchor for follow-up
         // `force_visible` Backspaces (so they snap back instead of walking
         // past the original prompt position). The standard prediction path
-        // doesn't need this — Backspace bounds come from the dual-ack
-        // protocol's `received_ack`-driven cursor cap inside
-        // `on_server_sync` instead.
+        // instead uses mature echoed cursor mismatches for a cap. Receipt
+        // alone cannot establish a boundary while PTY output is delayed.
         if force_track
             && !force_visible
             && overlay.local_edit_start.is_none()
@@ -316,7 +341,7 @@ impl PredictionEngine {
             self.force_visible_panes.remove(&pane_id);
             return;
         }
-        if force_visible {
+        if force_visible && (!needs_echo_evidence || overlay.local_edit_confirmed) {
             self.force_visible_panes.insert(pane_id);
         }
 
@@ -466,9 +491,8 @@ impl PredictionEngine {
                             let idx = (row_idx as usize) * (cols as usize) + src;
                             grid.viewport.get(idx).copied().unwrap_or_default()
                         };
-                        let mut shifted = src_cell;
-                        let f = shifted.flags_u16() & !(FLAG_WIDE_CHAR | FLAG_WIDE_CHAR_SPACER);
-                        shifted.flags = f.to_le_bytes();
+                        let shifted = src_cell;
+                        let src_unknown = orow.cells[src].active && orow.cells[src].unknown;
 
                         let orig_idx = (row_idx as usize) * (cols as usize) + (col as usize);
                         let orig = grid.viewport.get(orig_idx).map(|c| c.ch()).unwrap_or('\0');
@@ -480,7 +504,8 @@ impl PredictionEngine {
                         dc.created_at = now;
                         dc.min_echo_ack = min_ack;
                         dc.original_ch = orig;
-                        dc.unknown = false;
+                        dc.unknown = src_unknown;
+                        dc.typed = false;
                     }
 
                     for trail in 0..del_width {
@@ -500,6 +525,7 @@ impl PredictionEngine {
                         dc.min_echo_ack = min_ack;
                         dc.original_ch = orig;
                         dc.unknown = false;
+                        dc.typed = false;
                     }
                 }
                 0x0D => {

@@ -251,6 +251,13 @@ impl ApplicationHandler for App {
                 needs_redraw = true;
             }
 
+            for pane_id in self.core.prediction.expire_predictions(Instant::now()) {
+                if let Some(grid) = self.core.pane_grids.get_mut(&pane_id) {
+                    grid.dirty = true;
+                }
+                needs_redraw = true;
+            }
+
             // Send prediction ping if due
             if let Some(ping) = self.core.prediction.maybe_send_ping() {
                 self.send(ping);
@@ -770,8 +777,20 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.cancel_stale_ime();
+        // Keyboard events can create predictions after new_events chose Wait.
+        // Install their deadline here, after the entire event batch, so an
+        // idle, non-blinking window still clears them when the peer stalls.
+        if let Some(deadline) = self.core.prediction.next_expiry() {
+            match event_loop.control_flow() {
+                ControlFlow::Wait => event_loop.set_control_flow(ControlFlow::WaitUntil(deadline)),
+                ControlFlow::WaitUntil(wake) if deadline < wake => {
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+                }
+                _ => {}
+            }
+        }
         self.flush_pending_redraw();
     }
 }

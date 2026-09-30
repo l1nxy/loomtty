@@ -1759,21 +1759,12 @@ impl App {
                 // Full rebuild path
                 let visible = grid.visible_cells();
                 // Apply prediction overlay
-                let visible_cow = if self.core.prediction.has_overlay(*pane_id) {
-                    let mut cells = visible.into_owned();
-                    for (i, cell) in cells.iter_mut().enumerate() {
-                        let row = (i / grid.cols as usize) as u16;
-                        let col = (i % grid.cols as usize) as u16;
-                        if let Some(replacement) =
-                            self.core.prediction.get_overlay_cell(*pane_id, row, col)
-                        {
-                            *cell = replacement;
-                        }
-                    }
-                    std::borrow::Cow::Owned(cells)
-                } else {
-                    visible
-                };
+                let visible_cow = self.core.prediction.apply_overlay(
+                    *pane_id,
+                    visible,
+                    grid.cols,
+                    grid.scroll_offset,
+                );
                 let visible_grapheme_map = grid.visible_grapheme_map();
                 let (mut cur_col, mut cur_line, cur_shape) =
                     if let Some((col, line)) = grid.cursor_in_viewport() {
@@ -1782,8 +1773,9 @@ impl App {
                         (0, 0, CURSOR_HIDDEN)
                     };
                 // Apply prediction cursor overlay
-                if let Some((pred_line, pred_col)) =
-                    self.core.prediction.get_overlay_cursor(*pane_id)
+                if grid.scroll_offset == 0
+                    && let Some((pred_line, pred_col)) =
+                        self.core.prediction.get_overlay_cursor(*pane_id)
                 {
                     cur_line = pred_line;
                     cur_col = pred_col;
@@ -1813,8 +1805,9 @@ impl App {
                             (0, 0, CURSOR_HIDDEN)
                         };
                     // Apply prediction cursor overlay
-                    if let Some((pred_line, pred_col)) =
-                        self.core.prediction.get_overlay_cursor(*pane_id)
+                    if grid.scroll_offset == 0
+                        && let Some((pred_line, pred_col)) =
+                            self.core.prediction.get_overlay_cursor(*pane_id)
                     {
                         cur_line = pred_line;
                         cur_col = pred_col;
@@ -1825,21 +1818,12 @@ impl App {
                     let visible = grid.visible_cells();
                     let visible_grapheme_map = grid.visible_grapheme_map();
                     // Apply prediction overlay
-                    let visible_final = if self.core.prediction.has_overlay(*pane_id) {
-                        let mut cells = visible.into_owned();
-                        for (i, cell) in cells.iter_mut().enumerate() {
-                            let row = (i / grid.cols as usize) as u16;
-                            let col = (i % grid.cols as usize) as u16;
-                            if let Some(replacement) =
-                                self.core.prediction.get_overlay_cell(*pane_id, row, col)
-                            {
-                                *cell = replacement;
-                            }
-                        }
-                        std::borrow::Cow::Owned(cells)
-                    } else {
-                        visible
-                    };
+                    let visible_final = self.core.prediction.apply_overlay(
+                        *pane_id,
+                        visible,
+                        grid.cols,
+                        grid.scroll_offset,
+                    );
                     if let Some(view) = self.cached_views.get_mut(pane_id) {
                         let inputs = terminal::PackedViewInputs {
                             cells: &visible_final,

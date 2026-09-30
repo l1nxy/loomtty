@@ -2647,8 +2647,11 @@ dependencies = [
 name = "loom-integration-tests"
 version = "0.1.0"
 dependencies = [
+ "loom-app",
+ "loom-config",
  "loom-protocol",
  "loom-session",
+ "loom-term",
  "tempfile",
  "tokio",
 ]

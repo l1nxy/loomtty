@@ -762,6 +762,8 @@ impl App {
                         None
                     };
                 let old_cursor_row = grid.cursor_line;
+                let old_prediction_cursor = self.core.prediction.get_overlay_cursor(pid);
+                let mut dirty_rows = self.core.prediction.dirty_rows(pid);
                 if plain_backspace {
                     self.core
                         .prediction
@@ -778,7 +780,12 @@ impl App {
                         .prediction
                         .new_user_input_with_min_ack(pid, &bytes, grid, seq);
                 }
-                let dirty_rows = self.core.prediction.dirty_rows(pid);
+                dirty_rows.extend(self.core.prediction.dirty_rows(pid));
+                if let Some((row, _)) = old_prediction_cursor
+                    && row >= 0
+                {
+                    dirty_rows.push(row as u16);
+                }
                 let predicted_cursor = self.core.prediction.get_overlay_cursor(pid);
                 if (!dirty_rows.is_empty() || predicted_cursor.is_some())
                     && let Some(grid) = self.core.pane_grids.get_mut(&pid)

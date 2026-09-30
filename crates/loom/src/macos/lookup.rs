@@ -35,6 +35,7 @@ extern "C" fn quick_look(this: &AnyObject, _selector: Sel, event: &NSEvent) {
 
 pub struct ViewHooks {
     view: Retained<NSView>,
+    _zoom: Option<super::restore::ZoomHook>,
     original_class: &'static AnyClass,
     pressure_down: bool,
     last_lookup: Option<Instant>,
@@ -76,6 +77,7 @@ impl ViewHooks {
         });
         Some(Self {
             view,
+            _zoom: native::native_window(window).map(super::restore::ZoomHook::install),
             original_class,
             pressure_down: false,
             last_lookup: None,

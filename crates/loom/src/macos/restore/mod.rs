@@ -1,5 +1,8 @@
 mod store;
+mod zoom;
 pub use store::{Frame, Group, Remote, Snapshot, Store, Tab};
+pub(crate) use zoom::Hook as ZoomHook;
+pub(super) use zoom::remember_frame;
 
 use super::native;
 use crate::app::App;
@@ -41,7 +44,9 @@ pub fn capture(
         })
         .collect();
     for (_, window, native) in &windows {
-        if window.fullscreen().is_none()
+        if let Some(frame) = zoom::normal_frame(native) {
+            normal_frames.insert(window.id(), frame);
+        } else if window.fullscreen().is_none()
             && !native.styleMask().contains(NSWindowStyleMask::FullScreen)
             && !native.isZoomed()
             && !native.isMiniaturized()

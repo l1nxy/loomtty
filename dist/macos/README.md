@@ -152,6 +152,10 @@ state. Pane layouts and processes come from the existing server/session layer.
 Quick Terminal is excluded. `window.macos_restore_windows = false` disables
 restoration on the next launch. `macos_initial_window = false` takes precedence.
 Explicit CLI session commands always open their requested window.
+Interactive terminal launches restore immediately even when AppKit reports a
+non-default launch because it has OS-saved application state. Background launches
+defer restoration until the user explicitly reopens the app. That reopen also
+reacquires the snapshot lock before restoring or recording a new desktop.
 
 State is stored separately from server sessions in `state_dir()/macos/windows.json`.
 The first default-launch process owns a file lock; other processes cannot
@@ -162,6 +166,10 @@ opens its usual initial window. Missing/corrupt state falls back to normal
 startup. Window frames use points and are clamped to connected displays, so
 unplugged monitors do not leave restored windows off-screen. The OS chooses
 new fullscreen Spaces; their previous Space numbers cannot be restored.
+Zoom records the normal frame before AppKit's resize animation and shares it
+across the native tab group. After restoration, unzooming any selected tab uses
+that frame, rather than an intermediate animation size or another tab's zoomed
+geometry.
 
 ### Look Up
 
@@ -500,6 +508,25 @@ a window, closing sibling windows, and reopening the last session after all
 windows close. Settings controls and its theme menu appear in the accessibility
 tree; the Find field accepts Chinese via its accessibility setter and reports
 matching results. Select All, Copy and paste into Find preserve the selected text.
+
+A live single-display restoration check on 2026-09-30 used a debug bundle with
+an isolated server socket and test state directory. Three native tabs and a
+separate minimized window retained their sessions across Quit/relaunch. The
+middle tab remained selected and the native tab order stayed unchanged. The
+check caught and fixed insertion after the first tab, which had reversed the
+remaining tabs, and AppKit's non-default launch classification dropping the
+restoration entry point. A direct interactive-terminal launch now restores all
+four sessions without an extra reopen event; a user reopen also restores the
+saved desktop after a background launch.
+
+The same check exposed intermediate zoom-animation frames replacing the normal
+frame. After correction, a zoomed three-tab group preserved its original
+`[448, 187, 1024, 800]` frame in Cocoa points. Relaunching, switching tabs, and
+unzooming returned to that exact frame while the separate window stayed
+minimized. Terminal output markers remained associated with their own tabs.
+The zoom hook retains winit's window class and forwards its original method;
+replacing an NSWindow's class was rejected after a live AppKit assertion. These
+checks do not cover external-display removal or fullscreen Spaces.
 
 An isolated client/server run verified Chinese, combining accents arriving in
 separate output chunks, removal of an overwritten accent, and preservation of

@@ -86,6 +86,7 @@ pub(crate) struct MacApplication {
     explicit_window: bool,
     restoration: Option<restore::Store>,
     pending_restore: Option<restore::Snapshot>,
+    restore_on_reopen: bool,
     normal_frames: std::collections::HashMap<WindowId, restore::Frame>,
     hotkey_manager: Option<GlobalHotKeyManager>,
     hotkey_registration: quick_terminal::hotkey::Registration,
@@ -137,6 +138,7 @@ impl MacApplication {
             explicit_window,
             restoration,
             pending_restore,
+            restore_on_reopen: false,
             normal_frames: std::collections::HashMap::new(),
             last_config: app.core.config.clone(),
             last_session: app.core.session_name.clone(),
@@ -397,6 +399,7 @@ impl MacApplication {
                 self.create_window(event_loop, tab, false, Some(directory));
             }
             Command::Reopen => {
+                let restore_on_reopen = std::mem::take(&mut self.restore_on_reopen);
                 let normal = self
                     .active_index()
                     .filter(|i| !self.windows[*i].native_quick_terminal)
@@ -411,6 +414,25 @@ impl MacApplication {
                         self.active = Some(window.id());
                     }
                 } else {
+                    // AppKit also reports non-default launches when it has
+                    // saved state, not just for background Services/scripts.
+                    // An explicit reopen is the user-visible restoration point.
+                    if restore_on_reopen
+                        && self.last_config.window.macos_restore_windows
+                        && let Ok(Some(store)) =
+                            restore::Store::open(&loom_protocol::transport::state_dir())
+                    {
+                        let snapshot = store
+                            .loaded()
+                            .filter(|snapshot| !snapshot.groups.is_empty());
+                        self.restoration = Some(store);
+                        if let Some(snapshot) = snapshot {
+                            self.restore_windows(snapshot, event_loop);
+                            if !self.windows.is_empty() {
+                                return;
+                            }
+                        }
+                    }
                     self.create_window(event_loop, false, true, None);
                 }
             }
@@ -593,12 +615,16 @@ impl MacApplication {
                     && let Some(native) = native::native_window(window)
                 {
                     native.setFrame_display((&frame).into(), false);
+                    if group.zoomed {
+                        restore::remember_frame(&native, frame.clone());
+                    }
                     self.normal_frames.insert(window.id(), frame.clone());
                     if let Some(parent) = &parent {
                         parent.addTabbedWindow_ordered(&native, NSWindowOrderingMode::Above);
-                    } else {
-                        parent = Some(native);
                     }
+                    // Above inserts after the receiver. Advance the receiver
+                    // so a third tab appends instead of reversing the tail.
+                    parent = Some(native);
                     if selected.is_none() || tab_index == group.selected {
                         selected = Some(window.clone());
                     }
@@ -927,13 +953,19 @@ fn merge_control_flow(a: ControlFlow, b: ControlFlow) -> ControlFlow {
 
 impl ApplicationHandler for MacApplication {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        use std::io::IsTerminal;
+
         self.menu = Some(menu::MenuBar::new().expect("create macOS menu bar"));
         let queued: Vec<_> = self.commands.try_iter().collect();
-        if !self.explicit_window && !native::is_default_launch() {
+        // A shell's interactive launch is explicit user intent even when
+        // AppKit labels it non-default because it has OS-saved application state.
+        let default_launch = native::is_default_launch() || std::io::stdin().is_terminal();
+        if !self.explicit_window && !default_launch {
             // A Service or automation request may arrive *after* resumed().
             // AppKit's launch notification lets it create its own window,
             // instead of first opening/restoring unrelated default windows.
             self.windows.clear();
+            self.restore_on_reopen = self.restoration.is_some();
             self.pending_restore = None;
             // A background query must not replace the saved desktop with an
             // empty snapshot when it later exits.
@@ -962,7 +994,7 @@ impl ApplicationHandler for MacApplication {
         for command in queued {
             self.dispatch(command, event_loop);
         }
-        if self.explicit_window || native::is_default_launch() {
+        if self.explicit_window || default_launch {
             native::activate();
         }
         self.update_native_state();

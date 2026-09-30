@@ -49,6 +49,7 @@ impl Target {
 
 #[derive(Clone, Debug)]
 pub(super) struct Request {
+    key: u64,
     target: Target,
     text: String,
 }
@@ -65,6 +66,12 @@ struct State {
     entries: HashMap<u64, Entry>,
 }
 impl State {
+    fn accepts_request(&self, request: &Request) -> bool {
+        self.entries
+            .get(&request.key)
+            .is_some_and(|entry| entry.target.same(&request.target))
+    }
+
     fn remove(&mut self, view: usize) {
         if let Some(key) = self.views.remove(&view) {
             self.entries.remove(&key);
@@ -277,28 +284,30 @@ fn write_selection(key: u64, pasteboard: &NSPasteboard, types: &NSArray<NSString
     pasteboard.setString_forType(&NSString::from_str(&text), &kind)
 }
 fn read_selection(key: u64, pasteboard: &NSPasteboard) -> bool {
+    let Some(request) = request_from_pasteboard(key, pasteboard) else {
+        return false;
+    };
+    super::native::dispatch(super::Command::ServiceText(request));
+    true
+}
+
+fn request_from_pasteboard(key: u64, pasteboard: &NSPasteboard) -> Option<Request> {
     let target = STATE.with(|state| {
         state
             .borrow()
             .entries
             .get(&key)
             .map(|entry| entry.target.clone())
-    });
-    let Some(target) = target else {
-        return false;
-    };
+    })?;
     let text = pasteboard
         .stringForType(unsafe { NSPasteboardTypeString })
         .or_else(|| pasteboard.stringForType(&NSString::from_str("NSStringPboardType")));
-    let Some(text) = text.filter(|text| text.len_utf16() <= MAX_TEXT_BYTES) else {
-        return false;
-    };
+    let text = text.filter(|text| text.len_utf16() <= MAX_TEXT_BYTES)?;
     let text = text.to_string();
     if text.is_empty() || text.len() > MAX_TEXT_BYTES {
-        return false;
+        return None;
     }
-    super::native::dispatch(super::Command::ServiceText(Request { target, text }));
-    true
+    Some(Request { key, target, text })
 }
 pub fn register(app: &NSApplication) {
     let types = NSArray::from_slice(&[
@@ -319,6 +328,12 @@ pub fn install(class: &mut ClassBuilder) {
 }
 impl super::MacApplication {
     pub(super) fn handle_service_text(&mut self, request: Request) {
+        // The callback and event-loop delivery are separate. Once invalidated,
+        // an already queued result must not become valid by returning to the
+        // same pane/session before this command is drained.
+        if !STATE.with(|state| state.borrow().accepts_request(&request)) {
+            return;
+        }
         let Some(app) = self
             .windows
             .iter_mut()
@@ -337,6 +352,102 @@ impl super::MacApplication {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn with_service_entry(selected: Option<&str>, check: impl FnOnce(u64)) {
+        objc2::rc::autoreleasepool(|_| {
+            let key = STATE.with(|state| {
+                let mut state = state.borrow_mut();
+                let entry = state.entry(
+                    123,
+                    Target {
+                        window: WindowId::from(1),
+                        pane: 42,
+                        session: "test-service".into(),
+                        sender: crossbeam_channel::unbounded().0,
+                    },
+                );
+                entry.selected = selected.map(str::to_owned);
+                *entry.requestor.ivars()
+            });
+            check(key);
+            STATE.with(|state| state.borrow_mut().remove(123));
+        });
+    }
+
+    #[test]
+    fn private_service_pasteboards_preserve_unicode_and_legacy_text_types() {
+        let selection = "中文 👩‍💻 e\u{301}";
+        with_service_entry(Some(selection), |key| {
+            // Use actual AppKit pasteboards without touching the general one.
+            let outgoing = NSPasteboard::pasteboardWithUniqueName();
+            let incoming = NSPasteboard::pasteboardWithUniqueName();
+            for kind in [
+                NSString::from_str("public.utf8-plain-text"),
+                NSString::from_str("NSStringPboardType"),
+            ] {
+                assert!(write_selection(
+                    key,
+                    &outgoing,
+                    &NSArray::from_slice(&[&*kind])
+                ));
+                assert_eq!(
+                    outgoing.stringForType(&kind).unwrap().to_string(),
+                    selection
+                );
+                incoming.clearContents();
+                assert!(incoming.setString_forType(&NSString::from_str("返回 🧑‍💻"), &kind));
+                let request = request_from_pasteboard(key, &incoming).unwrap();
+                assert_eq!(request.text, "返回 🧑‍💻");
+                assert!(STATE.with(|state| state.borrow().accepts_request(&request)));
+                assert_eq!(
+                    outgoing.stringForType(&kind).unwrap().to_string(),
+                    selection
+                );
+            }
+            assert!(!write_selection(
+                key,
+                &outgoing,
+                &NSArray::from_slice(&[&*NSString::from_str("public.png")]),
+            ));
+        });
+    }
+
+    #[test]
+    fn receive_only_service_enforces_utf8_limit_and_rejects_expired_callbacks() {
+        with_service_entry(None, |key| {
+            let pasteboard = NSPasteboard::pasteboardWithUniqueName();
+            let kind = unsafe { NSPasteboardTypeString };
+            assert!(!write_selection(
+                key,
+                &pasteboard,
+                &NSArray::from_slice(&[kind])
+            ));
+            for (text, accepted) in [
+                (String::new(), false),
+                ("a".repeat(MAX_TEXT_BYTES), true),
+                ("a".repeat(MAX_TEXT_BYTES + 1), false),
+                ("中".repeat(MAX_TEXT_BYTES / 3 + 1), false),
+                ("receive-only 👩‍💻".into(), true),
+            ] {
+                pasteboard.clearContents();
+                assert!(pasteboard.setString_forType(&NSString::from_str(&text), kind));
+                assert_eq!(
+                    request_from_pasteboard(key, &pasteboard).is_some(),
+                    accepted
+                );
+            }
+            let queued = request_from_pasteboard(key, &pasteboard).unwrap();
+            STATE.with(|state| {
+                let mut state = state.borrow_mut();
+                state.remove(123);
+                // Recreate the exact same destination before event-loop delivery.
+                state.entry(123, queued.target.clone());
+                assert!(!state.accepts_request(&queued));
+            });
+            assert!(!read_selection(key, &pasteboard));
+        });
+    }
+
     #[test]
     fn service_type_validation_handles_send_receive_and_selection() {
         let text = NSString::from_str("public.utf8-plain-text");

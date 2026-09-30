@@ -461,9 +461,9 @@ cargo test -p loomtty --lib --features macos-app-intents macos::scripting
 ### Validation for this implementation
 
 On Apple Silicon macOS, `cargo test --workspace --features loomtty/macos-app-intents`
-passed **1,690 tests**
+passed **1,692 tests**
 (12 documentation examples and one bundle-only test ignored), including
-**367 client tests**. Coverage includes Services request identity, shared
+**369 client tests**. Coverage includes Services request identity, shared
 paste-path regressions, Quick Terminal geometry,
 animation reversal, shortcut replacement, session exclusion, appearance
 switching, user color overrides, dictionary query bounds and password/modal
@@ -549,6 +549,16 @@ accents and enclosing the response in bracketed-paste markers. A test password
 prompt removed AX text and acquired Secure Input with the client's PID visible
 in `ioreg`; hiding the app released it, as did finishing the prompt. The native
 menu labelled automatic protection and disabled text-transform services.
+
+Native pasteboard regressions additionally exercise send/receive and receive-only
+callbacks with both modern and legacy string types, emoji/combining marks, empty
+results, and the 1 MiB UTF-8 boundary. Each uses uniquely named AppKit pasteboards
+without accessing the general clipboard. Queued results retain their requestor
+identity until delivery, so invalidation followed by a return to the same pane
+cannot revive a stale result. The regression checks both an already-queued result
+and a callback that arrives after invalidation. These callback tests supplement
+the live conversion check; they do not replace the remaining system-provider
+and clipboard-preservation checks.
 
 Secure Input received a further live release check on 2026-09-30 using the
 `6dbc5b4` client in an isolated server runtime. Only an empty test password was

@@ -13,7 +13,7 @@ use objc2_app_kit::{
     NSApplication, NSApplicationLaunchIsDefaultLaunchKey, NSApplicationTerminateReply, NSView,
     NSWindow, NSWindowOrderingMode,
 };
-use objc2_foundation::{NSNotification, NSNumber, NSString, NSURL};
+use objc2_foundation::{NSNotification, NSNotificationCenter, NSNumber, NSString, NSURL};
 use std::cell::RefCell;
 use winit::event_loop::EventLoopProxy;
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -82,6 +82,14 @@ pub(super) fn dispatch(command: Command) {
 extern "C" fn reopen(_this: &AnyObject, _sel: Sel, _app: &NSApplication, _visible: Bool) -> Bool {
     dispatch(Command::Reopen);
     Bool::YES
+}
+
+extern "C" fn fullscreen_entered(_this: &AnyObject, _sel: Sel, notification: &NSNotification) {
+    if let Some(window) = notification.object() {
+        dispatch(Command::FullscreenEntered(
+            Retained::as_ptr(&window) as usize
+        ));
+    }
 }
 
 extern "C" fn terminate_after_last_window(
@@ -153,6 +161,10 @@ impl Delegate {
                 sel!(newWindowForTab:),
                 new_window_for_tab as extern "C" fn(_, _, _),
             );
+            class.add_method(
+                sel!(loomWindowDidEnterFullScreen:),
+                fullscreen_entered as extern "C" fn(_, _, _),
+            );
         }
         let class = class.register();
         assert_eq!(original_class.instance_size(), class.instance_size());
@@ -172,6 +184,12 @@ impl Delegate {
         // SAFETY: the provider implements the advertised Services selector.
         unsafe {
             app.setServicesProvider(Some(&object));
+            NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
+                &object,
+                sel!(loomWindowDidEnterFullScreen:),
+                Some(objc2_app_kit::NSWindowDidEnterFullScreenNotification),
+                None,
+            );
         }
         NSWindow::setAllowsAutomaticWindowTabbing(false, mtm);
         super::text_services::register(&app);
@@ -184,6 +202,15 @@ impl Delegate {
 
 impl Drop for Delegate {
     fn drop(&mut self) {
+        // SAFETY: remove our notification registration before restoring the
+        // original delegate class (which does not implement this selector).
+        unsafe {
+            NSNotificationCenter::defaultCenter().removeObserver_name_object(
+                &self.object,
+                Some(objc2_app_kit::NSWindowDidEnterFullScreenNotification),
+                None,
+            );
+        }
         if let Some(mtm) = MainThreadMarker::new() {
             // SAFETY: unregister before removing the advertised selectors.
             unsafe {

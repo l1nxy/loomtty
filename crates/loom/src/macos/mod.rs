@@ -2,6 +2,7 @@
 //! a single AppKit menu bar, and process-wide input/lifecycle integration.
 mod accessibility;
 pub(crate) mod context_menu;
+mod fullscreen_restore;
 mod lookup;
 mod menu;
 mod native;
@@ -56,6 +57,7 @@ enum Command {
     ToggleTabBar,
     ToggleQuickTerminal,
     ToggleFullscreen,
+    FullscreenEntered(usize),
     ToggleSecureInput,
     LookUp,
     LookUpAt {
@@ -87,6 +89,7 @@ pub(crate) struct MacApplication {
     restoration: Option<restore::Store>,
     pending_restore: Option<restore::Snapshot>,
     restore_on_reopen: bool,
+    fullscreen_restore: fullscreen_restore::Queue,
     normal_frames: std::collections::HashMap<WindowId, restore::Frame>,
     hotkey_manager: Option<GlobalHotKeyManager>,
     hotkey_registration: quick_terminal::hotkey::Registration,
@@ -139,6 +142,7 @@ impl MacApplication {
             restoration,
             pending_restore,
             restore_on_reopen: false,
+            fullscreen_restore: fullscreen_restore::Queue::default(),
             normal_frames: std::collections::HashMap::new(),
             last_config: app.core.config.clone(),
             last_session: app.core.session_name.clone(),
@@ -363,6 +367,11 @@ impl MacApplication {
                 }
             }
             Command::LookUpAt { id, point } => self.look_up(id, point, false),
+            Command::FullscreenEntered(pointer) => {
+                if self.fullscreen_restore.completed(pointer) {
+                    self.advance_fullscreen_restore();
+                }
+            }
             Command::ToggleFullscreen => {
                 let Some(i) = self.active_index() else {
                     return;
@@ -537,6 +546,14 @@ impl MacApplication {
     }
 
     fn save_restoration(&mut self, quitting: bool) {
+        // Do not replace the saved desktop with an intermediate state while
+        // queued windows have not yet entered their fullscreen Spaces.
+        if self.fullscreen_restore.active() {
+            if quitting && let Some(store) = &mut self.restoration {
+                store.frozen = true;
+            }
+            return;
+        }
         if self.restoration.as_ref().is_none_or(|store| store.frozen) {
             return;
         }
@@ -573,6 +590,7 @@ impl MacApplication {
             .chain(self.scripting.deadline())
             .chain(self.intents.deadline())
             .chain(self.accessibility.deadline())
+            .chain(self.fullscreen_restore.deadline())
             .min()
     }
 
@@ -643,7 +661,7 @@ impl MacApplication {
                     native.zoom(None);
                 }
                 if group.fullscreen {
-                    window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+                    self.fullscreen_restore.pending.push_back(window.id());
                 }
                 if group.minimized && !group.fullscreen {
                     window.set_minimized(true);
@@ -663,6 +681,7 @@ impl MacApplication {
         {
             native::focus_window(window);
             self.active = Some(window.id());
+            self.fullscreen_restore.focus = Some(window.id());
         }
         // Restored tabs begin hidden; AppKit may omit an unselected tab until
         // it is first shown. Register every restored window after grouping so
@@ -674,6 +693,7 @@ impl MacApplication {
                 application.addWindowsItem_title_filename(&window, &window.title(), false);
             }
         }
+        self.advance_fullscreen_restore();
     }
 
     fn look_up(&mut self, id: WindowId, point: objc2_foundation::NSPoint, selection: bool) {
@@ -1012,6 +1032,7 @@ impl ApplicationHandler for MacApplication {
 
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
         self.prune_closed(event_loop);
+        self.advance_fullscreen_restore();
         let mut flow = ControlFlow::Wait;
         for app in &mut self.windows {
             if app.native_quick_terminal

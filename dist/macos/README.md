@@ -474,9 +474,9 @@ cargo test -p loomtty --lib --features macos-app-intents macos::scripting
 ### Validation for this implementation
 
 On Apple Silicon macOS, `cargo test --workspace --features loomtty/macos-app-intents`
-passed **1,700 tests**
+passed **1,701 tests**
 (12 documentation examples and one bundle-only test ignored), including
-**372 client tests**. Coverage includes Services request identity, shared
+**373 client tests**. Coverage includes Services request identity, shared
 paste-path regressions, Quick Terminal geometry,
 animation reversal, shortcut replacement, session exclusion, appearance
 switching, user color overrides, dictionary query bounds and password/modal
@@ -526,7 +526,7 @@ unzooming returned to that exact frame while the separate window stayed
 minimized. Terminal output markers remained associated with their own tabs.
 The zoom hook retains winit's window class and forwards its original method;
 replacing an NSWindow's class was rejected after a live AppKit assertion. These
-checks do not cover external-display removal or fullscreen Spaces.
+checks did not cover external-display removal; fullscreen checks follow below.
 
 Cold restoration also exposed concurrent daemon starts: the old Unix bind
 fallback replaced an already-live socket and left a second daemon unreachable.
@@ -539,6 +539,26 @@ another launch preserved that daemon's socket inode and working CLI access.
 Restart after SIGKILL recovered the stale socket. A native cold launch then
 restored two tabs and a minimized window with all three clients attached to
 one helper daemon, holding `loom.lock` and listening only on `loom.sock`.
+
+
+A live fullscreen check on 2026-09-30 first confirmed that a two-tab group
+could enter fullscreen, switch tabs, quit/relaunch with its selected tab and
+session output intact, then exit at its original `[448, 187, 1024, 800]` frame.
+The separate minimized window remained minimized throughout that round trip.
+Testing two fullscreen groups then exposed AppKit rejecting the second
+simultaneous transition, leaving it windowed and overwriting the saved state.
+Restoration now queues fullscreen groups and starts the next only after the
+matching AppKit did-enter notification. Intermediate states are not saved;
+unrelated or duplicate notifications cannot advance the queue. Closed windows
+are skipped and a failed/missing transition notification times out with a warning
+after ten seconds so restoration cannot stall indefinitely.
+
+Repeating the two-group test restored both fullscreen groups and the saved
+active group. The native Window menu switched to the other fullscreen group,
+whose earlier terminal output was still present. Both groups then exited
+fullscreen at their original 1024 × 800 frames. These checks cover fullscreen
+Spaces on one display, not external-display removal, physical Space-switching
+gestures, or restoring the OS's previous Space numbers.
 
 A live Window-menu check on 2026-09-30 caught muda registering an unattached
 submenu template. Registration now uses the actual menu-bar submenu, allowing
@@ -707,7 +727,7 @@ composition testing remains pending permission to temporarily switch the input
 source and restore it afterward; direct Unicode insertion is not IME evidence.
 
 VoiceOver speech/navigation, IME composition, the Secure Input menu checkmark,
-physical Look Up gestures, multi-display/Spaces restoration,
+physical Look Up gestures, external-display restoration/physical Space switching,
 Finder Services with a remote window active, folder Open With, other
 text-Service modes/late results/nonempty clipboard preservation, and
 Shortcuts discovery/execution still need their manual checks above. Full Xcode remains necessary for App Intents metadata;

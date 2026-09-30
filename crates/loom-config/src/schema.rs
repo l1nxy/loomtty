@@ -195,7 +195,11 @@ impl Default for FontConfig {
     fn default() -> Self {
         FontConfig {
             family: default_font_family().to_string(),
-            size: 10.0,
+            size: if cfg!(target_os = "macos") {
+                13.0
+            } else {
+                10.0
+            },
             ui: None,
             features: Vec::new(),
             disable_ligatures: DisableLigatures::Never,

@@ -471,7 +471,7 @@ impl App {
         // grid lands on whole pixels — fractional ppem (e.g. 10pt → 13.33px)
         // makes proportional UI glyphs render as if hinting were disabled,
         // softening edges of W/M and similar dense-stroke characters.
-        let ui_px = (size_pt * (96.0 * dpi_scale as f32) / 72.0).round();
+        let ui_px = loom_render::font_pixels(size_pt, dpi_scale).round();
         UiFontInit {
             path,
             id,
@@ -526,7 +526,7 @@ impl App {
 
         let pixel_size = init
             .pixel_size
-            .unwrap_or_else(|| config_font_size_pt * (96.0 * dpi_scale as f32) / 72.0);
+            .unwrap_or_else(|| loom_render::font_pixels(config_font_size_pt, dpi_scale));
         // Terminal primary font as last-resort fallback — covers Braille,
         // box drawing, Nerd Font icons that the proportional UI font lacks.
         let terminal_primary = font_source(

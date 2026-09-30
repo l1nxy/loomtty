@@ -230,7 +230,7 @@ impl GlyphCache {
     pub fn new(params: &FontInitParams) -> Self {
         let atlas_size = params.render_config.atlas_size;
         let max_instances = params.render_config.max_glyph_instances;
-        let pixel_size = params.font_size_pt * (96.0 * params.dpi_scale as f32) / 72.0;
+        let pixel_size = crate::font_pixels(params.font_size_pt, params.dpi_scale);
 
         // ── Platform-specific init ──
 

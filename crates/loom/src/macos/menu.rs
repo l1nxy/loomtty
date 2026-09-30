@@ -39,7 +39,7 @@ impl MenuBar {
             entries: Vec::new(),
             secure_input: CheckMenuItem::new("Secure Keyboard Entry", true, false, None),
             bindings: None,
-            panes: Submenu::new("Go to Pane (1–9)", false),
+            panes: Submenu::new("Go to Pane (1–8)", false),
             pane_entries: Vec::new(),
             pane_context: None,
         };
@@ -186,6 +186,12 @@ impl MenuBar {
         pane.append(&PredefinedMenuItem::separator())?;
         pane.append(&this.panes)?;
         this.add(
+            &pane,
+            "Last Pane Tab",
+            Command::Action(Action::LastPaneTab),
+            Some("Super+Digit9"),
+        )?;
+        this.add(
             &view,
             "Sessions…",
             Command::Action(Action::ToggleSessionPalette),
@@ -199,14 +205,14 @@ impl MenuBar {
         ])?;
         this.add(
             &window,
-            "Show Previous Tab",
-            Command::PreviousTab,
+            "Previous Pane Tab",
+            Command::Action(Action::PreviousPaneTab),
             Some("Super+Shift+BracketLeft"),
         )?;
         this.add(
             &window,
-            "Show Next Tab",
-            Command::NextTab,
+            "Next Pane Tab",
+            Command::Action(Action::NextPaneTab),
             Some("Super+Shift+BracketRight"),
         )?;
         window.append_items(&[
@@ -214,6 +220,13 @@ impl MenuBar {
             &PredefinedMenuItem::bring_all_to_front(None),
         ])?;
 
+        this.add(
+            &window,
+            "Previous Session Window Tab",
+            Command::PreviousTab,
+            None,
+        )?;
+        this.add(&window, "Next Session Window Tab", Command::NextTab, None)?;
         this.add(
             &window,
             "Move Tab to New Window",
@@ -284,8 +297,8 @@ impl MenuBar {
                 .map(|window| (window.id(), app.core.session_name.clone()))
         });
         let mut panes = app.map(App::pane_tab_entries).unwrap_or_default();
-        // Shortcut menu stays bounded; the scrolling pane strip exposes all panes.
-        panes.truncate(9);
+        // Keep the menu bounded; Cmd+9 has a separate Last Pane action.
+        panes.truncate(8);
         let active = app.and_then(|app| app.core.workspaces.active().active_pane_id());
         let enabled = !settings && app.is_some_and(|app| !app.modal_captures_keyboard());
         let menu_enabled = enabled && !panes.is_empty();
@@ -302,7 +315,7 @@ impl MenuBar {
             if let Some((window, session)) = &context {
                 for (index, (id, label)) in panes.iter().enumerate() {
                     let shortcut = (index < 9).then(|| {
-                        format!("Super+Alt+Digit{}", index + 1)
+                        format!("Super+Digit{}", index + 1)
                             .parse::<Accelerator>()
                             .expect("valid pane shortcut")
                     });

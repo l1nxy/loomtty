@@ -448,7 +448,10 @@ fn render_grayscale_glyph(
 
     // Configure rendering
     ctx.set_allows_font_smoothing(true);
-    ctx.set_should_smooth_fonts(true);
+    // CoreText smoothing optically thickens outlines; it is separate from
+    // antialiasing and the selected font face's weight. Match Ghostty's
+    // default font-thicken=false rather than emboldening every regular glyph.
+    ctx.set_should_smooth_fonts(false);
     ctx.set_allows_antialiasing(true);
     ctx.set_should_antialias(true);
     ctx.set_allows_font_subpixel_positioning(true);

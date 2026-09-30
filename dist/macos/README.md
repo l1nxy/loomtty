@@ -815,7 +815,7 @@ output, not a raw-byte capture on the replacement PTY.
 
 Each regular macOS window has an always-visible AppKit pane selector below
 its titlebar (`NSSegmentedControl` in a titlebar accessory). Its labels represent
-panes in the current session, including panes in other workspaces. Click a label
+panes in the current workspace. Click a label
 to focus that pane; **+** or `Cmd+T` creates a pane in a new column in the same
 session. **×** closes the selected pane. The strip scrolls horizontally when
 needed and follows the active pane. It remains visible with only one pane.
@@ -824,14 +824,25 @@ tail truncation and a full-label tooltip. The scroll viewport fits the window;
 new/close buttons remain fixed at the right. Only visible segments plus a
 small overscan range have native controls, with no fixed maximum pane count.
 
-**Pane → Go to Pane (1–9)** (`Cmd+Option+1` through `9`), directional Pane commands,
-and clicking a terminal also change the selected pane. **View → Sessions…**
+**Pane → Go to Pane (1–8)** (`Cmd+1` through `8`) selects a pane;
+`Cmd+9` selects the last pane. `Cmd+Shift+[` / `]`, `Ctrl+Shift+Tab` / `Ctrl+Tab`,
+and `Cmd+[` / `]` cycle through panes, including stacked tiles, in tab-strip order.
+`Cmd+Option+Arrow` uses directional pane navigation. Clicking a terminal also
+changes the selected pane. **View → Sessions…**
 and **View → Overview** retain the existing session and workspace navigation.
 The GPU pane tab strip is not drawn on macOS and reserves no space, including
 when an older configuration selects a left/right bar. Terminal hints remain.
 
 AppKit window tabs are a separate session-level feature, explicitly named
 **File → New Session in Window Tab**. They support system reordering, moving
-to a window, and merging windows; `Cmd+Shift+[` / `]` switches those session
-tabs. `Cmd+T` does not create a session. Linux and Windows retain their existing
+to a window, and merging windows. The Window menu's Previous/Next Session
+Window Tab commands switch these session tabs. `Cmd+T` does not create a session. Linux and Windows retain their existing
 chrome.
+
+### Font size and weight
+
+On macOS, configured font sizes use AppKit points: 14 pt becomes 28 physical
+pixels on a 2× display. Both terminal and custom UI text use this conversion.
+The macOS default is 13 pt. CoreText antialiasing stays enabled, while optical
+font thickening is disabled; regular text uses the selected font face's weight.
+To compare with Ghostty, use the same family, point size and regular face in both.

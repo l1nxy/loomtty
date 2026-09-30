@@ -39,6 +39,25 @@ impl App {
                     self.send(ClientMessage::ClosePane { pane_id });
                 }
             }
+            Action::NextPaneTab | Action::PreviousPaneTab => {
+                let forward = matches!(action, Action::NextPaneTab);
+                if let Some(pane) = self.core.adjacent_pane_tab(forward) {
+                    self.apply_ui_action(super::ui::UiAction::FocusPaneTab(pane));
+                }
+            }
+            Action::LastPaneTab => {
+                if let Some(pane) = self
+                    .core
+                    .workspaces
+                    .active()
+                    .columns
+                    .last()
+                    .and_then(|column| column.tiles.last())
+                    .map(|tile| tile.pane_id)
+                {
+                    self.apply_ui_action(super::ui::UiAction::FocusPaneTab(pane));
+                }
+            }
             Action::FocusLeft => {
                 self.send(ClientMessage::FocusLeft);
             }
@@ -624,6 +643,46 @@ impl App {
         // making the entry flash open then immediately close.
         if !keep_open && self.core.command_palette.is_some() {
             self.enter_modal_close_peers(ModalKind::None);
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_shortcut_tests {
+    use super::*;
+    use loom_input::leader::InputResult;
+    use std::time::Duration;
+
+    #[test]
+    fn native_pane_aliases_resolve_through_the_configured_input_pipeline() {
+        let config = LoomConfig::default();
+        let mut input = InputHandler::new(Duration::from_secs(1), Duration::from_millis(300));
+        input.reload_bindings(
+            &config.keys.leader,
+            match config.input.mode {
+                loom_config::config::InputMode::Prefix => "prefix",
+                loom_config::config::InputMode::Sticky => "sticky",
+            },
+            &config.keys.bindings,
+            &config.keys.modes,
+            &config.keys.direct_bindings,
+        );
+        App::rebuild_binding_set(&mut input, &config);
+        for (key, ctrl, shift, alt, cmd, expected) in [
+            ("tab", true, false, false, false, Action::NextPaneTab),
+            ("tab", true, true, false, false, Action::PreviousPaneTab),
+            ("]", false, false, false, true, Action::NextPaneTab),
+            ("[", false, false, false, true, Action::PreviousPaneTab),
+            ("left", false, false, true, true, Action::FocusLeft),
+            ("right", false, false, true, true, Action::FocusRight),
+            ("up", false, false, true, true, Action::FocusUp),
+            ("down", false, false, true, true, Action::FocusDown),
+        ] {
+            assert!(
+                matches!(input.process_key(key, ctrl, shift, alt, cmd),
+                InputResult::Action(action) if action == expected),
+                "{key}"
+            );
         }
     }
 }

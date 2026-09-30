@@ -8,6 +8,10 @@ pub enum Action {
     /// New pane stacked as a tile in the active column (current workspace).
     NewTileBelow,
     ClosePane,
+    /// Cycle through panes in the same order as the workspace's tab strip.
+    NextPaneTab,
+    PreviousPaneTab,
+    LastPaneTab,
     /// h/l: navigate columns within the current workspace.
     FocusLeft,
     FocusRight,
@@ -143,7 +147,10 @@ impl Action {
     pub fn is_repeatable(&self) -> bool {
         matches!(
             self,
-            Action::FocusLeft
+            Action::NextPaneTab
+                | Action::PreviousPaneTab
+                | Action::LastPaneTab
+                | Action::FocusLeft
                 | Action::FocusRight
                 | Action::FocusUp
                 | Action::FocusDown
@@ -191,6 +198,9 @@ impl Action {
             (Action::NewWorkspaceBelow, "New Workspace Below"),
             (Action::NewTileBelow, "New Stacked Tile Below"),
             (Action::ClosePane, "Close Pane"),
+            (Action::NextPaneTab, "Next Pane Tab"),
+            (Action::PreviousPaneTab, "Previous Pane Tab"),
+            (Action::LastPaneTab, "Last Pane Tab"),
             (Action::FocusLeft, "Focus Left"),
             (Action::FocusRight, "Focus Right"),
             (Action::FocusUp, "Focus Up"),
@@ -250,6 +260,9 @@ fn parse_named_action(name: &str) -> Option<Action> {
         "split_down" | "new_row_below" | "new_workspace_below" => Some(Action::NewWorkspaceBelow),
         "new_tile_below" | "stack_pane" => Some(Action::NewTileBelow),
         "close_pane" => Some(Action::ClosePane),
+        "next_pane_tab" => Some(Action::NextPaneTab),
+        "previous_pane_tab" => Some(Action::PreviousPaneTab),
+        "last_pane_tab" => Some(Action::LastPaneTab),
         "focus_left" => Some(Action::FocusLeft),
         "focus_right" => Some(Action::FocusRight),
         "focus_down" => Some(Action::FocusDown),

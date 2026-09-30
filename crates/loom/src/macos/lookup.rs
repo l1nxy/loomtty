@@ -12,7 +12,10 @@ use objc2_foundation::{NSAttributedString, NSPoint, NSString};
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::{Window, WindowId};
 
-use super::{Command, native};
+use super::{Command, native, text_selection};
+
+const MAX_QUERY_CHARS: usize = 512;
+const MAX_QUERY_BYTES: usize = MAX_QUERY_CHARS * 4;
 use crate::app::App;
 
 thread_local! {
@@ -152,10 +155,11 @@ pub fn text_at(app: &App, point: NSPoint, prefer_selection: bool) -> Option<Stri
     }
     if prefer_selection && let Some(selection) = &app.core.selection {
         let grid = app.core.pane_grids.get(&selection.pane_id)?;
-        if grid.password_input {
-            return None;
-        }
-        return bounded_query(app.extract_selected_text()?);
+        return bounded_query(text_selection::selected_text(
+            grid,
+            (selection.start, selection.end),
+            MAX_QUERY_BYTES,
+        )?);
     }
     // Winit's view is flipped, so both coordinate systems start at top-left.
     let (id, col, row) = app.pixel_to_cell(
@@ -167,18 +171,86 @@ pub fn text_at(app: &App, point: NSPoint, prefer_selection: bool) -> Option<Stri
         return None;
     }
     let (start, end) = grid.word_bounds_at(col, row)?;
-    bounded_query(grid.text_in_range((start, row), (end, row)))
+    bounded_query(text_selection::selected_text(
+        grid,
+        ((start, row), (end, row)),
+        MAX_QUERY_BYTES,
+    )?)
 }
 
 fn bounded_query(text: String) -> Option<String> {
     let text = text.trim();
     // A dictionary query should never hand AppKit megabytes of scrollback.
-    (!text.is_empty() && text.chars().count() <= 512).then(|| text.to_owned())
+    (!text.is_empty() && text.chars().count() <= MAX_QUERY_CHARS).then(|| text.to_owned())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dictionary_selection_rejects_concealed_wide_cells_and_oversized_graphemes() {
+        use loom_protocol::message::{FLAG_HIDDEN, FLAG_WIDE_CHAR, FLAG_WIDE_CHAR_SPACER};
+        let mut app = App::new(loom_config::LoomConfig::default(), "lookup-selection");
+        let mut grid = crate::grid::ClientPaneGrid::new(3, 1, 0);
+        grid.viewport[0].set_ch('中');
+        grid.viewport[0].flags = FLAG_WIDE_CHAR.to_le_bytes();
+        grid.viewport[1].flags = FLAG_WIDE_CHAR_SPACER.to_le_bytes();
+        grid.viewport[2].set_ch('e');
+        grid.grapheme_map.insert(2, "e\u{301}".into());
+        app.core.pane_grids.insert(1, grid);
+        app.core.selection = Some(crate::app::Selection {
+            pane_id: 1,
+            // Reversed selection starts on the wide character's trailing cell.
+            start: (2, 0),
+            end: (1, 0),
+            active: false,
+        });
+        let point = NSPoint::new(0.0, 0.0);
+        assert_eq!(text_at(&app, point, true).as_deref(), Some("中e\u{301}"));
+        app.core.pane_grids.get_mut(&1).unwrap().viewport[0].flags =
+            (FLAG_WIDE_CHAR | FLAG_HIDDEN).to_le_bytes();
+        assert!(text_at(&app, point, true).is_none());
+        let grid = app.core.pane_grids.get_mut(&1).unwrap();
+        grid.viewport[0].flags = FLAG_WIDE_CHAR.to_le_bytes();
+        grid.grapheme_map.insert(2, "e".repeat(MAX_QUERY_BYTES + 1));
+        assert!(text_at(&app, point, true).is_none());
+        assert_eq!(app.core.selection.as_ref().unwrap().start, (2, 0));
+    }
+
+    #[test]
+    fn dictionary_pointer_respects_retina_chrome_and_concealed_word_cells() {
+        use loom_config::config::{StatusBarPosition, TabBarPosition};
+        for scale in [1.0, 2.0] {
+            let mut config = loom_config::LoomConfig::default();
+            config.statusbar.position = StatusBarPosition::Top;
+            config.tabbar.position = TabBarPosition::Left;
+            let mut app = App::new(config, "lookup-pointer");
+            app.dpi_scale = scale;
+            app.core
+                .workspaces
+                .active_mut()
+                .add_column_right(1, loom_layout::column::ColumnWidth::Proportion(1.0));
+            let mut grid = crate::grid::ClientPaneGrid::new(5, 1, 0);
+            for (cell, ch) in grid.viewport.iter_mut().zip("hello".chars()) {
+                cell.set_ch(ch);
+            }
+            app.core.pane_grids.insert(1, grid);
+            let rect = app.core.workspaces.active().visible_tiles(0.0)[0].1;
+            let inset =
+                app.core.config.appearance.border_width + app.core.config.appearance.padding;
+            let point = NSPoint::new(
+                (rect.x + inset + app.content_origin_x() + 4.0) as f64 / scale,
+                (rect.y + inset + app.content_origin_y() + 8.0) as f64 / scale,
+            );
+            assert_eq!(text_at(&app, point, false).as_deref(), Some("hello"));
+            // Even a hidden cell elsewhere in the same word must not be exported.
+            app.core.pane_grids.get_mut(&1).unwrap().viewport[3].flags =
+                loom_protocol::message::FLAG_HIDDEN.to_le_bytes();
+            assert!(text_at(&app, point, false).is_none());
+            assert!(text_at(&app, NSPoint::new(0.0, 0.0), false).is_none());
+        }
+    }
 
     #[test]
     fn dictionary_selection_respects_password_and_modal_gates_without_changing_selection() {

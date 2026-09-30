@@ -170,7 +170,10 @@ Use the macOS three-finger Look Up gesture, Force Touch, or Edit → Look Up
 the pointer; the menu prefers selected text. Pointer coordinates account for
 Retina scale and the current pane viewport. Queries leave the terminal
 selection unchanged and are disabled for password input, overview, and modal
-UI. The system Trackpad setting determines which physical gesture is available.
+UI. Selected text and pointer words containing concealed cells are not sent to
+the dictionary. Queries are checked before copying terminal text, with a 2 KiB
+UTF-8 preflight limit and at most 512 characters after trimming whitespace.
+The system Trackpad setting determines which physical gesture is available.
 
 ### System appearance
 
@@ -461,9 +464,9 @@ cargo test -p loomtty --lib --features macos-app-intents macos::scripting
 ### Validation for this implementation
 
 On Apple Silicon macOS, `cargo test --workspace --features loomtty/macos-app-intents`
-passed **1,692 tests**
+passed **1,694 tests**
 (12 documentation examples and one bundle-only test ignored), including
-**369 client tests**. Coverage includes Services request identity, shared
+**371 client tests**. Coverage includes Services request identity, shared
 paste-path regressions, Quick Terminal geometry,
 animation reversal, shortcut replacement, session exclusion, appearance
 switching, user color overrides, dictionary query bounds and password/modal
@@ -559,6 +562,13 @@ cannot revive a stale result. The regression checks both an already-queued resul
 and a callback that arrives after invalidation. These callback tests supplement
 the live conversion check; they do not replace the remaining system-provider
 and clipboard-preservation checks.
+
+Look Up shares the native text-export preflight with Services. Its regressions
+reject concealed text in both pointer words and reversed selections that start
+on a wide-character spacer, preserve combining characters, and reject oversized
+grapheme payloads. Pointer tests cover 1×/2× display scale with a top status bar
+and left tab bar. These tests do not verify physical trackpad gestures or the
+system dictionary popover.
 
 Secure Input received a further live release check on 2026-09-30 using the
 `6dbc5b4` client in an isolated server runtime. Only an empty test password was

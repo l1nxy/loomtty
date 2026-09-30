@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crossbeam_channel::Sender;
-use loom_protocol::message::{ClientMessage, FLAG_HIDDEN, FLAG_WIDE_CHAR_SPACER};
+use loom_protocol::message::ClientMessage;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ClassBuilder, Sel};
 use objc2::{AnyThread, DefinedClass, define_class, msg_send, sel};
@@ -14,11 +14,10 @@ use objc2_app_kit::{
 use objc2_foundation::{NSArray, NSObject, NSObjectProtocol, NSString};
 use winit::window::WindowId;
 
+use super::text_selection::{SelectionRange, selected_text};
 use crate::app::App;
-use crate::grid::ClientPaneGrid;
 
 const MAX_TEXT_BYTES: usize = 1024 * 1024;
-type SelectionRange = ((u16, usize), (u16, usize));
 
 #[derive(Clone, Debug)]
 struct Target {
@@ -139,58 +138,6 @@ fn eligible(app: &App) -> bool {
             .is_some_and(|grid| !grid.password_input)
 }
 
-/// Preflight the selection before allocating, and never export concealed cells.
-/// Use the shared copy path after checking so Services and Cmd+C agree on text.
-fn selected_text(grid: &ClientPaneGrid, range: SelectionRange) -> Option<String> {
-    if grid.password_input {
-        return None;
-    }
-    let (a, b) = range;
-    let (a, b) = if (a.1, a.0) <= (b.1, b.0) {
-        (a, b)
-    } else {
-        (b, a)
-    };
-    if b.1 >= grid.total_lines() || grid.cols == 0 {
-        return None;
-    }
-    let mut bytes = b.1.checked_sub(a.1)?;
-    if bytes > MAX_TEXT_BYTES {
-        return None;
-    }
-    for row in a.1..=b.1 {
-        let left = if row == a.1 { a.0 } else { 0 };
-        let right = if row == b.1 { b.0 } else { grid.cols - 1 };
-        let (left, right) = grid.snap_selection_to_wide_chars(row, left, right);
-        for (col, cell) in grid
-            .buffer_row(row)
-            .iter()
-            .enumerate()
-            .take(right as usize + 1)
-            .skip(left as usize)
-        {
-            if cell.flags_u16() & FLAG_HIDDEN != 0 {
-                return None;
-            }
-            if cell.flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {
-                continue;
-            }
-            let grapheme = row
-                .checked_mul(grid.cols as usize)
-                .and_then(|index| index.checked_add(col))
-                .and_then(|index| u32::try_from(index).ok())
-                .and_then(|index| grid.grapheme_map.get(&index));
-            bytes =
-                bytes.checked_add(grapheme.map_or_else(|| cell.ch().len_utf8(), String::len))?;
-            if bytes > MAX_TEXT_BYTES {
-                return None;
-            }
-        }
-    }
-    let text = grid.text_in_range(a, b);
-    (!text.is_empty() && text.len() <= MAX_TEXT_BYTES).then_some(text)
-}
-
 pub fn update(app: &App, view: &NSView, visible: bool) {
     let key = view as *const NSView as usize;
     if !visible || !eligible(app) {
@@ -226,7 +173,8 @@ pub fn update(app: &App, view: &NSView, visible: bool) {
         let mut state = state.borrow_mut();
         let entry = state.entry(key, target);
         if entry.stamp != stamp {
-            entry.selected = stamp.and_then(|(_, range)| selected_text(grid, range));
+            entry.selected =
+                stamp.and_then(|(_, range)| selected_text(grid, range, MAX_TEXT_BYTES));
             entry.stamp = stamp;
         }
     });
@@ -352,6 +300,8 @@ impl super::MacApplication {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::grid::ClientPaneGrid;
+    use loom_protocol::message::{FLAG_HIDDEN, FLAG_WIDE_CHAR_SPACER};
 
     fn with_service_entry(selected: Option<&str>, check: impl FnOnce(u64)) {
         objc2::rc::autoreleasepool(|_| {
@@ -468,17 +418,17 @@ mod tests {
         grid.viewport[2].set_ch('e');
         grid.grapheme_map.insert(2, "e\u{301}".into());
         assert_eq!(
-            selected_text(&grid, ((2, 0), (1, 0))),
+            selected_text(&grid, ((2, 0), (1, 0)), MAX_TEXT_BYTES),
             Some("中e\u{301}".into())
         );
         grid.viewport[2].flags = FLAG_HIDDEN.to_le_bytes();
-        assert!(selected_text(&grid, ((0, 0), (2, 0))).is_none());
+        assert!(selected_text(&grid, ((0, 0), (2, 0)), MAX_TEXT_BYTES).is_none());
         grid.viewport[2].flags = 0u16.to_le_bytes();
         grid.password_input = true;
-        assert!(selected_text(&grid, ((0, 0), (0, 0))).is_none());
+        assert!(selected_text(&grid, ((0, 0), (0, 0)), MAX_TEXT_BYTES).is_none());
         grid.password_input = false;
         grid.grapheme_map.insert(2, "a".repeat(MAX_TEXT_BYTES + 1));
-        assert!(selected_text(&grid, ((2, 0), (2, 0))).is_none());
+        assert!(selected_text(&grid, ((2, 0), (2, 0)), MAX_TEXT_BYTES).is_none());
     }
     #[test]
     fn target_identity_changes_on_session_or_connection_replacement() {

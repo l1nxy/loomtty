@@ -8,6 +8,7 @@ mod native;
 mod restore;
 mod scripting;
 mod services;
+mod text_selection;
 mod text_services;
 pub(crate) use native::system_dark_appearance;
 pub(crate) use scripting::creation_result as scripting_result;

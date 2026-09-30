@@ -547,8 +547,11 @@ are explicitly registered with AppKit after grouping. Before selecting any
 background tab, the menu listed all three restored tabs and the minimized
 fourth window. Selecting a background tab activated it; selecting the minimized
 window restored it; closing a tab removed its entry. Help registration uses the
-attached submenu too, but its search field was not visible in this QA bundle
-and is not yet verified. The focused client suite passed 372 tests and the
+attached submenu too, but its search field was not exposed in this QA bundle's
+accessibility tree and is not yet verified. A later comparison found that
+System Settings also exposed no Help search field to the same automation;
+screenshots were unavailable for both apps. This evidence cannot distinguish
+an automation limitation from an actual missing field. The focused client suite passed 372 tests and the
 workspace Clippy check passed with existing warnings after this change.
 
 An isolated client/server run verified Chinese, combining accents arriving in
@@ -687,8 +690,21 @@ sent no payload (the capture contained only the later explicit Ctrl-C). On a
 repeat invocation, Paste delivered all 5,206 bytes inside one bracketed-paste
 pair, including all 1,700 converted letters. These checks exercised AppKit's
 installed conversion providers through the actual Services menu. They do not
-cover send-only/return-only providers, delayed provider results during a pane
-switch/reconnect, or password-mode Service availability.
+cover return-only providers or delayed provider results during a pane
+switch/reconnect.
+
+Follow-up checks on `dfd3528` exercised the built-in Dictionary send-only
+Service: its search field and result row both contained the exact selected
+`hello`. The raw PTY received no service payload, only the explicit Ctrl-C used
+to end capture. During a local `getpass` prompt, the terminal exposed no AX text
+value, Secure Keyboard Entry was marked Automatic and disabled, and terminal
+text conversion providers disappeared from Services. Submitting an empty value
+returned to the shell. No real credentials were entered. Global Services that
+do not request terminal text remained listed.
+
+The system Keyboard pane confirms that Simplified Pinyin is installed. Live
+composition testing remains pending permission to temporarily switch the input
+source and restore it afterward; direct Unicode insertion is not IME evidence.
 
 VoiceOver speech/navigation, IME composition, the Secure Input menu checkmark,
 physical Look Up gestures, multi-display/Spaces restoration,

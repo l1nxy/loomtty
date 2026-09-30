@@ -203,7 +203,7 @@ impl PaneTabs {
             )
         };
         for (button, offset, help) in [
-            (&new_button, 72.0, "New Pane (⌘T)"),
+            (&new_button, 72.0, "New Pane (⌘N / ⌘T)"),
             (&close_button, 36.0, "Close Selected Pane"),
         ] {
             button.setBezelStyle(NSBezelStyle::Toolbar);

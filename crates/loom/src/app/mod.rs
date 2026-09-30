@@ -1997,7 +1997,7 @@ fn apply_macos_window_config(window: &Window, config: &LoomConfig) {
     use loom_config::config::MacosOptionAsAlt;
     use winit::platform::macos::{OptionAsAlt, WindowExtMacOS};
     // The creation attribute forces NSWindowTabbingModePreferred in winit.
-    // Set only the identifier here so Cmd+N remains an independent window.
+    // Set only the identifier here so explicit New Window requests stay independent.
     window.set_tabbing_identifier("loomtty");
     window.set_option_as_alt(match config.window.macos_option_as_alt {
         MacosOptionAsAlt::None => OptionAsAlt::None,

@@ -79,8 +79,9 @@ impl MenuBar {
         this.add(&app, "Quit loomtty", Command::Quit, Some("Super+Q"))?;
 
         let file = Submenu::new("File", true);
-        this.add(&file, "New Window", Command::NewWindow, Some("Super+N"))?;
+        this.add(&file, "New Pane", Command::NewPane, Some("Super+N"))?;
         this.add(&file, "New Pane Tab", Command::NewPane, Some("Super+T"))?;
+        this.add(&file, "New Window", Command::NewWindow, None)?;
         this.add(&file, "New Session in Window Tab", Command::NewTab, None)?;
         file.append(&PredefinedMenuItem::separator())?;
         this.add(

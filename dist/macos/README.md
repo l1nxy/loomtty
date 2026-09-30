@@ -70,7 +70,7 @@ inside it. New windows/tabs inherit the active window's remote connection.
 
 | Shortcut | Behavior |
 | --- | --- |
-| Cmd+N / Cmd+T | New window / native tab |
+| Cmd+N / Cmd+T | New pane in a column in the current session |
 | Cmd+Shift+W | Close the current tab/window and detach; keep its session running |
 | Cmd+W | Close the active terminal pane (ends that pane's process) |
 | Cmd+D / Cmd+Shift+D | New column / stacked tile |
@@ -81,7 +81,7 @@ inside it. New windows/tabs inherit the active window's remote connection.
 | Ctrl+Cmd+D | Look up selected text or the word under the pointer |
 | Cmd+A | Select the active terminal's scrollback and screen |
 | Cmd+= / Cmd+- / Cmd+0 | Increase / decrease / reset font size (temporary) |
-| Cmd+Shift+[ / Cmd+Shift+] | Previous / next native tab |
+| Cmd+Shift+[ / Cmd+Shift+] | Previous / next session window tab |
 | Cmd+M / Ctrl+Cmd+F | Minimize / native fullscreen |
 | Cmd+H / Option+Cmd+H | Hide loomtty / hide other applications |
 
@@ -152,7 +152,7 @@ Finder's menu.
 The selected directory is stored as a fresh session's startup cwd before its
 first shell launches. Spaces, quotes, and shell metacharacters remain literal
 path characters. Existing sessions are never overwritten, and no `cd` command
-is pasted into a shell. Normal Cmd+N/Cmd+T local windows also inherit the active
+is pasted into a shell. Explicit new local windows/session window tabs also inherit the active
 local pane's cwd when available. Finder services always create local sessions,
 including when invoked while a remote terminal is active. Remote tab/window
 creation continues to use the remote server's session startup directory.
@@ -816,7 +816,7 @@ output, not a raw-byte capture on the replacement PTY.
 Each regular macOS window has an always-visible AppKit pane selector below
 its titlebar (`NSSegmentedControl` in a titlebar accessory). Its labels represent
 panes in the current workspace. Click a label
-to focus that pane; **+** or `Cmd+T` creates a pane in a new column in the same
+to focus that pane; **+**, `Cmd+N`, or `Cmd+T` creates a pane in a new column in the same
 session. **×** closes the selected pane. The strip scrolls horizontally when
 needed and follows the active pane. It remains visible with only one pane.
 Labels are measured with their AppKit font and clamped to 80–220 points, with
@@ -839,7 +839,8 @@ when an older configuration selects a left/right bar. Terminal hints remain.
 AppKit window tabs are a separate session-level feature, explicitly named
 **File → New Session in Window Tab**. They support system reordering, moving
 to a window, and merging windows; `Cmd+Shift+[` / `]` switches those session
-tabs. `Cmd+T` does not create a session. Linux and Windows retain their existing
+tabs. `Cmd+N` and `Cmd+T` do not create a session or window; use **File → New Window**
+for a separate window. Linux and Windows retain their existing
 chrome.
 
 ### Font size and weight

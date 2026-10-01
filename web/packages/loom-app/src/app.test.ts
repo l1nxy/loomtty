@@ -16,7 +16,9 @@ import {
 import { LoomApp, type LoomAppClientLike } from "./app.js";
 
 // Bootstrap a LoomApp + collect what its fake client sees.
-function bootstrap(opts: { sessionName?: string } = {}) {
+function bootstrap(
+  opts: { sessionName?: string; mobile?: boolean; onFontSizeChange?: (px: number) => void } = {},
+) {
   const sessionChanges: string[] = [];
   const root = document.createElement("div");
   // Give the root a non-zero layout so initial measurement falls back
@@ -57,6 +59,8 @@ function bootstrap(opts: { sessionName?: string } = {}) {
     onError: (e) => onErrorCalls.push(e),
     onSessionChange: (name) => sessionChanges.push(name),
     onServerShutdown: () => shutdownCalls.push(1),
+    ...(opts.mobile !== undefined ? { mobile: opts.mobile } : {}),
+    ...(opts.onFontSizeChange !== undefined ? { onFontSizeChange: opts.onFontSizeChange } : {}),
   });
 
   const fire = (e: LoomEvent) => {
@@ -4630,5 +4634,179 @@ describe("LoomApp — touch / mobile", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("LoomApp — mobile chrome", () => {
+  function ptr(
+    type: string,
+    opts: { x?: number; y?: number; id?: number } = {},
+  ): MouseEvent {
+    const e = new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      clientX: opts.x ?? 5,
+      clientY: opts.y ?? 5,
+    });
+    Object.defineProperty(e, "pointerType", { value: "touch" });
+    Object.defineProperty(e, "pointerId", { value: opts.id ?? 1 });
+    return e;
+  }
+
+  function setup(
+    layout: LayoutState = mkLayoutSingle(1n),
+    extra: { onFontSizeChange?: (px: number) => void } = {},
+  ) {
+    const b = bootstrap({ mobile: true, ...extra });
+    b.app.start();
+    b.fire({ kind: "server-msg", msg: { tag: "LayoutUpdate", layout } });
+    b.fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const key = (aria: string) =>
+      b.root.querySelector<HTMLButtonElement>(`.loom-m-key[aria-label="${aria}"]`)!;
+    const sink = b.root.querySelector<HTMLTextAreaElement>("textarea.loom-composition-sink")!;
+    const text = () => b.inputs.map((i) => new TextDecoder().decode(i.data));
+    return { ...b, key, sink, text };
+  }
+
+  test("mobile: true mounts the header + extra keys and flags the root", () => {
+    const { root } = setup();
+    expect(root.classList.contains("loom-mobile")).toBe(true);
+    expect(root.querySelector(".loom-m-header")).not.toBeNull();
+    expect(root.querySelectorAll(".loom-m-key").length).toBeGreaterThan(10);
+  });
+
+  test("mobile chrome is removed on destroy", () => {
+    const { root, app } = setup();
+    app.destroy();
+    expect(root.querySelector(".loom-m-header")).toBeNull();
+    expect(root.querySelector(".loom-m-keys")).toBeNull();
+    expect(root.classList.contains("loom-mobile")).toBe(false);
+  });
+
+  test("extra keys send Esc, Shift+Tab, ^C, and arrows", () => {
+    const { key, text } = setup();
+    key("Escape").click();
+    key("Shift+Tab").click();
+    key("Control+C").click();
+    key("Up").click(); // repeatable key: keyboard-style click fires once
+    expect(text()).toEqual(["\x1b", "\x1b[Z", "\x03", "\x1b[A"]);
+  });
+
+  test("sticky Ctrl applies once to the next soft-keyboard key, then releases", () => {
+    const { key, sink, text } = setup();
+    const ctrl = key("Control (sticky)");
+    ctrl.click();
+    expect(ctrl.getAttribute("aria-pressed")).toBe("true");
+    sink.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true, cancelable: true }));
+    sink.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true, cancelable: true }));
+    expect(text()).toEqual(["\x03", "c"]);
+    expect(ctrl.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  test("double-tapped Ctrl locks; Alt + arrow sends the xterm modified form", () => {
+    const { key, text } = setup();
+    const ctrl = key("Control (sticky)");
+    ctrl.click();
+    ctrl.click(); // locked
+    key("Left").click();
+    key("Left").click();
+    ctrl.click(); // off
+    key("Alt (sticky)").click();
+    key("Up").click();
+    expect(text()).toEqual(["\x1b[1;5D", "\x1b[1;5D", "\x1b[1;3A"]);
+  });
+
+  test("sticky Ctrl applies to a direct (IME / Android) single-char insert", () => {
+    const { key, sink, text } = setup();
+    key("Control (sticky)").click();
+    sink.dispatchEvent(
+      new InputEvent("beforeinput", {
+        inputType: "insertText",
+        data: "d",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    expect(text()).toEqual(["\x04"]);
+  });
+
+  test("Android-style Backspace / Enter via beforeinput reach the PTY", () => {
+    const { sink, text } = setup();
+    sink.dispatchEvent(
+      new InputEvent("beforeinput", {
+        inputType: "deleteContentBackward",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    sink.dispatchEvent(
+      new InputEvent("beforeinput", {
+        inputType: "insertLineBreak",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    expect(text()).toEqual(["\x7f", "\r"]);
+  });
+
+  test("A+ grows the font, re-sends Resize, and reports the new size", () => {
+    const sizes: number[] = [];
+    const { root, app, sent } = setup(mkLayoutSingle(1n), {
+      onFontSizeChange: (px) => sizes.push(px),
+    });
+    const before = sent.filter((m) => m.tag === "Resize").length;
+    root.querySelector<HTMLButtonElement>('.loom-m-icon[aria-label="Larger text"]')!.click();
+    expect(app.fontSizePx).toBe(15);
+    expect(sizes).toEqual([15]);
+    expect(sent.filter((m) => m.tag === "Resize").length).toBe(before + 1);
+    expect(root.querySelector<HTMLElement>(".loom-pane")!.style.fontSize).toBe("15px");
+  });
+
+  test("font size is clamped to [8, 32]", () => {
+    const { app } = setup();
+    app.setFontSize(2);
+    expect(app.fontSizePx).toBe(8);
+    app.setFontSize(99);
+    expect(app.fontSizePx).toBe(32);
+  });
+
+  test("a horizontal swipe switches to the next pane", () => {
+    const { root, sent } = setup(mkLayoutTwo(1n, 2n));
+    const tile = root.querySelector<HTMLElement>('[data-pane-id="1"]')!;
+    tile.dispatchEvent(ptr("pointerdown", { x: 200, y: 50 }));
+    tile.dispatchEvent(ptr("pointermove", { x: 150, y: 52 }));
+    tile.dispatchEvent(ptr("pointermove", { x: 100, y: 52 }));
+    tile.dispatchEvent(ptr("pointerup", { x: 100, y: 52 }));
+    const focus = sent.filter((m) => m.tag === "FocusPane");
+    expect(focus).toEqual([{ tag: "FocusPane", paneId: 2n }]);
+  });
+
+  test("a two-finger pinch changes the font size with one Resize at the end", () => {
+    const { root, app, sent } = setup();
+    const tile = root.querySelector<HTMLElement>('[data-pane-id="1"]')!;
+    const before = sent.filter((m) => m.tag === "Resize").length;
+    tile.dispatchEvent(ptr("pointerdown", { x: 100, y: 100, id: 1 }));
+    tile.dispatchEvent(ptr("pointerdown", { x: 140, y: 100, id: 2 }));
+    tile.dispatchEvent(ptr("pointermove", { x: 80, y: 100, id: 1 }));
+    tile.dispatchEvent(ptr("pointermove", { x: 160, y: 100, id: 2 }));
+    expect(sent.filter((m) => m.tag === "Resize").length).toBe(before);
+    tile.dispatchEvent(ptr("pointerup", { x: 160, y: 100, id: 2 }));
+    tile.dispatchEvent(ptr("pointerup", { x: 80, y: 100, id: 1 }));
+    expect(app.fontSizePx).toBe(28); // 14px × (80 / 40)
+    expect(sent.filter((m) => m.tag === "Resize").length).toBe(before + 1);
+  });
+
+  test("switcher sheet lists panes and confirms before closing one", () => {
+    const { root, sent } = setup(mkLayoutTwo(1n, 2n));
+    root.querySelector<HTMLButtonElement>(".loom-m-switch")!.click();
+    const sheet = root.querySelector<HTMLElement>(".loom-m-sheet-backdrop")!;
+    expect(sheet.hidden).toBe(false);
+    expect(sheet.querySelectorAll(".loom-m-pane").length).toBe(2);
+    const closeBtn = () => sheet.querySelectorAll<HTMLButtonElement>(".loom-m-pane-close")[1]!;
+    closeBtn().click();
+    expect(sent.some((m) => m.tag === "ClosePane")).toBe(false);
+    expect(closeBtn().textContent).toBe("Close?");
+    closeBtn().click();
+    expect(sent.filter((m) => m.tag === "ClosePane")).toEqual([{ tag: "ClosePane", paneId: 2n }]);
   });
 });

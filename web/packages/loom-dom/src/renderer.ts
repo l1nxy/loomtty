@@ -1067,6 +1067,17 @@ export class PaneRenderer {
     this.rendererForcedRedraw = true;
   }
 
+  /// Change the cell font size (CSS length, e.g. `"16px"`). Cursor,
+  /// selection, preedit, and image overlays are positioned in `ch` /
+  /// `em`, so they track the new size without extra work; a forced
+  /// redraw refreshes rows. The caller owns re-measuring the cell and
+  /// sending the matching `Resize` — this only changes presentation.
+  setFontSize(fontSize: string): void {
+    if (this.wrapper.style.fontSize === fontSize) return;
+    this.wrapper.style.fontSize = fontSize;
+    this.rendererForcedRedraw = true;
+  }
+
   /// Detach the wrapper from `root` and drop references. Idempotent —
   /// a second `destroy()` is a no-op.
   destroy(): void {

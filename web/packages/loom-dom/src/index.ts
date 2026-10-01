@@ -8,6 +8,7 @@
 export {
   DEFAULT_SELECTION_BACKGROUND,
   DEFAULT_THEME,
+  LIGHT_THEME,
   resolveColor,
   type ColorString,
   type Theme,

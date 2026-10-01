@@ -124,7 +124,12 @@ Example: `http://localhost:5173/?session=work&ws=ws://192.168.1.10:8090`.
 - **Copy / paste**: `Ctrl+Shift+C` / `Ctrl+Shift+V` (or `Cmd`). OSC 52 clipboard writes from TUIs (vim/tmux yank) are mirrored to the system clipboard automatically.
 - **Inline images**: sixel / kitty / iTerm images are rendered (the server decodes them to RGBA; the browser paints them onto a positioned `<canvas>` that scrolls with the buffer).
 - **Sessions / workspaces**: the session dropdown (top-left) switches between running sessions; the `⊞` action creates a new workspace, and the numbered tabs switch between them.
-- **Touch / mobile**: tap a pane to focus it and raise the on-screen keyboard (a floating `⌨` button is the fallback if your browser doesn't); the layout shrinks above the keyboard via `visualViewport`. One-finger vertical drag scrolls scrollback; **long-press** opens the Copy/Paste/Find menu, and long-press-then-drag selects text (then Copy). On mouse-reporting TUIs the touch is forwarded to the app instead. *(Soft-keyboard raising is browser/OS-specific — verify on a real device.)*
+- **Touch / mobile**: on touch-first or narrow (≤640px) viewports the client switches to a phone layout (force it with `?mobile=1` / `?mobile=0` on the production page, or `mobile: true | false` in `LoomAppOptions`):
+  - **One compact header** — connection dot, the active pane's title with `session · ws n/N · pane n/N`, `A−` / `A+`, and `⌨` (show/hide the soft keyboard). Tap the title to open the **switcher**: panes (with a two-tap close), workspaces, sessions, plus Find / Paste / font size.
+  - **Extra-keys bar** above the soft keyboard: `esc tab ⇧⇥ ctrl alt ← ↑ ↓ →` (arrows auto-repeat when held) and a scrollable row `` ^C ⏎ | / - ~ ` _ \ : * & $ < > ^D ^Z ^R ^L ^U home end pgup pgdn paste ``. `ctrl` / `alt` are sticky: tap once for the next key (from the bar or the soft keyboard), twice to lock, again to release.
+  - **Gestures** — tap raises the keyboard; one-finger vertical drag scrolls scrollback (in full-screen apps like `less` it sends ↑/↓, in mouse-reporting TUIs wheel events); horizontal swipe switches to the next/previous pane; two-finger pinch resizes the font and the grid (one `Resize` when the pinch ends; the size is remembered per browser); long-press opens Copy/Paste/Find and long-press-then-drag selects.
+  - The whole page is pinned to `visualViewport`, so the header, terminal, and key bar shrink above the keyboard (iOS pan included) and the server reflows to the visible rows. Safe-area insets are honored; light/dark follows the OS.
+  - *(Soft-keyboard behavior is browser/OS-specific — verify on a real device.)*
 
 ### Troubleshooting
 

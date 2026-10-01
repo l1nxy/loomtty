@@ -17,9 +17,13 @@
 //                         get SS3 (ESC O X) instead of CSI (ESC [ X)
 //                         for arrows + Home/End. The app layer will
 //                         track the mode from the server's `mode_flags`.
+//   * Shift+Tab         → CSI Z (back-tab; Claude Code's mode switch)
+//   * Modified arrows / Home / End → xterm `ESC [1;<m>X` (Ctrl+Left
+//                         = `ESC [1;5D`, …). Modifiers always force the
+//                         CSI form, matching xterm regardless of DECCKM.
 //
 // What this DOES NOT do (deferred past v1):
-//   * Modifier-encoded function keys (`ESC [1;5A` for Ctrl+Up etc.)
+//   * Modifier-encoded editing / function keys (`ESC [5;5~` …)
 //   * IME composition  — composition events are a separate path
 //   * Keypad / numlock handling
 //   * Bracketed paste — `Input` is whatever the OS clipboard
@@ -83,7 +87,9 @@ export function encodeKeyboardEvent(
     case "Enter":
       return ok(BYTE_CR);
     case "Tab":
-      return ok(BYTE_HT);
+      // Back-tab. Plain Shift+Tab only — Ctrl+Shift already returned
+      // null above, and Alt+Shift+Tab is an OS window-switch chord.
+      return e.shiftKey ? okSeq("\x1b[Z") : ok(BYTE_HT);
     case "Backspace":
       // Convention: bare Backspace sends DEL (0x7f); Ctrl+Backspace
       // sends BS (0x08). Mirrors xterm + most modern emulators.
@@ -91,17 +97,17 @@ export function encodeKeyboardEvent(
     case "Escape":
       return ok(BYTE_ESC);
     case "ArrowUp":
-      return okSeq(cursorPrefix + "A");
+      return cursorKey(e, cursorPrefix, "A");
     case "ArrowDown":
-      return okSeq(cursorPrefix + "B");
+      return cursorKey(e, cursorPrefix, "B");
     case "ArrowRight":
-      return okSeq(cursorPrefix + "C");
+      return cursorKey(e, cursorPrefix, "C");
     case "ArrowLeft":
-      return okSeq(cursorPrefix + "D");
+      return cursorKey(e, cursorPrefix, "D");
     case "Home":
-      return okSeq(cursorPrefix + "H");
+      return cursorKey(e, cursorPrefix, "H");
     case "End":
-      return okSeq(cursorPrefix + "F");
+      return cursorKey(e, cursorPrefix, "F");
     case "Insert":
       return okSeq("\x1b[2~");
     case "Delete":
@@ -181,7 +187,65 @@ export function encodeKeyboardEvent(
   return { bytes: TEXT_ENCODER.encode(e.key), preventDefault: true };
 }
 
+/// Modifier set for a synthesized key — the touch extra-keys bar's
+/// sticky Ctrl / Alt and its pre-shifted keys (Shift+Tab).
+export interface KeyModifiers {
+  ctrl?: boolean;
+  alt?: boolean;
+  shift?: boolean;
+}
+
+/// Encode a key that didn't come from a real `KeyboardEvent` (the
+/// on-screen extra-keys bar, or a soft-keyboard character combined with
+/// a latched modifier). `key` uses `KeyboardEvent.key` naming ("Escape",
+/// "ArrowUp", "c", "|"). Routes through `encodeKeyboardEvent` so the
+/// byte mapping stays in one place.
+export function encodeKey(
+  key: string,
+  mods: KeyModifiers = {},
+  opts?: KeyEncoderOptions,
+): KeyEncoding | null {
+  const ctrl = mods.ctrl ?? false;
+  const alt = mods.alt ?? false;
+  const shift = mods.shift ?? false;
+  const fake = {
+    key,
+    ctrlKey: ctrl,
+    altKey: alt,
+    shiftKey: shift,
+    metaKey: false,
+    isComposing: false,
+    // AltGr is never latched on the touch bar.
+    getModifierState: () => false,
+  } as unknown as KeyboardEvent;
+  if (ctrl && alt && isPrintableKey(key)) {
+    // The real-event path reads Ctrl+Alt as AltGr; a latched pair
+    // means "Meta + control char" instead: ESC + C0 byte.
+    const c = ctrlChord(key);
+    if (c === null) return null;
+    return { bytes: new Uint8Array([BYTE_ESC, c]), preventDefault: true };
+  }
+  if (ctrl && shift) {
+    // Real Ctrl+Shift chords are browser-reserved (null), but a
+    // synthetic one has no browser to defer to: drop Shift.
+    return encodeKey(key, { ctrl, alt }, opts);
+  }
+  const r = encodeKeyboardEvent(fake, opts);
+  if (r !== null || !ctrl) return r;
+  // Ctrl + a symbol with no C0 mapping (e.g. Ctrl+/): xterm sends the
+  // symbol unchanged rather than nothing.
+  return isPrintableKey(key) ? encodeKey(key, { alt }, opts) : null;
+}
+
 // ─── helpers ─────────────────────────────────────────────────────
+
+/// Arrow / Home / End. Unmodified → CSI or SS3 per DECCKM; any
+/// Shift / Alt / Ctrl → xterm's `CSI 1 ; <1 + mask> <final>`.
+function cursorKey(e: KeyboardEvent, prefix: string, final: string): KeyEncoding {
+  const mask = (e.shiftKey ? 1 : 0) | (e.altKey ? 2 : 0) | (e.ctrlKey ? 4 : 0);
+  if (mask === 0) return okSeq(prefix + final);
+  return okSeq(`${CSI}1;${1 + mask}${final}`);
+}
 
 const CSI = "\x1b[";
 const SS3 = "\x1bO";

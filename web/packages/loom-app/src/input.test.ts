@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { encodeKeyboardEvent } from "./input.js";
+import { encodeKey, encodeKeyboardEvent } from "./input.js";
 
 /// Build a `KeyboardEvent` via jsdom's constructor — `key` plus
 /// modifier flags is what we read in the encoder, so the rest of the
@@ -305,5 +305,46 @@ describe("encodeKeyboardEvent — preventDefault flag", () => {
       expect(r).not.toBeNull();
       expect(r!.preventDefault).toBe(true);
     }
+  });
+});
+
+describe("encodeKeyboardEvent — back-tab + modified cursor keys", () => {
+  test("Shift+Tab → CSI Z", () => {
+    expect(decodeUtf8(encodeKeyboardEvent(ev("Tab", { shiftKey: true }))!.bytes)).toBe("\x1b[Z");
+  });
+
+  test("modified arrows / Home / End use xterm CSI 1;m", () => {
+    expect(decodeUtf8(encodeKeyboardEvent(ev("ArrowLeft", { ctrlKey: true }))!.bytes)).toBe("\x1b[1;5D");
+    expect(decodeUtf8(encodeKeyboardEvent(ev("ArrowUp", { altKey: true }))!.bytes)).toBe("\x1b[1;3A");
+    expect(decodeUtf8(encodeKeyboardEvent(ev("Home", { shiftKey: true }))!.bytes)).toBe("\x1b[1;2H");
+  });
+
+  test("modifiers force CSI even under DECCKM", () => {
+    const r = encodeKeyboardEvent(ev("ArrowRight", { ctrlKey: true }), { applicationCursorKeys: true });
+    expect(decodeUtf8(r!.bytes)).toBe("\x1b[1;5C");
+  });
+});
+
+describe("encodeKey — synthesized keys", () => {
+  test("Ctrl + letter → C0, Alt + char → ESC prefix", () => {
+    expect(encodeKey("c", { ctrl: true })!.bytes).toEqual(new Uint8Array([0x03]));
+    expect(decodeUtf8(encodeKey("x", { alt: true })!.bytes)).toBe("\x1bx");
+  });
+
+  test("Ctrl + Alt + letter → ESC + C0 (not AltGr)", () => {
+    expect(encodeKey("c", { ctrl: true, alt: true })!.bytes).toEqual(new Uint8Array([0x1b, 0x03]));
+  });
+
+  test("Ctrl + Shift drops Shift instead of deferring to the browser", () => {
+    expect(encodeKey("C", { ctrl: true, shift: true })!.bytes).toEqual(new Uint8Array([0x03]));
+  });
+
+  test("Ctrl + symbol without a C0 mapping sends the symbol", () => {
+    expect(decodeUtf8(encodeKey("|", { ctrl: true })!.bytes)).toBe("|");
+  });
+
+  test("named keys honor DECCKM", () => {
+    expect(decodeUtf8(encodeKey("ArrowUp", {}, { applicationCursorKeys: true })!.bytes)).toBe("\x1bOA");
+    expect(decodeUtf8(encodeKey("Tab", { shift: true })!.bytes)).toBe("\x1b[Z");
   });
 });

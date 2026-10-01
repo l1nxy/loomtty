@@ -32,6 +32,7 @@ import {
   decodeCellDelta,
   decodeFullPaneSync,
   FrameBodyDecodeError,
+  MODE_ALT_SCREEN,
   MODE_APP_CURSOR,
   MODE_BRACKETED_PASTE,
   MODE_MOUSE_REPORT,
@@ -40,14 +41,22 @@ import type { PaneAction } from "./layout.js";
 import {
   DEFAULT_THEME,
   GridShapeError,
+  LIGHT_THEME,
   PaneGrid,
   PaneRenderer,
   type SearchMatch,
   type SelectionAnchor,
   type Theme,
 } from "@loom/dom";
-import { encodeKeyboardEvent } from "./input.js";
+import { encodeKey, encodeKeyboardEvent } from "./input.js";
 import { LayoutManager } from "./layout.js";
+import {
+  MobileChrome,
+  type ExtraKey,
+  type MobilePane,
+  type ModifierLevel,
+  type StickyModifier,
+} from "./mobile.js";
 import {
   cellsForViewport,
   measureCellSize,
@@ -80,8 +89,21 @@ export interface LoomAppOptions {
   fontFamily?: string;
   /// CSS font-size for terminal cells, e.g. `"14px"`.
   fontSize?: string;
-  /// Color palette. Defaults to `DEFAULT_THEME`.
+  /// Color palette. Defaults to `DEFAULT_THEME` (or `LIGHT_THEME` when
+  /// `colorScheme` resolves to light). An explicit theme wins over
+  /// `colorScheme`.
   theme?: Theme;
+  /// Terminal + chrome color scheme. `"auto"` follows the OS
+  /// `prefers-color-scheme` live. Defaults to `"dark"`.
+  colorScheme?: "dark" | "light" | "auto";
+  /// Phone / touch layout (compact header, extra-keys bar, one pane at
+  /// a time with a switcher sheet, swipe + pinch gestures). `"auto"`
+  /// (default) enables it for touch-first or narrow viewports and
+  /// follows the media query live; `true` / `false` force it.
+  mobile?: boolean | "auto";
+  /// Fired after the user changes the font size (pinch, A−/A+) with
+  /// the new size in CSS px, so the page can persist it.
+  onFontSizeChange?: (px: number) => void;
   /// How many lines a wheel "tick" should scroll (used for the
   /// browser's deltaMode = "line" path and as the floor for the pixel
   /// path). Defaults to 3 — same as native xterm.
@@ -113,6 +135,15 @@ export interface LoomAppOptions {
 
 const DEFAULT_FONT_FAMILY = `"JetBrains Mono", "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace`;
 const DEFAULT_FONT_SIZE = "14px";
+/// Font-size bounds for pinch / A−/A+ (CSS px).
+const FONT_MIN_PX = 8;
+const FONT_MAX_PX = 32;
+/// Media query that turns the phone layout on under `mobile: "auto"`:
+/// touch-first devices (phones, tablets without a trackpad) or any
+/// viewport too narrow for the desktop chrome.
+const MOBILE_QUERY = "(hover: none) and (pointer: coarse), (max-width: 640px)";
+/// Horizontal swipe distance (px) that switches panes in mobile mode.
+const SWIPE_SWITCH_PX = 64;
 /// How long the `loom-tile-bell` class lingers after a Bell event.
 /// Themes typically animate a brief opacity pulse over this window.
 const BELL_FLASH_MS = 1000;
@@ -172,9 +203,38 @@ export class LoomApp {
   /// the LoomApp.
   private connectionPoisoned = false;
   private cellSize: CellSize;
-  private readonly theme: Theme;
+  private theme: Theme;
+  private readonly fixedTheme: Theme | null;
   private readonly fontFamily: string;
-  private readonly fontSize: string;
+  private fontSize: string;
+  private readonly handlerOnFontSizeChange?: (px: number) => void;
+  /// Phone chrome (header, extra keys, switcher sheet). Always mounted;
+  /// visible only while `mobileMode` (CSS `.loom-mobile`).
+  private readonly mobile: MobileChrome;
+  private mobileMode = false;
+  private readonly mobileQuery: MediaQueryList | null = null;
+  private readonly onMobileQueryChange: () => void;
+  private readonly schemeQuery: MediaQueryList | null = null;
+  private readonly onSchemeQueryChange: () => void;
+  /// Sticky modifiers latched from the extra-keys bar. Applied to the
+  /// next key from the bar OR the soft keyboard; one-shot (1) clears
+  /// after use, locked (2) stays until tapped off.
+  private stickyMods: Record<StickyModifier, ModifierLevel> = { ctrl: 0, alt: 0 };
+  /// A composition that a latched modifier hijacked (Android keyboards
+  /// compose even plain letters): its generation, so the eventual
+  /// compositionend doesn't commit the letter a second time, and its
+  /// text, so a trailing `insertText` echo is swallowed too.
+  private abortedCompositionGeneration = -1;
+  private abortedCompositionText: string | null = null;
+  /// Transport state mirrored into the mobile header.
+  private connected = false;
+  private statusText = "connecting…";
+  /// Live touch points on panes (pointerId → client coords) for pinch.
+  private readonly touchPoints = new Map<number, { x: number; y: number }>();
+  /// In-flight two-finger pinch → font size.
+  private pinch: { startDist: number; startPx: number; lastPx: number } | null = null;
+  private readonly onSinkFocusHandler: () => void;
+  private readonly onVisualViewportScrollHandler: () => void;
   private readonly scrollLinesPerWheelTick: number;
   private readonly maxScrollbackRows: number | undefined;
   private readonly client: LoomAppClientLike;
@@ -408,6 +468,19 @@ export class LoomApp {
     longPressTimer: number | null;
     selecting: boolean;
     selectMoved: boolean;
+    /// What the finger turned out to be doing once it left the slop
+    /// radius: still undecided, a vertical scroll the renderer owns,
+    /// a horizontal swipe (pane switch on release), or a vertical
+    /// swipe the app translates for panes the renderer can't scroll —
+    /// wheel frames for mouse-reporting TUIs, arrow keys for
+    /// full-screen (alt-screen) apps like `less` / `man`.
+    mode: "pending" | "scroll" | "hswipe" | "wheel" | "keys";
+    /// Pane state captured at touch-down.
+    reportsMouse: boolean;
+    altScreen: boolean;
+    /// Fractional rows accumulated by a wheel / keys swipe.
+    lastY: number;
+    accumRows: number;
   } | null = null;
   /// In-flight column / tile resize-drag state. Set on mousedown
   /// landing within `RESIZE_HIT_PX` of a column or tile border;
@@ -491,9 +564,30 @@ export class LoomApp {
       throw new Error("LoomApp: root element is not attached to a document");
     }
     this.doc = doc;
-    this.theme = opts.theme ?? DEFAULT_THEME;
+    this.fixedTheme = opts.theme ?? null;
+    const win0 = doc.defaultView;
+    const scheme = opts.colorScheme ?? "dark";
+    if (scheme === "auto" && typeof win0?.matchMedia === "function") {
+      this.schemeQuery = win0.matchMedia("(prefers-color-scheme: light)");
+    }
+    const light =
+      scheme === "light" || (this.schemeQuery !== null && this.schemeQuery.matches);
+    this.theme = this.fixedTheme ?? (light ? LIGHT_THEME : DEFAULT_THEME);
+    if (scheme !== "dark" || this.schemeQuery !== null) {
+      doc.documentElement.dataset["loomScheme"] = light ? "light" : "dark";
+    }
+    this.onSchemeQueryChange = () => this.applyColorScheme(this.schemeQuery?.matches ?? false);
     this.fontFamily = opts.fontFamily ?? DEFAULT_FONT_FAMILY;
     this.fontSize = opts.fontSize ?? DEFAULT_FONT_SIZE;
+    if (opts.onFontSizeChange !== undefined) this.handlerOnFontSizeChange = opts.onFontSizeChange;
+    const mobileOpt = opts.mobile ?? "auto";
+    if (mobileOpt === "auto" && typeof win0?.matchMedia === "function") {
+      this.mobileQuery = win0.matchMedia(MOBILE_QUERY);
+    }
+    this.mobileMode = mobileOpt === true || (this.mobileQuery?.matches ?? false);
+    this.onMobileQueryChange = () => this.setMobileMode(this.mobileQuery?.matches ?? false);
+    this.onSinkFocusHandler = () => this.syncKeyboardState();
+    this.onVisualViewportScrollHandler = () => this.onVisualViewportResize();
     this.scrollLinesPerWheelTick = Math.max(
       1,
       Math.floor(opts.scrollLinesPerWheelTick ?? 3),
@@ -508,6 +602,9 @@ export class LoomApp {
     this.onKeyDownHandler = (e) => this.onKeyDown(e);
     this.onWheelHandler = (e) => this.onWheel(e);
     this.onMouseDownHandler = (e) => {
+      // Taps on the phone chrome must not pull focus to the sink —
+      // that would raise the soft keyboard on every A+/switcher tap.
+      if (this.isMobileChromeTarget(e.target)) return;
       this.handleRootMouseDown(e);
       queueMicrotask(() => {
         if (!this.destroyed) this.focusInputSink();
@@ -566,6 +663,9 @@ export class LoomApp {
     this.compositionSinkEl.style.border = "0";
     this.compositionSinkEl.style.padding = "0";
     this.compositionSinkEl.style.overflow = "hidden";
+    // ≥16px: iOS Safari zooms the whole page when an input with a
+    // smaller font gains focus — i.e. on every tap into the terminal.
+    this.compositionSinkEl.style.fontSize = "16px";
 
     // ── Scrollback find bar (hidden until Ctrl/Cmd+Shift+F) ──────────
     this.searchBarEl = doc.createElement("div");
@@ -689,6 +789,21 @@ export class LoomApp {
     this.toastEl.className = "loom-toast-stack";
     this.toastEl.setAttribute("aria-live", "polite");
 
+    this.mobile = new MobileChrome(doc, {
+      onKey: (key) => this.onExtraKey(key),
+      onToggleKeyboard: () => this.toggleKeyboard(),
+      onFontStep: (delta) => this.stepFontSize(delta),
+      onSelectSession: (name) => this.onSessionSelected(name),
+      onNewSession: () => this.createSession(),
+      onSelectWorkspace: (idx) => this.onWorkspaceClicked(BigInt(idx)),
+      onNewWorkspace: () => this.createWorkspace(),
+      onSelectPane: (id) => this.onPaneClicked(id),
+      onClosePane: (id) => this.onPaneClose(id),
+      onNewPane: () => this.onAction("new-pane"),
+      onFind: () => this.openSearch(),
+      onPaste: () => void this.pasteFromClipboard(),
+    });
+
     this.cellSize = this.measureCellsOrFallback();
 
     this.layout = new LayoutManager(this.root, {
@@ -787,6 +902,10 @@ export class LoomApp {
         "resize",
         this.onVisualViewportResizeHandler,
       );
+      win.visualViewport?.removeEventListener(
+        "scroll",
+        this.onVisualViewportScrollHandler,
+      );
       win.removeEventListener("mousemove", this.onWindowMouseMove);
       win.removeEventListener("mouseup", this.onWindowMouseUp);
     }
@@ -824,6 +943,14 @@ export class LoomApp {
     this.searchBarEl.remove();
     this.contextMenuEl.remove();
     this.keyboardBtnEl.remove();
+    this.mobileQuery?.removeEventListener("change", this.onMobileQueryChange);
+    this.schemeQuery?.removeEventListener("change", this.onSchemeQueryChange);
+    this.compositionSinkEl.removeEventListener("focus", this.onSinkFocusHandler);
+    this.compositionSinkEl.removeEventListener("blur", this.onSinkFocusHandler);
+    this.mobile.destroy();
+    this.root.classList.remove("loom-mobile", "loom-kb-open");
+    this.touchPoints.clear();
+    this.pinch = null;
     this.client.close();
     for (const r of this.renderers.values()) r.destroy();
     this.renderers.clear();
@@ -904,6 +1031,19 @@ export class LoomApp {
     this.root.appendChild(this.keyboardBtnEl);
     this.root.appendChild(this.scrollBottomEl);
     this.root.appendChild(this.toastEl);
+    // Phone chrome: header above the LayoutManager chrome, extra keys
+    // below it (both in flex flow under `.loom-mobile`), sheet + hint
+    // as overlays. Hidden by CSS outside mobile mode.
+    this.root.insertBefore(this.mobile.headerEl, this.root.firstChild);
+    this.root.appendChild(this.mobile.keysEl);
+    this.root.appendChild(this.mobile.sheetEl);
+    this.root.appendChild(this.mobile.hintEl);
+    this.root.classList.toggle("loom-mobile", this.mobileMode);
+    this.mobileQuery?.addEventListener("change", this.onMobileQueryChange);
+    this.schemeQuery?.addEventListener("change", this.onSchemeQueryChange);
+    this.compositionSinkEl.addEventListener("focus", this.onSinkFocusHandler);
+    this.compositionSinkEl.addEventListener("blur", this.onSinkFocusHandler);
+    this.refreshMobile();
     // `queueMicrotask` rather than synchronous focus — jsdom can
     // assert during construction if the element isn't yet visible.
     // Focus targets the composition sink so the browser engages its
@@ -996,6 +1136,13 @@ export class LoomApp {
       "resize",
       this.onVisualViewportResizeHandler,
     );
+    // iOS pans the visual viewport (instead of resizing the layout
+    // viewport) to reveal the focused input — track the offset too.
+    this.doc.defaultView?.visualViewport?.addEventListener(
+      "scroll",
+      this.onVisualViewportScrollHandler,
+    );
+    this.onVisualViewportResize();
   }
 
   /// Cell pixel size used for hit-testing mouse coords into (col,
@@ -1026,11 +1173,11 @@ export class LoomApp {
     }
   }
 
-  /// Touch lands on a pane: arm a long-press timer. We do NOT
-  /// preventDefault — the compat `mousedown` must bubble so the tile's
-  /// FocusPane fires and the renderer's swipe handler can still claim a
-  /// scroll. Mouse-reporting panes are skipped (the TUI owns touches,
-  /// forwarded via the mouse path).
+  /// Touch lands on a pane: arm a long-press timer and start tracking
+  /// the gesture. We do NOT preventDefault — the compat `mousedown`
+  /// must bubble so the tile's FocusPane fires and the renderer's swipe
+  /// handler can still claim a scroll. A second finger turns the
+  /// gesture into a pinch (font size).
   private onTouchPointerDown(e: PointerEvent): void {
     if (e.pointerType !== "touch") return;
     // A tap is a gesture too — touch-only users (no hardware keyboard)
@@ -1045,11 +1192,24 @@ export class LoomApp {
     const renderer = this.renderers.get(paneIdStr);
     const grid = this.grids.get(paneIdStr);
     if (renderer === undefined || grid === undefined) return;
-    if (this.paneReportsMouse(paneId)) return; // TUI owns the touch
+    this.touchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (this.touchPoints.size === 2) {
+      this.beginPinch();
+      return;
+    }
+    if (this.touchPoints.size > 2 || this.pinch !== null) return;
     this.clearTouchLongPressTimer();
+    const reportsMouse = this.paneReportsMouse(paneId);
+    const altScreen = (grid.meta.modeFlags & MODE_ALT_SCREEN) !== 0;
+    // Full-screen apps without mouse reporting get arrow keys from a
+    // vertical swipe; keep the renderer from scrolling the (main-
+    // screen) history underneath them meanwhile.
+    if (altScreen && !reportsMouse) renderer.setTouchSelecting(true);
     const win = this.doc.defaultView;
+    // Mouse-reporting TUIs own long-press semantics (their own
+    // selection), so no select timer there.
     const timer =
-      win === null
+      win === null || reportsMouse
         ? null
         : win.setTimeout(
             () => this.beginTouchSelection(),
@@ -1066,6 +1226,11 @@ export class LoomApp {
       longPressTimer: timer,
       selecting: false,
       selectMoved: false,
+      mode: "pending",
+      reportsMouse,
+      altScreen,
+      lastY: e.clientY,
+      accumRows: 0,
     };
   }
 
@@ -1091,33 +1256,97 @@ export class LoomApp {
   }
 
   private onTouchPointerMove(e: PointerEvent): void {
-    const g = this.touchGesture;
-    if (g === null || e.pointerType !== "touch" || e.pointerId !== g.pointerId) {
+    if (e.pointerType !== "touch") return;
+    if (this.touchPoints.has(e.pointerId)) {
+      this.touchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+    if (this.pinch !== null) {
+      e.preventDefault();
+      this.updatePinch();
       return;
     }
-    if (!g.selecting) {
-      // Before the long-press fires, enough travel means this is a
-      // scroll/swipe — cancel the long-press and let the renderer run.
-      const dx = e.clientX - g.startX;
-      const dy = e.clientY - g.startY;
-      if (Math.hypot(dx, dy) >= LoomApp.TOUCH_LONGPRESS_SLOP_PX) {
-        this.clearTouchLongPressTimer();
-        this.touchGesture = null;
+    const g = this.touchGesture;
+    if (g === null || e.pointerId !== g.pointerId) return;
+    if (g.selecting) {
+      // Selecting: extend to the cell under the finger and suppress the
+      // browser's native pan so the drag stays a selection.
+      e.preventDefault();
+      if (g.anchor === null) return;
+      const head = this.hitTestAnchor(e, g.renderer, g.grid);
+      if (head === null) return;
+      g.selectMoved = true;
+      g.renderer.setSelection({ start: g.anchor, end: head, active: true });
+      g.renderer.render(g.grid);
+      return;
+    }
+    const dx = e.clientX - g.startX;
+    const dy = e.clientY - g.startY;
+    if (g.mode === "pending") {
+      // Below the slop radius it may still be a tap or a long-press.
+      if (Math.hypot(dx, dy) < LoomApp.TOUCH_LONGPRESS_SLOP_PX) return;
+      this.clearTouchLongPressTimer();
+      if (Math.abs(dx) > Math.abs(dy) * 1.2) {
+        g.mode = "hswipe";
+      } else if (g.reportsMouse) {
+        g.mode = "wheel";
+      } else if (g.altScreen) {
+        g.mode = "keys";
+      } else {
+        // Plain scrollback — the renderer's own swipe handler owns it.
+        g.mode = "scroll";
+      }
+      g.lastY = e.clientY;
+    }
+    if (g.mode !== "wheel" && g.mode !== "keys") return;
+    e.preventDefault();
+    const { cellHeight } = this.cellSize;
+    if (cellHeight <= 0) return;
+    g.accumRows += (e.clientY - g.lastY) / cellHeight;
+    g.lastY = e.clientY;
+    const whole = Math.trunc(g.accumRows);
+    if (whole === 0) return;
+    g.accumRows -= whole;
+    // Finger down → content down → reveal what's above: "scroll up".
+    this.sendSwipeRows(g, whole);
+  }
+
+  /// Translate `rows` of vertical swipe (positive = finger moved down =
+  /// scroll up) into what the pane's app understands: SGR wheel frames
+  /// for mouse-reporting TUIs, cursor keys for alt-screen apps.
+  private sendSwipeRows(
+    g: NonNullable<LoomApp["touchGesture"]>,
+    rows: number,
+  ): void {
+    const n = Math.min(10, Math.abs(rows));
+    const up = rows > 0;
+    if (g.mode === "wheel") {
+      const cell =
+        this.hitTestViewportCell(
+          { clientX: g.startX, clientY: g.startY } as MouseEvent,
+          g.renderer,
+          g.grid,
+        ) ?? { col: 0, row: 0 };
+      for (let i = 0; i < n; i += 1) {
+        this.client.send({
+          tag: "MouseInput",
+          paneId: g.paneId,
+          button: up ? 64 : 65,
+          col: cell.col,
+          row: cell.row,
+          pressed: true,
+          modifiers: 0,
+        });
       }
       return;
     }
-    // Selecting: extend to the cell under the finger and suppress the
-    // browser's native pan so the drag stays a selection.
-    e.preventDefault();
-    if (g.anchor === null) return;
-    const head = this.hitTestAnchor(e, g.renderer, g.grid);
-    if (head === null) return;
-    g.selectMoved = true;
-    g.renderer.setSelection({ start: g.anchor, end: head, active: true });
-    g.renderer.render(g.grid);
+    const appCursor = (g.grid.meta.modeFlags & MODE_APP_CURSOR) !== 0;
+    const r = encodeKey(up ? "ArrowUp" : "ArrowDown", {}, { applicationCursorKeys: appCursor });
+    if (r === null) return;
+    for (let i = 0; i < n; i += 1) this.client.sendInput(g.paneId, r.bytes);
   }
 
   private onTouchPointerUp(e: PointerEvent): void {
+    if (e.pointerType === "touch" && this.releaseTouchPoint(e.pointerId)) return;
     const g = this.touchGesture;
     if (g === null || (e.pointerType === "touch" && e.pointerId !== g.pointerId)) {
       return;
@@ -1142,12 +1371,27 @@ export class LoomApp {
       }
       return;
     }
-    // A plain tap (no long-press, no scroll commit): focus the sink
-    // SYNCHRONOUSLY inside this trusted gesture so mobile browsers
-    // raise the on-screen keyboard (a deferred focus does not).
+    if (g.altScreen && !g.reportsMouse) g.renderer.setTouchSelecting(false);
     const dx = e.clientX - g.startX;
     const dy = e.clientY - g.startY;
-    if (Math.hypot(dx, dy) < LoomApp.TOUCH_LONGPRESS_SLOP_PX) {
+    if (g.mode === "hswipe") {
+      if (
+        this.mobileMode &&
+        Math.abs(dx) >= SWIPE_SWITCH_PX &&
+        Math.abs(dx) > Math.abs(dy) * 1.5
+      ) {
+        // Swipe left → next pane (content moves left, the next one
+        // slides in from the right), swipe right → previous.
+        this.cyclePane(dx < 0 ? 1 : -1);
+      }
+      return;
+    }
+    // A plain tap (no long-press, no scroll commit): focus the sink
+    // SYNCHRONOUSLY inside this trusted gesture so mobile browsers
+    // raise the on-screen keyboard (a deferred focus does not). On a
+    // mouse-reporting pane the compat mouse events still carry the
+    // click to the TUI.
+    if (g.mode === "pending" && Math.hypot(dx, dy) < LoomApp.TOUCH_LONGPRESS_SLOP_PX) {
       this.focusInputSink();
       // A tap is a user gesture — good moment to drain a pending OSC 52
       // clipboard write that the server pushed without activation.
@@ -1159,35 +1403,317 @@ export class LoomApp {
   /// gesture WITHOUT finalizing: no menu, no focus, no kept selection —
   /// the user didn't complete an action, the system aborted it.
   private onTouchPointerCancel(e: PointerEvent): void {
+    if (e.pointerType === "touch" && this.releaseTouchPoint(e.pointerId)) return;
     const g = this.touchGesture;
     if (g === null || (e.pointerType === "touch" && e.pointerId !== g.pointerId)) {
       return;
     }
     this.clearTouchLongPressTimer();
     this.touchGesture = null;
-    if (g.selecting) {
+    if (g.selecting || (g.altScreen && !g.reportsMouse)) {
       g.renderer.setTouchSelecting(false);
+    }
+    if (g.selecting) {
       g.renderer.setSelection(null);
       g.renderer.render(g.grid);
     }
   }
 
-  /// Visual-viewport shrank/grew (on-screen keyboard show/hide, URL bar
-  /// collapse, …). Pin the root's height to the visible region so the
-  /// terminal isn't hidden behind the keyboard; the ResizeObserver then
-  /// re-measures rows/cols and sends a Resize. No-op when the visual
-  /// viewport matches the layout viewport (desktop / no keyboard).
-  private onVisualViewportResize(): void {
-    const vv = this.doc.defaultView?.visualViewport;
-    if (vv === undefined || vv === null) return;
-    const win = this.doc.defaultView;
-    const full = win?.innerHeight ?? vv.height;
-    if (vv.height < full - 1) {
-      this.root.style.height = `${Math.round(vv.height)}px`;
-    } else {
-      // Keyboard dismissed / no shrink — release the override.
-      this.root.style.removeProperty("height");
+  // ─── Pinch → font size ────────────────────────────────────────────
+
+  /// Forget a lifted finger. Returns `true` when the event belonged to
+  /// a pinch (which this call may have just ended) so the caller skips
+  /// the single-finger tap / swipe handling.
+  private releaseTouchPoint(pointerId: number): boolean {
+    this.touchPoints.delete(pointerId);
+    if (this.pinch === null) return false;
+    if (this.touchPoints.size < 2) this.endPinch();
+    return true;
+  }
+
+  private pinchDistance(): number {
+    const pts = [...this.touchPoints.values()];
+    if (pts.length < 2) return 0;
+    return Math.hypot(pts[0]!.x - pts[1]!.x, pts[0]!.y - pts[1]!.y);
+  }
+
+  private beginPinch(): void {
+    // A second finger cancels whatever the first one started.
+    const g = this.touchGesture;
+    if (g !== null) {
+      this.clearTouchLongPressTimer();
+      if (g.selecting) {
+        g.renderer.setSelection(null);
+        g.renderer.render(g.grid);
+      }
+      this.touchGesture = null;
     }
+    const dist = this.pinchDistance();
+    if (dist <= 0) return;
+    const px = this.fontSizePx;
+    this.pinch = { startDist: dist, startPx: px, lastPx: px };
+    // Keep the renderers' one-finger scroll out of the gesture.
+    for (const r of this.renderers.values()) r.setTouchSelecting(true);
+  }
+
+  private updatePinch(): void {
+    const p = this.pinch;
+    if (p === null) return;
+    const dist = this.pinchDistance();
+    if (dist <= 0) return;
+    const px = clampNumber(Math.round(p.startPx * (dist / p.startDist)), FONT_MIN_PX, FONT_MAX_PX);
+    if (px === p.lastPx) return;
+    p.lastPx = px;
+    // Live preview: restyle only. The grid keeps its dims until the
+    // pinch ends and a single Resize goes out — a Resize per step would
+    // make the server reflow every pane a dozen times per gesture.
+    for (const [key, r] of this.renderers) {
+      r.setFontSize(`${px}px`);
+      const grid = this.grids.get(key);
+      if (grid !== undefined) r.render(grid);
+    }
+  }
+
+  private endPinch(): void {
+    const p = this.pinch;
+    this.pinch = null;
+    for (const r of this.renderers.values()) r.setTouchSelecting(false);
+    if (p !== null && p.lastPx !== p.startPx) this.setFontSize(p.lastPx);
+  }
+
+  // ─── Font size ────────────────────────────────────────────────────
+
+  /// Current cell font size in CSS px.
+  get fontSizePx(): number {
+    return parseFloat(this.fontSize) || 14;
+  }
+
+  /// Change the terminal font size: restyle every pane, re-measure the
+  /// cell, and send a `Resize` so the server reflows the grid to the
+  /// new rows × cols. Clamped to [8, 32] px.
+  setFontSize(px: number): void {
+    if (this.destroyed) return;
+    const next = clampNumber(Math.round(px), FONT_MIN_PX, FONT_MAX_PX);
+    this.fontSize = `${next}px`;
+    for (const [key, r] of this.renderers) {
+      r.setFontSize(this.fontSize);
+      const grid = this.grids.get(key);
+      if (grid !== undefined) r.render(grid);
+    }
+    this.remeasureCells();
+    this.handlerOnFontSizeChange?.(next);
+    this.refreshMobile();
+  }
+
+  private stepFontSize(delta: number): void {
+    this.setFontSize(this.fontSizePx + delta);
+  }
+
+  // ─── Mobile mode ──────────────────────────────────────────────────
+
+  private setMobileMode(on: boolean): void {
+    if (this.destroyed || on === this.mobileMode) return;
+    this.mobileMode = on;
+    this.root.classList.toggle("loom-mobile", on);
+    if (!on) this.mobile.closeSheet();
+    // The chrome swap changes the workspace height; the ResizeObserver
+    // picks that up and re-sends Resize.
+  }
+
+  private isMobileChromeTarget(t: EventTarget | null): boolean {
+    if (!(t instanceof Node)) return false;
+    return this.mobile.nodes.some((n) => n.contains(t));
+  }
+
+  /// Push the current session / layout / connection state into the
+  /// phone header (and the switcher sheet, if open).
+  private refreshMobile(): void {
+    if (this.destroyed) return;
+    const layout = this.currentLayout;
+    const wsIdx = layout === null ? 0 : Number(layout.activeWorkspaceIdx);
+    const ws = layout?.workspaces[wsIdx];
+    const activeId = this.activePaneId();
+    const panes: MobilePane[] = [];
+    if (ws !== undefined) {
+      for (const col of ws.columns) {
+        for (const tile of col.tiles) {
+          panes.push({
+            id: tile.paneId,
+            title: this.grids.get(tile.paneId.toString())?.title ?? "",
+            active: tile.paneId === activeId,
+          });
+        }
+      }
+    }
+    this.mobile.update({
+      statusText: this.statusText,
+      connected: this.connected,
+      sessions: this.knownSessions,
+      currentSession: this.currentSessionName,
+      workspaceCount: layout?.workspaces.length ?? 0,
+      activeWorkspace: wsIdx,
+      panes,
+      fontSizePx: this.fontSizePx,
+    });
+  }
+
+  /// Panes of the active workspace in column-major (visual) order.
+  private activeWorkspacePanes(): bigint[] {
+    const layout = this.currentLayout;
+    if (layout === null) return [];
+    const ws = layout.workspaces[Number(layout.activeWorkspaceIdx)];
+    if (ws === undefined) return [];
+    return ws.columns.flatMap((c) => c.tiles.map((t) => t.paneId));
+  }
+
+  /// Swipe pane switch: focus the next / previous pane of the active
+  /// workspace (wrapping) and flash a "n/N · title" hint.
+  private cyclePane(delta: number): void {
+    const ids = this.activeWorkspacePanes();
+    if (ids.length < 2) return;
+    const cur = this.activePaneId();
+    const idx = cur === null ? 0 : Math.max(0, ids.indexOf(cur));
+    const nextIdx = (idx + delta + ids.length) % ids.length;
+    const next = ids[nextIdx]!;
+    this.onPaneClicked(next);
+    const title = this.grids.get(next.toString())?.title ?? "";
+    this.mobile.showHint(
+      `${nextIdx + 1}/${ids.length}${title.length > 0 ? ` · ${title}` : ""}`,
+    );
+  }
+
+  /// Show / hide the soft keyboard. Called from a click (user
+  /// activation), which iOS requires for `focus()` to raise it.
+  private toggleKeyboard(): void {
+    if (this.doc.activeElement === this.compositionSinkEl) {
+      this.compositionSinkEl.blur();
+    } else {
+      this.focusInputSink();
+    }
+  }
+
+  private syncKeyboardState(): void {
+    if (this.destroyed) return;
+    this.mobile.setKeyboardOpen(this.doc.activeElement === this.compositionSinkEl);
+  }
+
+  // ─── Extra keys + sticky modifiers ─────────────────────────────────
+
+  private get hasStickyMods(): boolean {
+    return this.stickyMods.ctrl !== 0 || this.stickyMods.alt !== 0;
+  }
+
+  /// Clear one-shot modifiers after they've been applied to a key.
+  private consumeStickyMods(): void {
+    let changed = false;
+    for (const m of ["ctrl", "alt"] as const) {
+      if (this.stickyMods[m] === 1) {
+        this.stickyMods[m] = 0;
+        changed = true;
+      }
+    }
+    if (changed) this.mobile.setModifiers(this.stickyMods);
+  }
+
+  /// Encode `key` with the latched modifiers for the active pane and
+  /// send it. Returns whether anything was sent.
+  private sendKeyWithStickyMods(key: string, shift = false): boolean {
+    const target = this.activePaneId();
+    if (target === null) return false;
+    const grid = this.grids.get(target.toString());
+    if (grid === undefined) return false;
+    const r = encodeKey(
+      key,
+      { ctrl: this.stickyMods.ctrl !== 0, alt: this.stickyMods.alt !== 0, shift },
+      { applicationCursorKeys: (grid.meta.modeFlags & MODE_APP_CURSOR) !== 0 },
+    );
+    if (r === null) return false;
+    this.sendUserInput(target, r.bytes);
+    this.consumeStickyMods();
+    return true;
+  }
+
+  private onExtraKey(key: ExtraKey): void {
+    if (this.destroyed) return;
+    this.flushPendingClipboard();
+    const a = key.action;
+    switch (a.kind) {
+      case "mod": {
+        // off → one-shot → locked → off.
+        const cur = this.stickyMods[a.mod];
+        this.stickyMods = { ...this.stickyMods, [a.mod]: ((cur + 1) % 3) as ModifierLevel };
+        this.mobile.setModifiers(this.stickyMods);
+        return;
+      }
+      case "paste":
+        void this.pasteFromClipboard();
+        return;
+      case "bytes": {
+        const target = this.activePaneId();
+        if (target === null || !this.grids.has(target.toString())) return;
+        this.sendUserInput(target, new TextEncoder().encode(a.bytes));
+        this.consumeStickyMods();
+        return;
+      }
+      case "key":
+        this.sendKeyWithStickyMods(a.key, a.shift ?? false);
+        return;
+      default: {
+        const _exhaustive: never = a;
+        return _exhaustive;
+      }
+    }
+  }
+
+  /// Every user-typed byte funnels through here: in mobile mode, typing
+  /// while scrolled up into history snaps the pane back to live output
+  /// (there's no End key to do it by hand).
+  private sendUserInput(paneId: bigint, bytes: Uint8Array): void {
+    this.client.sendInput(paneId, bytes);
+    if (!this.mobileMode) return;
+    const key = paneId.toString();
+    const renderer = this.renderers.get(key);
+    const grid = this.grids.get(key);
+    if (renderer === undefined || grid === undefined || renderer.scrollOffsetRows === 0) return;
+    renderer.setScrollOffset(0);
+    renderer.render(grid);
+  }
+
+  // ─── Color scheme ─────────────────────────────────────────────────
+
+  private applyColorScheme(light: boolean): void {
+    if (this.destroyed) return;
+    this.doc.documentElement.dataset["loomScheme"] = light ? "light" : "dark";
+    if (this.fixedTheme !== null) return;
+    this.theme = light ? LIGHT_THEME : DEFAULT_THEME;
+    for (const [key, r] of this.renderers) {
+      r.setTheme(this.theme);
+      const grid = this.grids.get(key);
+      if (grid !== undefined) r.render(grid);
+    }
+  }
+
+  /// Visual viewport changed (on-screen keyboard show/hide, URL bar
+  /// collapse, iOS panning to reveal the focused input). Publish its
+  /// size + offset as CSS variables; `chrome.css` pins `<body>` to
+  /// them, so the whole UI — header, terminal, extra keys — fits the
+  /// visible region above the keyboard. The ResizeObserver then
+  /// re-measures rows/cols and sends a Resize, which keeps the cursor
+  /// row (the shell / agent prompt at the bottom) on screen.
+  private onVisualViewportResize(): void {
+    const win = this.doc.defaultView;
+    const vv = win?.visualViewport;
+    if (win === null || win === undefined || vv === undefined || vv === null) return;
+    const style = this.doc.documentElement.style;
+    style.setProperty("--loom-vvh", `${Math.round(vv.height)}px`);
+    style.setProperty("--loom-vvt", `${Math.round(vv.offsetTop)}px`);
+    // A keyboard-sized shrink: drop the bottom safe-area padding (the
+    // home indicator is under the keyboard) — `.loom-kb-open`.
+    const kbOpen = win.innerHeight - vv.height > 120;
+    this.root.classList.toggle("loom-kb-open", kbOpen);
+    // iOS may also scroll the (fixed-body) document itself; undo it so
+    // the offset above is the only displacement.
+    if (vv.offsetTop === 0 && win.scrollY !== 0) win.scrollTo(0, 0);
   }
 
   private hitTestAnchor(
@@ -2205,10 +2731,35 @@ export class LoomApp {
     // mode (vim, less, htop, …). Read the bit per keystroke since a
     // single session toggles freely as apps come and go.
     const appCursor = (grid.meta.modeFlags & MODE_APP_CURSOR) !== 0;
+    // A modifier latched on the extra-keys bar applies to this soft- /
+    // hardware-keyboard key (Ctrl latched + "c" → ^C). Skip keys that
+    // already carry a real modifier, and IME-routed keydowns (229 →
+    // "Process"/"Unidentified") whose text arrives via the sink.
+    if (
+      this.hasStickyMods &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.metaKey &&
+      e.key !== "Process" &&
+      e.key !== "Unidentified" &&
+      e.key !== "Dead"
+    ) {
+      const m = encodeKey(
+        e.key,
+        { ctrl: this.stickyMods.ctrl !== 0, alt: this.stickyMods.alt !== 0, shift: e.shiftKey },
+        { applicationCursorKeys: appCursor },
+      );
+      if (m !== null) {
+        e.preventDefault();
+        this.sendUserInput(target, m.bytes);
+        this.consumeStickyMods();
+        return;
+      }
+    }
     const r = encodeKeyboardEvent(e, { applicationCursorKeys: appCursor });
     if (r === null) return;
     if (r.preventDefault) e.preventDefault();
-    this.client.sendInput(target, r.bytes);
+    this.sendUserInput(target, r.bytes);
   }
 
   /// Composition just started — the user has begun a multi-keystroke
@@ -2217,6 +2768,7 @@ export class LoomApp {
   /// follow active focus on subsequent updates / layout changes.
   private onCompositionStart(_e: CompositionEvent): void {
     this.composing = true;
+    this.abortedCompositionText = null;
     this.composingPaneId = this.activePaneId();
     this.compositionCommitData = null;
     // Close the deferred-commit window for any previous session —
@@ -2251,8 +2803,24 @@ export class LoomApp {
   /// steer the user's in-flight glyph to the wrong terminal —
   /// potentially leaking command text or secrets across panes.
   private onCompositionUpdate(e: CompositionEvent): void {
+    if (this.abortedCompositionGeneration === this.compositionGeneration) return;
     const target = this.composingPaneId;
     if (target === null) return;
+    // Android keyboards compose even plain Latin letters, so with Ctrl
+    // latched on the extra-keys bar the "c" of Ctrl+C shows up here, not
+    // as a keydown. Take the first character as the modified key, then
+    // abandon this composition so it doesn't also commit as text.
+    if (this.hasStickyMods && e.data.length > 0) {
+      const ch = String.fromCodePoint(e.data.codePointAt(0)!);
+      if (this.sendKeyWithStickyMods(ch)) {
+        this.abortedCompositionGeneration = this.compositionGeneration;
+        this.abortedCompositionText = e.data;
+        this.clearPreeditOn(target);
+        // Resetting the value makes the IME drop its composing range.
+        this.compositionSinkEl.value = "";
+        return;
+      }
+    }
     const key = target.toString();
     const renderer = this.renderers.get(key);
     const grid = this.grids.get(key);
@@ -2293,6 +2861,22 @@ export class LoomApp {
   ///     new session wipes that flag.
   private onSinkBeforeInput(e: Event): void {
     const ie = e as InputEvent;
+    // Android soft keyboards send Backspace / Enter as keyCode-229
+    // keydowns the encoder can't read; the real intent only shows up
+    // here. (Desktop + iOS keydowns are encoded and preventDefault'ed,
+    // which suppresses this event, so nothing double-sends.)
+    if (e.type === "beforeinput" && !this.composing && !ie.isComposing) {
+      if (ie.inputType === "deleteContentBackward") {
+        if (e.cancelable) e.preventDefault();
+        this.sendDirectBytes(new Uint8Array([0x7f]));
+        return;
+      }
+      if (ie.inputType === "insertLineBreak" || ie.inputType === "insertParagraph") {
+        if (e.cancelable) e.preventDefault();
+        this.sendDirectBytes(new Uint8Array([0x0d]));
+        return;
+      }
+    }
     const data = ie.data;
     if (typeof data !== "string" || data.length === 0) return;
     if (ie.inputType === "insertFromComposition") {
@@ -2364,6 +2948,13 @@ export class LoomApp {
     this.composingPaneId = null;
     // Clear the overlay on whatever pane was showing it.
     if (target !== null) this.clearPreeditOn(target);
+    if (this.abortedCompositionGeneration === this.compositionGeneration) {
+      // Hijacked by a sticky modifier (see onCompositionUpdate): the
+      // key already went out; drop the commit.
+      this.compositionCommitData = null;
+      this.compositionSinkEl.value = "";
+      return;
+    }
 
     const generation = this.compositionGeneration;
     const eventData = e.data ?? "";
@@ -2448,7 +3039,7 @@ export class LoomApp {
     // Drop bytes for unknown panes — same guard as the regular
     // keystroke path (a pane may have closed mid-composition).
     if (this.grids.get(target.toString()) === undefined) return;
-    this.client.sendInput(target, new TextEncoder().encode(data));
+    this.sendUserInput(target, new TextEncoder().encode(data));
   }
 
   /// Send a direct (non-composition) IME insert — see the call site in
@@ -2482,10 +3073,24 @@ export class LoomApp {
   /// a direct insert isn't anchored to an in-flight composition.
   private sendDirectText(data: string): void {
     if (data.length === 0) return;
+    if (this.abortedCompositionText !== null && data === this.abortedCompositionText) {
+      // Trailing insert of a composition a sticky modifier hijacked.
+      this.abortedCompositionText = null;
+      return;
+    }
+    // One character + a latched modifier (iOS / Android single-char
+    // inserts that bypass keydown) → modified key.
+    if (this.hasStickyMods && [...data].length === 1 && this.sendKeyWithStickyMods(data)) {
+      return;
+    }
+    this.sendDirectBytes(new TextEncoder().encode(data));
+  }
+
+  private sendDirectBytes(bytes: Uint8Array): void {
     const target = this.activePaneId();
     if (target === null) return;
     if (this.grids.get(target.toString()) === undefined) return;
-    this.client.sendInput(target, new TextEncoder().encode(data));
+    this.sendUserInput(target, bytes);
   }
 
   /// Best-effort active-pane resolver: prefer the pending click
@@ -2757,7 +3362,7 @@ export class LoomApp {
     if (clipboard === undefined) return false;
     clipboard.writeText(text).catch((err: unknown) => {
       const e = err instanceof Error ? err : new Error(String(err));
-      this.handlerOnError?.(e);
+      this.reportError(e);
     });
     return true;
   }
@@ -2831,7 +3436,7 @@ export class LoomApp {
     const body = enc.encode(text);
     const bracketed = (grid.meta.modeFlags & MODE_BRACKETED_PASTE) !== 0;
     if (!bracketed) {
-      this.client.sendInput(activePaneId, body);
+      this.sendUserInput(activePaneId, body);
       return;
     }
     const prefix = enc.encode("\x1b[200~");
@@ -2840,7 +3445,7 @@ export class LoomApp {
     wrapped.set(prefix, 0);
     wrapped.set(body, prefix.length);
     wrapped.set(suffix, prefix.length + body.length);
-    this.client.sendInput(activePaneId, wrapped);
+    this.sendUserInput(activePaneId, wrapped);
   }
 
   /// Explicit-shortcut (Ctrl+Shift+V) and context-menu "Paste". These
@@ -2853,7 +3458,7 @@ export class LoomApp {
     const view = this.doc.defaultView;
     const clipboard = view?.navigator?.clipboard;
     if (clipboard === undefined || typeof clipboard.readText !== "function") {
-      this.handlerOnError?.(
+      this.reportError(
         new Error(
           "This browser won't let the page read the clipboard — paste with Ctrl+V / Cmd+V or the browser's own right-click menu.",
         ),
@@ -2883,7 +3488,7 @@ export class LoomApp {
       } catch {
         /* permission descriptor unsupported — keep the generic hint */
       }
-      this.handlerOnError?.(
+      this.reportError(
         new Error(
           denied
             ? "Clipboard access is blocked for this site — allow it via the address-bar site settings, or paste with Ctrl+V / Cmd+V (the right-click \"Paste\" in the browser's own menu also works)."
@@ -2916,6 +3521,7 @@ export class LoomApp {
     // pair lands as one cohesive update.
     this.sendResizeForPane(paneId);
     this.client.send({ tag: "FocusPane", paneId });
+    this.refreshMobile();
   }
 
   private onWorkspaceClicked(idx: bigint): void {
@@ -3098,7 +3704,7 @@ export class LoomApp {
       default:
         // Unknown id — surfaced rather than silently swallowed so a
         // typo in a future action entry doesn't ghost a button.
-        this.handlerOnError?.(
+        this.reportError(
           new Error(`unknown pane-bar action id: ${id}`),
         );
     }
@@ -3118,19 +3724,35 @@ export class LoomApp {
     this.client.send({ tag: "ClosePane", paneId });
   }
 
+  /// Non-transport errors (clipboard blocked, server `Error`, decode
+  /// failures): forward to the page, and in mobile mode — where the
+  /// page's status strip is hidden — also surface them as a toast.
+  private reportError(e: Error): void {
+    this.handlerOnError?.(e);
+    if (this.mobileMode) this.showToast(e.message, "warn");
+  }
+
   // ─── Inbound client events ───────────────────────────────────────
 
   private onClientEvent(e: LoomEvent): void {
     switch (e.kind) {
       case "open":
+        this.connected = true;
+        this.statusText = "";
+        this.refreshMobile();
         this.handlerOnOpen?.();
         // Populate the session dropdown once the transport is up.
         this.requestSessionList();
         return;
       case "close":
+        this.connected = false;
+        this.statusText = e.reconnecting ? "reconnecting…" : `disconnected: ${e.reason}`;
+        this.refreshMobile();
         this.handlerOnClose?.(e.reason, e.reconnecting);
         return;
       case "error":
+        // Transport errors stay out of the toast stack — a flaky link
+        // would otherwise bury the screen; the header shows the state.
         this.handlerOnError?.(e.error);
         return;
       case "server-msg":
@@ -3175,11 +3797,13 @@ export class LoomApp {
         // from the cached list, then re-query so the active-first
         // ordering (and any newly created session) is up to date.
         this.layout.setSessions(this.knownSessions, this.currentSessionName);
+        this.refreshMobile();
         this.requestSessionList();
         return;
       case "SessionList":
         this.knownSessions = msg.sessions.map((s) => s.name);
         this.layout.setSessions(this.knownSessions, this.currentSessionName);
+        this.refreshMobile();
         return;
       case "ClipboardStore":
         // OSC 52: a TUI (vim/tmux yank) asked to set the system
@@ -3195,9 +3819,12 @@ export class LoomApp {
       case "Error":
         // Surface server-side protocol/runtime errors that would
         // otherwise vanish into the default-ignore arm.
-        this.handlerOnError?.(new Error(`server: ${msg.message}`));
+        this.reportError(new Error(`server: ${msg.message}`));
         return;
       case "ServerShutdown":
+        this.connected = false;
+        this.statusText = "server shut down";
+        this.refreshMobile();
         this.handlerOnServerShutdown?.();
         return;
       case "ImagePlacement":
@@ -3424,6 +4051,7 @@ export class LoomApp {
     const grid = this.grids.get(paneId.toString());
     if (grid !== undefined) grid.title = title;
     this.layout.setTileTitle(paneId, title);
+    this.refreshMobile();
     // Reflect the active pane's title on `document.title` so the
     // browser tab / window chrome updates without the caller having
     // to subscribe to a separate event.
@@ -3561,6 +4189,7 @@ export class LoomApp {
     // The active pane may have changed; re-evaluate the scroll-bottom
     // button against whichever pane is now active.
     this.updateScrollBottomBtn();
+    this.refreshMobile();
   }
 
   private handleCellDeltaBytes(bytes: Uint8Array): void {
@@ -3583,7 +4212,7 @@ export class LoomApp {
       grid.applyCellDelta(cd);
     } catch (e) {
       if (e instanceof GridShapeError) {
-        this.handlerOnError?.(e);
+        this.reportError(e);
         return;
       }
       throw e;
@@ -3644,7 +4273,7 @@ export class LoomApp {
       grid.applyFullPaneSync(sync);
     } catch (e) {
       if (e instanceof GridShapeError) {
-        this.handlerOnError?.(e);
+        this.reportError(e);
         return;
       }
       throw e;
@@ -3700,7 +4329,7 @@ export class LoomApp {
       // close the transport, and surface to the caller; recovery is
       // a fresh `new LoomApp(...)`.
       this.connectionPoisoned = true;
-      this.handlerOnError?.(e);
+      this.reportError(e);
       try {
         this.client.close();
       } catch {

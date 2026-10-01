@@ -178,6 +178,8 @@ impl TextShaper {
     pub fn with_options(family_name: &str, opts: &ShapingOptions) -> Self {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();
+        #[cfg(target_os = "macos")]
+        load_coretext_cjk_font(&mut db);
 
         let primary_font_id = find_primary_font(&db, family_name, opts.preferred_weight);
         let emoji_font_id = find_emoji_font(&db);
@@ -959,9 +961,87 @@ pub(crate) fn load_ct_font_from_path(
     index: u32,
     size: f64,
 ) -> Option<core_text::font::CTFont> {
-    use core_foundation::base::TCFType;
-
     let data = std::fs::read(path).ok()?;
+    load_ct_font_from_data(path, data.clone(), index, size)
+        .or_else(|| load_ct_font_by_postscript_name(path, &data, index, size))
+}
+
+/// Reserved system fonts (e.g. PingFang in FontServices.framework on recent
+/// macOS) refuse to be instantiated from their bytes — CGFont creation fails
+/// and CTFontManagerCreateFontDescriptorsFromData yields no faces — but
+/// CoreText still hands them out by PostScript name.
+#[cfg(target_os = "macos")]
+fn load_ct_font_by_postscript_name(
+    path: &str,
+    data: &[u8],
+    index: u32,
+    size: f64,
+) -> Option<core_text::font::CTFont> {
+    let face = ttf_parser::Face::parse(data, index).ok()?;
+    let ps_name = face
+        .names()
+        .into_iter()
+        .find(|n| n.name_id == ttf_parser::name_id::POST_SCRIPT_NAME)
+        .and_then(|n| n.to_string())?;
+    let ct_font = core_text::font::new_from_name(&ps_name, size).ok()?;
+    // new_from_name silently substitutes a default font for unknown names.
+    if ct_font.postscript_name() != ps_name {
+        return None;
+    }
+    // Variable collections (PingFang) expose only each face's default
+    // instance — Medium for PingFang — so pin the weight axis to Regular to
+    // match terminal text. Variation instances share glyph IDs, so shaping
+    // and rasterization stay consistent.
+    let wght = ttf_parser::Tag::from_bytes(b"wght");
+    let ct_font = match face.variation_axes().into_iter().find(|a| a.tag == wght) {
+        Some(axis) if (axis.min_value..=axis.max_value).contains(&400.0) => {
+            with_variation(&ct_font, wght.0, 400.0, size).unwrap_or(ct_font)
+        }
+        _ => ct_font,
+    };
+    log::info!(
+        "CoreText: loaded face[{}] of '{}' by PostScript name '{}'",
+        index,
+        path,
+        ps_name,
+    );
+    Some(ct_font)
+}
+
+/// Copy of `font` with one variation axis (`tag`, e.g. `wght`) set to `value`.
+#[cfg(target_os = "macos")]
+fn with_variation(
+    font: &core_text::font::CTFont,
+    tag: u32,
+    value: f64,
+    size: f64,
+) -> Option<core_text::font::CTFont> {
+    use core_foundation::base::TCFType;
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::number::CFNumber;
+    use core_foundation::string::CFString;
+
+    let axes =
+        CFDictionary::from_CFType_pairs(&[(CFNumber::from(tag as i64), CFNumber::from(value))]);
+    let key = unsafe {
+        CFString::wrap_under_get_rule(core_text::font_descriptor::kCTFontVariationAttribute)
+    };
+    let attrs = CFDictionary::from_CFType_pairs(&[(key, axes)]);
+    let desc = font
+        .copy_descriptor()
+        .create_copy_with_attributes(attrs.to_untyped())
+        .ok()?;
+    Some(core_text::font::new_from_descriptor(&desc, size))
+}
+
+#[cfg(target_os = "macos")]
+fn load_ct_font_from_data(
+    path: &str,
+    data: Vec<u8>,
+    index: u32,
+    size: f64,
+) -> Option<core_text::font::CTFont> {
+    use core_foundation::base::TCFType;
 
     if index == 0 {
         // Fast path: face 0 can be loaded directly via CGFont
@@ -1365,14 +1445,11 @@ fn log_cjk_font_selection(db: &fontdb::Database, id: fontdb::ID, source: &str) {
     );
 }
 
-/// Use CTFontCreateForString to let macOS pick the locale-appropriate CJK font.
-/// Sends a CJK test character ("水" U+6C34) to the system, gets back the font
-/// macOS would use, then matches it against fontdb by family name.
+/// Ask CoreText which font it would use for a CJK ideograph ("水" U+6C34).
+/// CTFontCreateForString respects the system language order, so this is
+/// PingFang SC on a Chinese system and Hiragino Sans on a Japanese one.
 #[cfg(target_os = "macos")]
-fn find_cjk_font_via_coretext(
-    db: &fontdb::Database,
-    primary: Option<fontdb::ID>,
-) -> Option<fontdb::ID> {
+fn coretext_cjk_font() -> Option<core_text::font::CTFont> {
     use core_foundation::base::TCFType;
     use core_foundation::string::CFString;
 
@@ -1385,12 +1462,11 @@ fn find_cjk_font_via_coretext(
         ) -> core_text::font::CTFontRef;
     }
 
-    // Create a base font (system default) and ask CoreText which font handles "水"
     let base_font = core_text::font::new_from_name("Menlo", 12.0).ok()?;
     let test_str = CFString::new("水");
     let range = core_foundation::base::CFRange::init(0, 1);
 
-    let ct_font = unsafe {
+    unsafe {
         let raw = CTFontCreateForString(
             base_font.as_concrete_TypeRef(),
             test_str.as_concrete_TypeRef(),
@@ -1399,8 +1475,50 @@ fn find_cjk_font_via_coretext(
         if raw.is_null() {
             return None;
         }
-        core_text::font::CTFont::wrap_under_create_rule(raw)
+        Some(core_text::font::CTFont::wrap_under_create_rule(raw))
+    }
+}
+
+/// Recent macOS ships PingFang (and other CJK system fonts) outside the
+/// directories fontdb scans, so the system's preferred CJK font never shows
+/// up in `load_system_fonts()`. Without this the lookup falls through to
+/// the hardcoded list and lands on Hiragino Sans, a Japanese font that
+/// lacks most simplified-Chinese ideographs (测, 试, …).
+#[cfg(target_os = "macos")]
+fn load_coretext_cjk_font(db: &mut fontdb::Database) {
+    let Some(ct_font) = coretext_cjk_font() else {
+        return;
     };
+    let family = ct_font.family_name();
+    let known = db.faces().any(|face| {
+        face.families
+            .iter()
+            .any(|f| f.0.eq_ignore_ascii_case(&family))
+    });
+    if known {
+        return;
+    }
+    let Some(path) = ct_font.copy_descriptor().font_path() else {
+        return;
+    };
+    match db.load_font_file(&path) {
+        Ok(()) => log::info!("CJK: loaded '{}' from {}", family, path.display()),
+        Err(e) => log::warn!(
+            "CJK: failed to load '{}' from {}: {e}",
+            family,
+            path.display()
+        ),
+    }
+}
+
+/// Use CTFontCreateForString to let macOS pick the locale-appropriate CJK font,
+/// then match it against fontdb by family name.
+#[cfg(target_os = "macos")]
+fn find_cjk_font_via_coretext(
+    db: &fontdb::Database,
+    primary: Option<fontdb::ID>,
+) -> Option<fontdb::ID> {
+    let ct_font = coretext_cjk_font()?;
 
     let family = ct_font.family_name();
     let ps_name = ct_font.postscript_name();
@@ -1409,6 +1527,16 @@ fn find_cjk_font_via_coretext(
         family,
         ps_name,
     );
+
+    // Exact PostScript name is the most precise key: it pins the weight
+    // CoreText chose, which family names in large collections don't.
+    if let Some(face) = db
+        .faces()
+        .find(|face| Some(face.id) != primary && face.post_script_name == ps_name)
+    {
+        log::info!("CJK: matched fontdb face by PostScript name '{}'", ps_name);
+        return Some(face.id);
+    }
 
     // Match the family name against fontdb
     for face in db.faces() {
@@ -1431,21 +1559,28 @@ fn find_cjk_font_via_coretext(
         }
     }
 
-    // If exact family match failed, try PostScript name substring
-    for face in db.faces() {
-        if Some(face.id) == primary || face.style != fontdb::Style::Normal {
-            continue;
-        }
-        for fam in &face.families {
-            if ps_name.contains(&fam.0) || fam.0.contains(&family) {
-                log::info!(
-                    "CJK: fuzzy matched fontdb face '{}' for system-selected '{}'",
-                    fam.0,
-                    family,
-                );
-                return Some(face.id);
-            }
-        }
+    // If exact family match failed, try PostScript name substring. Prefer
+    // the face closest to Regular: collections like PingFang list every
+    // weight under the same family, and the first hit is often Medium.
+    let fuzzy = db
+        .faces()
+        .filter(|face| Some(face.id) != primary && face.style == fontdb::Style::Normal)
+        .filter_map(|face| {
+            let fam = face
+                .families
+                .iter()
+                .find(|fam| ps_name.contains(&fam.0) || fam.0.contains(&family))?;
+            Some((face, fam))
+        })
+        .min_by_key(|(face, _)| (face.weight.0 as i32 - 400).unsigned_abs());
+    if let Some((face, fam)) = fuzzy {
+        log::info!(
+            "CJK: fuzzy matched fontdb face '{}' (weight={}) for system-selected '{}'",
+            fam.0,
+            face.weight.0,
+            family,
+        );
+        return Some(face.id);
     }
 
     log::warn!(

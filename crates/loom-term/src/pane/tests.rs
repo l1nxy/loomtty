@@ -769,7 +769,10 @@ fn capture_text_join_wrapped_merges_softwraps_but_keeps_hard_newlines() {
     // `ABCDEFGHNEXTROW` (no hard-newline-collapse) holds whether or not
     // the echo is present — alacritty does not set WRAPLINE on a cell
     // that is immediately followed by a hard `\n`.
-    let mut pane = Pane::new_with_opts(93, 8, 6, shell_path(), None, None).expect("create pane");
+    // 24 rows: on macOS the shell runs as a login shell and the system
+    // /etc/bashrc prompt (`host:~ user$`) wraps across several 8-col rows;
+    // a short grid would scroll the markers out before we capture.
+    let mut pane = Pane::new_with_opts(93, 8, 24, shell_path(), None, None).expect("create pane");
     pane.write_to_pty(b"stty -echo; printf 'LOOMWRAPMARK1234ABCDEFGH\\nNEXTROW\\n'; stty echo\n");
 
     // Wait on the join_wrapped capture: at 8 cols the shell prompt can shift

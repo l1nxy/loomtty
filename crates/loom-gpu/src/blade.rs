@@ -238,6 +238,8 @@ impl RectPipeline {
                 },
             );
             pe.bind_vertex(0, self.instance_buffer.at(0));
+            // Pane clipping is done in the shader via the uniforms above.
+            pe.set_scissor_rect(&full_viewport_scissor(viewport_w, viewport_h));
             pe.draw(0, 4, start as u32, count as u32);
         }
     }
@@ -254,6 +256,19 @@ impl RectPipeline {
 // Rendered after flat overlay backgrounds so rounded/shadowed chrome sits
 // on top of pane text, but before overlay glyphs so chrome labels stay
 // crisp on their rounded panel.
+
+/// Scissor covering the whole surface. Scissor state lives on the render
+/// encoder, not the pipeline: on Metal it persists across `pass.with(..)`
+/// pipeline switches, so a draw that follows a scissored pane-glyph batch
+/// would inherit that pane's clip unless it resets the rect itself.
+fn full_viewport_scissor(viewport_w: f32, viewport_h: f32) -> gpu::ScissorRect {
+    gpu::ScissorRect {
+        x: 0,
+        y: 0,
+        w: viewport_w as u32,
+        h: viewport_h as u32,
+    }
+}
 
 #[derive(blade_macros::ShaderData)]
 struct SdfData {
@@ -429,7 +444,14 @@ impl SdfPipeline {
     /// final glyph batch lays Overlay + transient text. Without this
     /// split the merged stream's "all rects then all glyphs" ordering
     /// lets Base glyphs bleed through Overlay backgrounds.
-    fn draw_range(&self, pass: &mut gpu::RenderCommandEncoder, start: usize, count: usize) {
+    fn draw_range(
+        &self,
+        pass: &mut gpu::RenderCommandEncoder,
+        start: usize,
+        count: usize,
+        viewport_w: f32,
+        viewport_h: f32,
+    ) {
         if count == 0 {
             return;
         }
@@ -449,6 +471,8 @@ impl SdfPipeline {
             },
         );
         pe.bind_vertex(0, self.instance_buffer.at(0));
+        // Chrome spans the whole window; don't inherit a pane glyph scissor.
+        pe.set_scissor_rect(&full_viewport_scissor(viewport_w, viewport_h));
         pe.draw(0, 4, start as u32, count as u32);
     }
 
@@ -1774,7 +1798,7 @@ impl Renderer {
             //   keeping the original draw call ordering avoids a
             //   second SDF pipeline switch.
             if base_sdf_end > 0 {
-                self.sdf.draw_range(&mut pass, 0, base_sdf_end);
+                self.sdf.draw_range(&mut pass, 0, base_sdf_end, vw_f, vh_f);
             }
             atlas_gpu.draw_alpha_batches(
                 &mut pass,
@@ -1795,8 +1819,13 @@ impl Renderer {
 
             // ── Overlay pass (full-screen modals) ────────────────────
             if base_sdf_end < overlay_sdf_end {
-                self.sdf
-                    .draw_range(&mut pass, base_sdf_end, overlay_sdf_end - base_sdf_end);
+                self.sdf.draw_range(
+                    &mut pass,
+                    base_sdf_end,
+                    overlay_sdf_end - base_sdf_end,
+                    vw_f,
+                    vh_f,
+                );
             }
             atlas_gpu.draw_alpha_batches(
                 &mut pass,
@@ -1817,8 +1846,13 @@ impl Renderer {
 
             // ── Top + transient pass (always-on-top popups) ──────────
             if overlay_sdf_end < total_sdf {
-                self.sdf
-                    .draw_range(&mut pass, overlay_sdf_end, total_sdf - overlay_sdf_end);
+                self.sdf.draw_range(
+                    &mut pass,
+                    overlay_sdf_end,
+                    total_sdf - overlay_sdf_end,
+                    vw_f,
+                    vh_f,
+                );
             }
             atlas_gpu.draw_alpha_batches(
                 &mut pass,

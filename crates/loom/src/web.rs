@@ -424,8 +424,8 @@ fn generate_token() -> Result<String> {
 }
 
 /// Locate the `loomtty-server` binary next to this executable, falling
-/// back to a bare name on `PATH`. Mirrors `connection::spawn_server`.
-fn server_exe_path() -> PathBuf {
+/// back to a bare name on `PATH`. Shared with `connection::spawn_server`.
+pub(crate) fn server_exe_path() -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_default();
     let bin = if cfg!(windows) {
         "loomtty-server.exe"

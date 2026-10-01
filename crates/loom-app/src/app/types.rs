@@ -566,6 +566,10 @@ pub enum DisconnectReason {
     InvalidTarget(String),
     /// User cancelled via Esc while connecting.
     Cancelled,
+    /// The local server this client launched exited (or hung) before it
+    /// ever accepted a connection — e.g. a config error. Retrying would
+    /// just launch another copy that fails the same way.
+    ServerStartFailed(String),
 
     // ── Transient: reconnect makes sense ──
     /// No bytes received within the startup grace window.
@@ -592,6 +596,7 @@ impl DisconnectReason {
                 | HandshakeFailed(_)
                 | InvalidTarget(_)
                 | Cancelled
+                | ServerStartFailed(_)
         )
     }
 }
@@ -609,6 +614,7 @@ impl std::fmt::Display for DisconnectReason {
             HandshakeFailed(s) => write!(f, "handshake failed: {s}"),
             InvalidTarget(s) => write!(f, "invalid target: {s}"),
             Cancelled => write!(f, "cancelled"),
+            ServerStartFailed(s) => write!(f, "local server failed to start: {s}"),
             Timeout => write!(f, "connection timed out"),
             RemoteEof => write!(f, "connection closed"),
             Other(s) => write!(f, "{s}"),

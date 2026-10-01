@@ -52,6 +52,11 @@ pub struct DaemonState {
     #[cfg(windows)]
     pipe_server: tokio::net::windows::named_pipe::NamedPipeServer,
     config: loom_config::config::LoomConfig,
+    /// True when `[web]` came from explicit `--web*` flags (`loomtty web`)
+    /// rather than the on-disk config. The gateway is then the point of the
+    /// run, so failing to start it is fatal; otherwise it is an optional
+    /// add-on and a failure only disables it.
+    web_required: bool,
 }
 
 /// Initialize the server, bind the socket, start tick loop and signal
@@ -63,6 +68,7 @@ pub struct DaemonState {
 pub async fn prepare_daemon_with(
     config_override: Option<loom_config::config::LoomConfig>,
 ) -> Result<DaemonState> {
+    let web_required = config_override.is_some();
     let config = match config_override {
         Some(c) => c,
         None => loom_config::config::LoomConfig::load()?,
@@ -236,6 +242,7 @@ pub async fn prepare_daemon_with(
         #[cfg(windows)]
         pipe_server,
         config,
+        web_required,
     })
 }
 
@@ -243,7 +250,11 @@ pub async fn prepare_daemon_with(
 pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
     let state = ds.state;
     let shutdown = ds.shutdown;
-    let server_exited = ds.server_exited;
+    // Tell the tray thread we're gone on EVERY exit path — including an
+    // early `?` — or a failed daemon leaves a live tray process behind with
+    // no listener, which clients then mistake for "not running" and
+    // respawn over.
+    let _exited_guard = SetOnDrop(ds.server_exited);
     let input_notify = ds.input_notify;
     #[cfg(unix)]
     let listener = ds.listener;
@@ -252,135 +263,58 @@ pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
     #[cfg(windows)]
     let mut pipe_server = ds.pipe_server;
 
-    // Port collision check (runtime gate; schema-level can't see across
-    // RemoteConfig and WebConfig with derive-Validate).
-    if ds.config.remote.enabled
-        && ds.config.web.enabled
-        && ds.config.remote.port == ds.config.web.port
-    {
-        anyhow::bail!(
-            "remote.port and web.port both set to {} — pick distinct ports \
-             (defaults are 7890/7891)",
-            ds.config.remote.port,
-        );
-    }
-
+    // The local socket above is the core; the remote TCP listener and the
+    // web gateway are optional add-ons. A failure to start one (typically a
+    // port another program already holds) disables just that add-on and
+    // logs why, instead of taking every local terminal down with it. The
+    // exception is an explicitly requested gateway (`loomtty web`), where
+    // the gateway is the whole point and failing loudly is correct.
     let tcp_listener = if ds.config.remote.enabled {
-        let addr = format!("127.0.0.1:{}", ds.config.remote.port);
-        let tcp = tokio::net::TcpListener::bind(&addr).await?;
-        log::warn!(
-            "loomtty-server TCP listener on {addr} (remote enabled) — \
-             WARNING: no authentication, intended for SSH tunnel use only"
-        );
-        Some(tcp)
+        match bind_remote_listener(ds.config.remote.port).await {
+            Ok(tcp) => Some(tcp),
+            Err(e) => {
+                log::error!("remote listener disabled: {e:#}");
+                None
+            }
+        }
     } else {
         None
     };
 
     // Web gateway: serve the SPA + the authenticated `/ws` upgrade on the
-    // `[web]` port via an axum app on its own task. Bound here (not in the
-    // accept loop) so a bind failure still propagates synchronously. Its
-    // graceful shutdown rides a dedicated Notify (not the master
-    // `shutdown`, whose `notify_one` would otherwise be stolen from the
-    // accept loop), triggered when this function returns by ANY path —
-    // normal shutdown, an early `?` from the accept loop, or an unwind —
-    // via the drop guard below (so the serve task can never be left
-    // waiting on `serve_shutdown.notified()`).
+    // `[web]` port via an axum app on its own task. Its graceful shutdown
+    // rides a dedicated Notify (not the master `shutdown`, whose
+    // `notify_one` would otherwise be stolen from the accept loop),
+    // triggered when this function returns by ANY path — normal shutdown,
+    // an early `?` from the accept loop, or an unwind — via the drop guard
+    // below (so the serve task can never be left waiting on
+    // `serve_shutdown.notified()`).
     let web_shutdown = Arc::new(Notify::new());
     let _web_shutdown_guard = NotifyOnDrop(web_shutdown.clone());
     if ds.config.web.enabled {
-        // `bind` has already passed schema validation (accepts empty or a
-        // parseable IpAddr) — empty means "use loopback".
-        let parsed_bind: std::net::IpAddr = if ds.config.web.bind.is_empty() {
-            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+        // Port collision check (runtime gate; schema-level can't see across
+        // RemoteConfig and WebConfig with derive-Validate).
+        let started = if ds.config.remote.enabled && ds.config.remote.port == ds.config.web.port {
+            Err(anyhow::anyhow!(
+                "remote.port and web.port are both {} — pick distinct ports",
+                ds.config.web.port,
+            ))
         } else {
-            ds.config.web.bind.parse().with_context(|| {
-                format!(
-                    "[web] bind {:?} passed config validation but failed to parse here",
-                    ds.config.web.bind,
-                )
-            })?
+            start_web_gateway(
+                &mut ds.config.web,
+                state.clone(),
+                shutdown.clone(),
+                input_notify.clone(),
+                web_shutdown.clone(),
+            )
+            .await
         };
-        // An empty allowlist is only safe on loopback (only same-host pages
-        // can reach the listener); on a non-loopback bind an unscoped
-        // allowlist invites CSRF from any page in the browser — refuse.
-        if !parsed_bind.is_loopback() && ds.config.web.allowed_origins.is_empty() {
-            anyhow::bail!(
-                "[web] bind={parsed_bind} is not loopback but allowed_origins is empty. \
-                 Add the browser origin(s) you intend to serve (e.g. \
-                 allowed_origins = [\"https://terminal.example.com\"]) before exposing \
-                 the gateway."
-            );
-        }
-        // Token: trimmed, zeroized-on-drop, refcounted. The helper enforces
-        // the 16-byte floor and strips a trailing newline so a stray one in
-        // the config does not silently break auth. `auth = "none"` (demo
-        // mode) skips the token entirely — runtime backstop mirrors the
-        // schema rule: never unauthenticated off-loopback.
-        let token = if ds.config.web.auth_disabled() {
-            if !parsed_bind.is_loopback() {
-                anyhow::bail!(
-                    "[web] auth=\"none\" requires a loopback bind (got {parsed_bind}) — \
-                     set a real token before exposing the gateway."
-                );
+        if let Err(e) = started {
+            if ds.web_required {
+                return Err(e);
             }
-            log::warn!(
-                "[web] auth=\"none\" — the gateway accepts unauthenticated connections \
-                 from anything on this host; demo/local use only"
-            );
-            None
-        } else {
-            Some(web::prepare_web_token(&ds.config.web.token)?)
-        };
-        // Construct the listener from the canonical IpAddr so the logged
-        // address and the loopback check agree on one normalised form
-        // (matters for IPv6: `::0001` and `::1` parse equal but compare as
-        // different strings).
-        let addr = std::net::SocketAddr::new(parsed_bind, ds.config.web.port);
-        let listener = tokio::net::TcpListener::bind(&addr).await?;
-        log::info!("loomtty-server web listener (HTTP + WS) on {addr}");
-        if !parsed_bind.is_loopback() {
-            log::warn!(
-                "web bind={parsed_bind} is not loopback — terminate TLS upstream \
-                 and ensure the token is rotated; the gateway speaks plain http:// + ws://"
-            );
-            // `"null"` is the Origin every sandboxed iframe, `data:` URI,
-            // `file://` page, and some redirected cross-origin request
-            // shares — on a public bind, listing it is close to "no Origin
-            // check at all" for anyone who can lure a victim into a local
-            // file.
-            if ds.config.web.allowed_origins.iter().any(|o| o == "null") {
-                log::warn!(
-                    "web allowed_origins contains \"null\" on a non-loopback bind — \
-                     this admits any sandboxed/file:// page in the user's browser; \
-                     remove it unless you intentionally accept that risk"
-                );
-            }
+            log::error!("web gateway disabled: {e:#}");
         }
-        let origins = Arc::new(ds.config.web.allowed_origins.clone());
-        let static_dir = web::resolve_static_dir(&ds.config.web.static_dir);
-        // The loaded config still holds a plaintext copy of the secret; the
-        // zeroized SharedToken now owns the live copy. Wipe the source so a
-        // core dump or post-startup memory read can't recover it from
-        // `ds.config` (best-effort: the allocator may have reused the
-        // buffer already, but it's free defense).
-        use zeroize::Zeroize;
-        ds.config.web.token.zeroize();
-        let web_state = web::WebState::new(
-            token,
-            origins,
-            state.clone(),
-            shutdown.clone(),
-            input_notify.clone(),
-        );
-        let app = web::build_router(web_state, static_dir);
-        let serve_shutdown = web_shutdown.clone();
-        // Serve the SPA + `/ws` over hyper directly (with a header-read
-        // timeout) rather than `axum::serve`, so stalled or idle pre-auth
-        // sockets can't pin accept permits. `serve_web` stops accepting when
-        // `serve_shutdown` fires (driven by the drop guard above on every
-        // exit path). See `daemon::web::serve_web`.
-        tokio::spawn(web::serve_web(listener, app, serve_shutdown));
     }
 
     loop {
@@ -508,11 +442,136 @@ pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
         }
     }
 
-    // The web server task is signalled by `_web_shutdown_guard` on the way
-    // out of this function (it fires on drop), so no explicit call here.
+    // The web server task and the tray's exit flag are both signalled by
+    // their drop guards on the way out of this function.
+    Ok(())
+}
 
-    // Signal the tray thread that the server has exited.
-    server_exited.store(true, Ordering::Relaxed);
+/// Bind the optional remote TCP listener (`[remote]`, for SSH tunnels).
+async fn bind_remote_listener(port: u16) -> Result<tokio::net::TcpListener> {
+    let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port));
+    let tcp = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| bind_error("remote.port", addr, e))?;
+    log::warn!(
+        "loomtty-server TCP listener on {addr} (remote enabled) — \
+         WARNING: no authentication, intended for SSH tunnel use only"
+    );
+    Ok(tcp)
+}
+
+/// Explain a listener bind failure in terms of the config key to change.
+/// The bare OS error ("Address already in use") names neither the port nor
+/// the setting, which is what the user actually needs.
+fn bind_error(key: &str, addr: std::net::SocketAddr, e: std::io::Error) -> anyhow::Error {
+    if e.kind() == std::io::ErrorKind::AddrInUse {
+        anyhow::anyhow!(
+            "cannot listen on {addr}: port {} is already in use by another program — \
+             free it or change `{key}`",
+            addr.port(),
+        )
+    } else {
+        anyhow::anyhow!("cannot listen on {addr} (`{key}`): {e}")
+    }
+}
+
+/// Validate `[web]`, bind its listener, and spawn the gateway task. Nothing
+/// is spawned unless every step succeeds, so a failure leaves the daemon
+/// exactly as it was.
+async fn start_web_gateway(
+    cfg: &mut loom_config::schema::WebConfig,
+    state: Arc<Mutex<Server>>,
+    shutdown: Arc<Notify>,
+    input_notify: Arc<Notify>,
+    serve_shutdown: Arc<Notify>,
+) -> Result<()> {
+    // `bind` has already passed schema validation (accepts empty or a
+    // parseable IpAddr) — empty means "use loopback".
+    let parsed_bind: std::net::IpAddr = if cfg.bind.is_empty() {
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+    } else {
+        cfg.bind.parse().with_context(|| {
+            format!(
+                "[web] bind {:?} passed config validation but failed to parse here",
+                cfg.bind,
+            )
+        })?
+    };
+    // An empty allowlist is only safe on loopback (only same-host pages
+    // can reach the listener); on a non-loopback bind an unscoped
+    // allowlist invites CSRF from any page in the browser — refuse.
+    if !parsed_bind.is_loopback() && cfg.allowed_origins.is_empty() {
+        anyhow::bail!(
+            "[web] bind={parsed_bind} is not loopback but allowed_origins is empty. \
+             Add the browser origin(s) you intend to serve (e.g. \
+             allowed_origins = [\"https://terminal.example.com\"]) before exposing \
+             the gateway."
+        );
+    }
+    // Token: trimmed, zeroized-on-drop, refcounted. The helper enforces
+    // the 16-byte floor and strips a trailing newline so a stray one in
+    // the config does not silently break auth. `auth = "none"` (demo
+    // mode) skips the token entirely — runtime backstop mirrors the
+    // schema rule: never unauthenticated off-loopback.
+    let token = if cfg.auth_disabled() {
+        if !parsed_bind.is_loopback() {
+            anyhow::bail!(
+                "[web] auth=\"none\" requires a loopback bind (got {parsed_bind}) — \
+                 set a real token before exposing the gateway."
+            );
+        }
+        log::warn!(
+            "[web] auth=\"none\" — the gateway accepts unauthenticated connections \
+             from anything on this host; demo/local use only"
+        );
+        None
+    } else {
+        Some(web::prepare_web_token(&cfg.token)?)
+    };
+    // Construct the listener from the canonical IpAddr so the logged
+    // address and the loopback check agree on one normalised form
+    // (matters for IPv6: `::0001` and `::1` parse equal but compare as
+    // different strings).
+    let addr = std::net::SocketAddr::new(parsed_bind, cfg.port);
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| bind_error("web.port", addr, e))?;
+    log::info!("loomtty-server web listener (HTTP + WS) on {addr}");
+    if !parsed_bind.is_loopback() {
+        log::warn!(
+            "web bind={parsed_bind} is not loopback — terminate TLS upstream \
+             and ensure the token is rotated; the gateway speaks plain http:// + ws://"
+        );
+        // `"null"` is the Origin every sandboxed iframe, `data:` URI,
+        // `file://` page, and some redirected cross-origin request
+        // shares — on a public bind, listing it is close to "no Origin
+        // check at all" for anyone who can lure a victim into a local
+        // file.
+        if cfg.allowed_origins.iter().any(|o| o == "null") {
+            log::warn!(
+                "web allowed_origins contains \"null\" on a non-loopback bind — \
+                 this admits any sandboxed/file:// page in the user's browser; \
+                 remove it unless you intentionally accept that risk"
+            );
+        }
+    }
+    let origins = Arc::new(cfg.allowed_origins.clone());
+    let static_dir = web::resolve_static_dir(&cfg.static_dir);
+    // The loaded config still holds a plaintext copy of the secret; the
+    // zeroized SharedToken now owns the live copy. Wipe the source so a
+    // core dump or post-startup memory read can't recover it from
+    // `cfg` (best-effort: the allocator may have reused the
+    // buffer already, but it's free defense).
+    use zeroize::Zeroize;
+    cfg.token.zeroize();
+    let web_state = web::WebState::new(token, origins, state, shutdown, input_notify);
+    let app = web::build_router(web_state, static_dir);
+    // Serve the SPA + `/ws` over hyper directly (with a header-read
+    // timeout) rather than `axum::serve`, so stalled or idle pre-auth
+    // sockets can't pin accept permits. `serve_web` stops accepting when
+    // `serve_shutdown` fires (driven by the caller's drop guard on every
+    // exit path of the accept loop). See `daemon::web::serve_web`.
+    tokio::spawn(web::serve_web(listener, app, serve_shutdown));
     Ok(())
 }
 
@@ -526,6 +585,16 @@ struct NotifyOnDrop(Arc<Notify>);
 impl Drop for NotifyOnDrop {
     fn drop(&mut self) {
         self.0.notify_one();
+    }
+}
+
+/// Sets an `AtomicBool` on drop. Raises `DaemonState::server_exited` on
+/// every exit path of the accept loop so the tray never outlives it.
+struct SetOnDrop(Arc<AtomicBool>);
+
+impl Drop for SetOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
     }
 }
 
@@ -547,5 +616,33 @@ async fn tcp_accept(
     match listener {
         Some(l) => l.accept().await,
         None => std::future::pending().await,
+    }
+}
+
+#[cfg(test)]
+mod listener_tests {
+    use super::*;
+
+    #[test]
+    fn bind_error_names_the_port_and_setting() {
+        let addr: std::net::SocketAddr = "127.0.0.1:7891".parse().unwrap();
+        let e = bind_error(
+            "web.port",
+            addr,
+            std::io::Error::from(std::io::ErrorKind::AddrInUse),
+        )
+        .to_string();
+        assert!(e.contains("127.0.0.1:7891"), "{e}");
+        assert!(e.contains("already in use"), "{e}");
+        assert!(e.contains("`web.port`"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn occupied_remote_port_is_reported_not_panicked() {
+        let holder = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = holder.local_addr().unwrap().port();
+        let e = bind_remote_listener(port).await.unwrap_err().to_string();
+        assert!(e.contains(&format!("port {port} is already in use")), "{e}");
+        assert!(e.contains("`remote.port`"), "{e}");
     }
 }

@@ -328,10 +328,12 @@ pub fn connect_or_spawn(
             format!("invalid session name: {reason}"),
         ));
     }
-    // Spawn the server if one isn't already accepting connections
-    // (non-blocking — the IO thread handles connect retry).
-    if !server_is_running() {
-        spawn_server(session_name)?;
+    // Launch the server if none is accepting connections — unless the one
+    // we already launched is still alive (starting up, or wedged): a second
+    // copy would only race it for the socket. Non-blocking; the IO thread
+    // waits for the socket below.
+    if !server_is_running() && !spawned_server_alive() {
+        spawn_server()?;
     }
 
     let (msg_tx, msg_rx) = crossbeam_channel::bounded::<ClientMessage>(256);
@@ -350,36 +352,11 @@ pub fn connect_or_spawn(
                 .build()
                 .expect("tokio runtime");
             rt.block_on(async move {
-                // Retry connecting with backoff (server may still be starting)
-                let mut connect_result = Err(io::Error::new(io::ErrorKind::ConnectionRefused, ""));
-                for attempt in 0..50 {
-                    #[cfg(unix)]
-                    {
-                        let sock_path = transport::server_socket_path();
-                        connect_result = tokio::net::UnixStream::connect(&sock_path).await;
-                    }
-                    #[cfg(windows)]
-                    {
-                        connect_result = tokio::net::windows::named_pipe::ClientOptions::new()
-                            .open(transport::server_pipe_name());
-                    }
-                    if connect_result.is_ok() {
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                    if attempt == 0 {
-                        log::debug!("waiting for server...");
-                    }
-                }
-                let connect_result = connect_result;
-
-                let stream = match connect_result {
+                let stream = match wait_for_local_server(&cancel).await {
                     Ok(s) => s,
-                    Err(e) => {
-                        log::error!("failed to connect to server: {e}");
-                        let _ = event_tx.send(ServerEvent::Disconnected(DisconnectReason::Other(
-                            format!("failed to connect to local server: {e}"),
-                        )));
+                    Err(reason) => {
+                        log::error!("failed to connect to server: {reason}");
+                        let _ = event_tx.send(ServerEvent::Disconnected(reason));
                         if let Some(ref proxy) = wake_proxy {
                             let _ = proxy.send_event(());
                         }
@@ -722,37 +699,192 @@ pub(crate) fn server_is_running() -> bool {
     }
 }
 
-fn spawn_server(_session_name: &str) -> io::Result<()> {
-    use std::process::Command;
-    // Try to find loomtty-server binary next to the current executable
-    let exe = std::env::current_exe().unwrap_or_default();
-    let server_bin = if cfg!(windows) {
-        "loomtty-server.exe"
-    } else {
-        "loomtty-server"
+/// How long to keep waiting on a server *we launched* that is still alive
+/// but not yet accepting. Startup includes resolving the login-shell
+/// environment (up to 5 s on macOS), so this must comfortably exceed that.
+const SERVER_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// How long to keep retrying a server we did not launch (or one that exited
+/// cleanly), e.g. one another client is restarting.
+const SERVER_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The server process this client launched, kept so we (a) never launch a
+/// second copy while it is still starting, (b) can tell "it exited with an
+/// error before serving anyone" (permanent — show why) from "it went away
+/// after serving us" (transient — relaunch), and (c) reap it.
+static SPAWNED_SERVER: Mutex<Option<SpawnedServer>> = Mutex::new(None);
+
+struct SpawnedServer {
+    child: std::process::Child,
+    /// File the child's stderr (its log) goes to, and its length at launch:
+    /// everything after `log_offset` belongs to this child.
+    log_path: std::path::PathBuf,
+    log_offset: u64,
+    /// Set once a connection to it succeeded.
+    served: bool,
+}
+
+enum SpawnedState {
+    /// No server of ours is pending: either we never launched one, or it
+    /// ended after having served us (a crash or a tray Quit — relaunching
+    /// is the right response).
+    None,
+    /// Ours, still running.
+    Alive,
+    /// Ours, and it exited before ever accepting a connection.
+    StartFailed(String),
+}
+
+fn spawned_server_state() -> SpawnedState {
+    let mut guard = SPAWNED_SERVER.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(spawned) = guard.as_mut() else {
+        return SpawnedState::None;
     };
-    let server_exe = exe
-        .parent()
-        .map(|p| p.join(server_bin))
-        .filter(|p| p.exists())
-        .unwrap_or_else(|| std::path::PathBuf::from(server_bin));
+    let status = match spawned.child.try_wait() {
+        Ok(None) => return SpawnedState::Alive,
+        Ok(Some(status)) => status,
+        Err(e) => {
+            log::warn!("cannot poll the server process: {e}");
+            *guard = None;
+            return SpawnedState::None;
+        }
+    };
+    let spawned = guard.take().expect("checked above");
+    if spawned.served {
+        log::warn!("server exited ({status}) after serving this client");
+        return SpawnedState::None;
+    }
+    SpawnedState::StartFailed(describe_start_failure(
+        &spawned.log_path,
+        spawned.log_offset,
+        status,
+    ))
+}
+
+fn spawned_server_alive() -> bool {
+    matches!(spawned_server_state(), SpawnedState::Alive)
+}
+
+fn mark_spawned_server_served() {
+    let mut guard = SPAWNED_SERVER.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(spawned) = guard.as_mut() {
+        spawned.served = true;
+    }
+}
+
+/// Summarise why a launched server died: the last thing it logged (usually
+/// the fatal error), plus where to find the full log.
+fn describe_start_failure(
+    log_path: &std::path::Path,
+    log_offset: u64,
+    status: std::process::ExitStatus,
+) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut output = String::new();
+    if let Ok(mut f) = std::fs::File::open(log_path)
+        && f.seek(SeekFrom::Start(log_offset)).is_ok()
+    {
+        let _ = f.take(STDERR_TAIL_CAP as u64).read_to_string(&mut output);
+    }
+    let last = output
+        .lines()
+        .map(str::trim)
+        .rfind(|l| !l.is_empty())
+        // env_logger lines start with "[<time> LEVEL target] "; the message
+        // is what matters in a one-line banner.
+        .map(|l| match (l.starts_with('['), l.find("] ")) {
+            (true, Some(i)) => &l[i + 2..],
+            _ => l,
+        })
+        .unwrap_or("no output");
+    format!("{last} ({status}; log: {})", log_path.display())
+}
+
+#[cfg(unix)]
+type LocalStream = tokio::net::UnixStream;
+#[cfg(windows)]
+type LocalStream = tokio::net::windows::named_pipe::NamedPipeClient;
+
+/// Connect to the local server socket, waiting while a server we launched
+/// is still starting. Gives up early — with a permanent reason — when that
+/// server exits or hangs, so the reconnect loop doesn't launch copy after
+/// copy of a server that can't start.
+async fn wait_for_local_server(
+    cancel: &tokio::sync::Notify,
+) -> Result<LocalStream, DisconnectReason> {
+    let started = std::time::Instant::now();
+    loop {
+        #[cfg(unix)]
+        let attempt = tokio::net::UnixStream::connect(transport::server_socket_path()).await;
+        #[cfg(windows)]
+        let attempt = tokio::net::windows::named_pipe::ClientOptions::new()
+            .open(transport::server_pipe_name());
+        let err = match attempt {
+            Ok(stream) => {
+                mark_spawned_server_served();
+                return Ok(stream);
+            }
+            Err(e) => e,
+        };
+        let waited = started.elapsed();
+        match spawned_server_state() {
+            SpawnedState::StartFailed(why) => {
+                return Err(DisconnectReason::ServerStartFailed(why));
+            }
+            SpawnedState::Alive if waited >= SERVER_START_TIMEOUT => {
+                return Err(DisconnectReason::ServerStartFailed(format!(
+                    "the server process is running but has not accepted connections \
+                     after {}s ({err})",
+                    SERVER_START_TIMEOUT.as_secs(),
+                )));
+            }
+            SpawnedState::None if waited >= SERVER_CONNECT_TIMEOUT => {
+                return Err(DisconnectReason::Other(format!(
+                    "failed to connect to local server: {err}"
+                )));
+            }
+            SpawnedState::Alive | SpawnedState::None => {}
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_millis(20)) => {}
+            _ = cancel.notified() => return Err(DisconnectReason::Cancelled),
+        }
+    }
+}
+
+fn spawn_server() -> io::Result<()> {
+    use std::process::{Command, Stdio};
+    let server_exe = crate::web::server_exe_path();
 
     // Ensure socket directory exists
     let sock_path = transport::server_socket_path();
-    if let Some(parent) = sock_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    let log_dir = sock_path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(std::env::temp_dir);
+    std::fs::create_dir_all(&log_dir)?;
+
+    // The server logs to stderr unless daemonized. Append it to the shared
+    // server log rather than discarding it: it is the only record of why a
+    // server failed to start, and `describe_start_failure` quotes it.
+    let log_path = log_dir.join("server.log");
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)?;
+    let log_offset = log.metadata().map(|m| m.len()).unwrap_or(0);
 
     log::info!("spawning server: {}", server_exe.display());
 
-    // Fork server as daemon (setsid for session independence)
+    let mut cmd = Command::new(&server_exe);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(log));
+
+    // Detach from our session/console so the server outlives the client.
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        let mut cmd = Command::new(&server_exe);
-        cmd.stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
         unsafe {
             cmd.pre_exec(|| {
                 if libc::setsid() == -1 {
@@ -761,27 +893,67 @@ fn spawn_server(_session_name: &str) -> io::Result<()> {
                 Ok(())
             });
         }
-        cmd.spawn()?;
     }
-
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        use std::process::Stdio;
-        Command::new(&server_exe)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
-            .spawn()?;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
 
+    let child = cmd.spawn()?;
+    *SPAWNED_SERVER.lock().unwrap_or_else(|e| e.into_inner()) = Some(SpawnedServer {
+        child,
+        log_path,
+        log_offset,
+        served: false,
+    });
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn start_failure_quotes_only_this_launch_and_strips_log_prefix() {
+        use std::os::unix::process::ExitStatusExt;
+        let dir = std::env::temp_dir().join(format!("loom-start-failure-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("server.log");
+        let earlier = "[2026-10-01T00:00:00Z ERROR loomtty_server] an older run's error\n";
+        std::fs::write(
+            &log,
+            format!(
+                "{earlier}[2026-10-01T00:00:01Z INFO  loomtty_server] starting\n\
+                 Error: config: web.port: port 0 is OS-assigned ephemeral\n\n"
+            ),
+        )
+        .unwrap();
+
+        let msg = describe_start_failure(
+            &log,
+            earlier.len() as u64,
+            std::process::ExitStatus::from_raw(1 << 8),
+        );
+        assert!(
+            msg.starts_with("Error: config: web.port: port 0 is OS-assigned ephemeral ("),
+            "{msg}"
+        );
+        assert!(msg.contains("exit status: 1"), "{msg}");
+        assert!(msg.contains("server.log"), "{msg}");
+
+        // A launch that logged nothing still produces a usable message.
+        let len = std::fs::metadata(&log).unwrap().len();
+        let silent = describe_start_failure(&log, len, std::process::ExitStatus::from_raw(1 << 8));
+        assert!(silent.starts_with("no output ("), "{silent}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn server_start_failure_is_permanent() {
+        assert!(DisconnectReason::ServerStartFailed("boom".into()).is_permanent());
+    }
 
     #[test]
     fn classify_dns_failure() {

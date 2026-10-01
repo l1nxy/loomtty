@@ -90,10 +90,14 @@ fn main() -> Result<()> {
     let tray_shutdown = ds.shutdown.clone();
     let server_exited = ds.server_exited.clone();
 
-    // Spawn the daemon accept loop on the tokio runtime.
+    // Spawn the daemon accept loop on the tokio runtime. Its error is handed
+    // back so the process exits non-zero — the client that spawned us tells
+    // "failed to start" apart from "user quit" by the exit status.
+    let (err_tx, err_rx) = std::sync::mpsc::channel();
     rt.spawn(async move {
         if let Err(e) = daemon::run_daemon_loop(ds).await {
-            log::error!("daemon error: {e}");
+            log::error!("daemon error: {e:#}");
+            let _ = err_tx.send(e);
         }
     });
 
@@ -102,7 +106,10 @@ fn main() -> Result<()> {
 
     // Wait for tokio tasks (graceful_shutdown) to finish before exiting.
     rt.shutdown_timeout(std::time::Duration::from_secs(10));
-    Ok(())
+    match err_rx.try_recv() {
+        Ok(e) => Err(e),
+        Err(_) => Ok(()),
+    }
 }
 
 /// Parse `--web` / `--web-port` / `--web-bind` / `--web-token` /

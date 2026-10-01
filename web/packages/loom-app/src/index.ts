@@ -13,10 +13,21 @@
 export { LoomApp, type LoomAppOptions } from "./app.js";
 export { LayoutManager, type LayoutManagerOptions } from "./layout.js";
 export {
+  encodeKey,
   encodeKeyboardEvent,
   type KeyEncoding,
   type KeyEncoderOptions,
+  type KeyModifiers,
 } from "./input.js";
+export {
+  EXTRA_KEYS_PRIMARY,
+  EXTRA_KEYS_SECONDARY,
+  MobileChrome,
+  type ExtraKey,
+  type ExtraKeyAction,
+  type MobileChromeCallbacks,
+  type MobileSnapshot,
+} from "./mobile.js";
 export {
   cellsForViewport,
   measureCellSize,

@@ -2,11 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- maximum-scale=1: the app owns zoom (pinch on the terminal resizes
+         the font + grid); a page zoom would only misalign the chrome.
+         interactive-widget: Android Chrome shrinks the layout viewport
+         with the on-screen keyboard (iOS ignores it; LoomApp tracks
+         visualViewport there). -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+    />
     <title>loomtty</title>
     <!-- PWA: installable to the home screen, dark UI chrome. -->
     <link rel="manifest" href="manifest.webmanifest" />
-    <meta name="theme-color" content="#0c0c0c" />
+    <meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#ebebe8" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
     <link rel="icon" href="icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -63,7 +73,8 @@
         min-height: 40px;
         padding: 8px 12px;
         font-family: inherit;
-        font-size: 14px;
+        /* ≥16px so iOS doesn't zoom the page when the field is focused. */
+        font-size: 16px;
         color: var(--fg, #d3d7cf);
         background: var(--bg-chip, #1f1f1f);
         border: 1px solid var(--border, #333);
@@ -86,6 +97,37 @@
       }
       .login-btn:hover {
         background: #34507a;
+      }
+      /* Light OS theme: the login card follows it too (the shared
+         chrome tokens aren't bound yet when this renders). */
+      @media (prefers-color-scheme: light) {
+        #login {
+          background: #fbfbfa;
+        }
+        .login-card {
+          background: #f2f2f0;
+          border-color: #c6c6c0;
+          box-shadow: 0 8px 40px rgba(0, 0, 0, 0.12);
+        }
+        .login-title {
+          color: #000;
+        }
+        .login-sub {
+          color: #5e5c64;
+        }
+        .login-input {
+          color: #1e2124;
+          background: #fff;
+          border-color: #c6c6c0;
+        }
+        .login-btn {
+          color: #000;
+          background: #d5e4f8;
+          border-color: #3584e4;
+        }
+        .login-btn:hover {
+          background: #c3d8f4;
+        }
       }
       .login-err {
         min-height: 1.2em;

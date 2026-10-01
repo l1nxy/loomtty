@@ -33,6 +33,32 @@ const params = new URLSearchParams(location.search);
 const requestedSession = params.get("session");
 const sessionName = requestedSession ?? AUTO_SESSION;
 
+// Phone layout: automatic (touch-first or narrow viewport) unless the
+// URL forces it — `?mobile=1` to try it on a desktop, `?mobile=0` to
+// get the desktop chrome on a tablet.
+const mobileParam = params.get("mobile");
+const mobile = mobileParam === "1" ? true : mobileParam === "0" ? false : "auto";
+
+// Font size chosen with pinch / A−/A+, remembered per browser. Storage
+// can be unavailable (private mode, blocked site data) — then we just
+// use the default and don't persist.
+const FONT_KEY = "loom.web.fontSize";
+function loadFontSize(): string | undefined {
+  try {
+    const v = Number(localStorage.getItem(FONT_KEY));
+    return Number.isFinite(v) && v >= 8 && v <= 32 ? `${v}px` : undefined;
+  } catch {
+    return undefined;
+  }
+}
+function saveFontSize(px: number): void {
+  try {
+    localStorage.setItem(FONT_KEY, String(px));
+  } catch {
+    /* not persisted — fine */
+  }
+}
+
 const statusEl = document.getElementById("status") as HTMLDivElement;
 const stateEl = statusEl.querySelector(".state") as HTMLSpanElement;
 const urlEl = statusEl.querySelector(".url") as HTMLSpanElement;
@@ -100,12 +126,17 @@ function connect(token: string): void {
   setState("connecting", "connecting…");
   renderUrl(sessionName);
 
+  const fontSize = loadFontSize();
   app = new LoomApp(rootEl, {
     url: wsUrl,
     sessionName,
     // Empty = demo gateway (`auth = "none"`): omit the token so the WS
     // URL carries no dangling `?token=`.
     ...(token.length > 0 ? { token } : {}),
+    colorScheme: "auto",
+    mobile,
+    ...(fontSize !== undefined ? { fontSize } : {}),
+    onFontSizeChange: saveFontSize,
     onOpen: () => {
       everOpened = true;
       failedReconnects = 0;

@@ -1,6 +1,10 @@
 //! Row-level text shaping: ligature detection, grapheme clustering, single-char shaping.
 
 use loom_config::schema::DisableLigatures;
+use loom_protocol::message::{
+    FLAG_HIDDEN, FLAG_WIDE_CHAR, FLAG_WIDE_CHAR_SPACER, FLAG_WRAPLINE, PackedCell,
+};
+use std::collections::HashMap;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -271,103 +275,41 @@ pub(super) fn precompute_row_shaping_into(
         if idx >= params.grid.cells.len() {
             break;
         }
-        let Some(props) =
-            CellProps::from_packed_cell_fast(&params.grid.cells[idx], params.grid.colors)
-        else {
+        // This pass only needs character/width information. Color conversion
+        // and decoration/style decoding are done when building render data.
+        let cell = &params.grid.cells[idx];
+        let flags = cell.flags_u16();
+        if flags & (FLAG_WIDE_CHAR_SPACER | FLAG_HIDDEN) != 0 {
             continue;
-        };
-        if props.is_hidden || props.ch == ' ' || props.ch == '\0' || props.ch.is_control() {
+        }
+        let ch = cell.ch();
+        let is_wide = flags & FLAG_WIDE_CHAR != 0;
+        if ch == ' ' || ch == '\0' || ch.is_control() {
             continue;
         }
         if data.skip_cols[col] {
             continue;
         }
 
-        if let Some(full_grapheme) = params.grapheme_map.get(&(idx as u32))
-            && push_shaped_grapheme(
-                params.shaper,
-                faces,
-                full_grapheme,
-                col,
-                &props,
-                0,
-                cols_usize,
-                &mut data.skip_cols,
-                &mut data.grapheme_glyphs,
-            )
-        {
+        let row_start = row * cols_usize;
+        let row_end = (row_start + cols_usize).min(params.grid.cells.len());
+        if let Some((full_grapheme, consumed)) = cell_grapheme(
+            &params.grid.cells[row_start..row_end],
+            row_start,
+            col,
+            params.grapheme_map,
+        ) && push_shaped_grapheme(
+            params.shaper,
+            faces,
+            &full_grapheme,
+            col,
+            is_wide,
+            consumed,
+            cols_usize,
+            &mut data.skip_cols,
+            &mut data.grapheme_glyphs,
+        ) {
             continue;
-        }
-
-        if is_regional_indicator(props.ch) {
-            let next_col = col + 1;
-            if next_col < cols_usize {
-                let li = row * cols_usize + next_col;
-                if li < params.grid.cells.len() {
-                    let next_ch = params.grid.cells[li].ch();
-                    if is_regional_indicator(next_ch) {
-                        let mut cluster =
-                            String::with_capacity(props.ch.len_utf8() + next_ch.len_utf8());
-                        cluster.push(props.ch);
-                        cluster.push(next_ch);
-                        if push_shaped_grapheme(
-                            params.shaper,
-                            faces,
-                            &cluster,
-                            col,
-                            &props,
-                            1,
-                            cols_usize,
-                            &mut data.skip_cols,
-                            &mut data.grapheme_glyphs,
-                        ) {
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-
-        let mut look = col + if props.is_wide { 2 } else { 1 };
-        if look < cols_usize {
-            let li = row * cols_usize + look;
-            if li < params.grid.cells.len() {
-                let next_ch = params.grid.cells[li].ch();
-                if is_combining_or_modifier(next_ch) {
-                    let mut cluster = String::new();
-                    cluster.push(props.ch);
-                    cluster.push(next_ch);
-                    look += 1;
-                    let mut consumed = 1usize;
-                    while look < cols_usize {
-                        let li = row * cols_usize + look;
-                        if li >= params.grid.cells.len() {
-                            break;
-                        }
-                        let next_ch = params.grid.cells[li].ch();
-                        if is_combining_or_modifier(next_ch) {
-                            cluster.push(next_ch);
-                            consumed += 1;
-                            look += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    if push_shaped_grapheme(
-                        params.shaper,
-                        faces,
-                        &cluster,
-                        col,
-                        &props,
-                        consumed,
-                        cols_usize,
-                        &mut data.skip_cols,
-                        &mut data.grapheme_glyphs,
-                    ) {
-                        continue;
-                    }
-                }
-            }
         }
 
         if *covered {
@@ -378,8 +320,8 @@ pub(super) fn precompute_row_shaping_into(
             // run shape can't see.
             continue;
         }
-        if let Some((gid, fid)) = params.shaper.shape_char_with_fallback(props.ch, faces) {
-            data.char_glyphs.push((col, gid, fid, props.is_wide));
+        if let Some((gid, fid)) = params.shaper.shape_char_with_fallback(ch, faces) {
+            data.char_glyphs.push((col, gid, fid, is_wide));
         }
     }
 
@@ -390,13 +332,71 @@ pub(super) fn precompute_row_shaping_into(
     data.char_glyphs.sort_by_key(|(col, ..)| *col);
 }
 
+/// Reassemble one grapheme from the terminal's character-width cells and
+/// their zero-width overflow. A ZWJ can live on a separate modifier cell;
+/// shaping the first cell's overflow alone would accept an incomplete emoji.
+/// The returned count covers all trailing columns, including wide spacers.
+fn cell_grapheme(
+    row: &[PackedCell],
+    row_start: usize,
+    col: usize,
+    extras: &HashMap<u32, String>,
+) -> Option<(String, usize)> {
+    let base = row.get(col)?;
+    let width = |cell: &PackedCell| {
+        if cell.flags_u16() & FLAG_WIDE_CHAR != 0 {
+            2
+        } else {
+            1
+        }
+    };
+    let first_end = col + width(base);
+    let overflow = extras.get(&((row_start + col) as u32));
+    let next_ch = row.get(first_end).map(PackedCell::ch);
+    // Keep ordinary ASCII/CJK rows allocation-free. Adjacent base characters
+    // only join when an overflow/modifier/RI supplies the grapheme boundary.
+    if overflow.is_none()
+        && !next_ch.is_some_and(|next| {
+            is_combining_or_modifier(next)
+                || (is_regional_indicator(base.ch()) && is_regional_indicator(next))
+        })
+    {
+        return None;
+    }
+    let mut cluster = overflow.cloned().unwrap_or_else(|| base.ch().to_string());
+    let mut end = first_end;
+    let style_mask = !(FLAG_WIDE_CHAR | FLAG_WIDE_CHAR_SPACER | FLAG_WRAPLINE);
+    while let Some(next) = row.get(end) {
+        // Never consume hidden text, a style boundary, or another row.
+        if next.flags_u16() & FLAG_WIDE_CHAR_SPACER != 0
+            || next.flags_u16() & style_mask != base.flags_u16() & style_mask
+            || next.fg != base.fg
+            || next.bg != base.bg
+        {
+            break;
+        }
+        let previous_len = cluster.len();
+        if let Some(text) = extras.get(&((row_start + end) as u32)) {
+            cluster.push_str(text);
+        } else {
+            cluster.push(next.ch());
+        }
+        if cluster.graphemes(true).nth(1).is_some() {
+            cluster.truncate(previous_len);
+            break;
+        }
+        end += width(next);
+    }
+    (cluster.chars().nth(1).is_some()).then_some((cluster, end - first_end))
+}
+
 #[allow(clippy::too_many_arguments)] // Clippy 1.94: shaping fallback threads explicit cell/run context.
 fn push_shaped_grapheme(
     shaper: &TextShaper,
     faces: &FaceSet<'_>,
     cluster: &str,
     col: usize,
-    props: &CellProps,
+    is_wide: bool,
     consumed_cols: usize,
     cols_usize: usize,
     skip_cols: &mut [bool],
@@ -408,8 +408,8 @@ fn push_shaped_grapheme(
     let Some((gid, fid)) = shaper.shape_grapheme_with_fallback(cluster, faces) else {
         return false;
     };
-    grapheme_glyphs.push((col, gid, fid, grapheme_display_cols(cluster, props.is_wide)));
-    let start = col + if props.is_wide { 2 } else { 1 };
+    grapheme_glyphs.push((col, gid, fid, grapheme_display_cols(cluster, is_wide)));
+    let start = col + if is_wide { 2 } else { 1 };
     for k in 0..consumed_cols {
         let c = start + k;
         if c < cols_usize {
@@ -462,7 +462,77 @@ fn grapheme_display_cols(cluster: &str, fallback_wide: bool) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::grapheme_display_cols;
+    use super::{cell_grapheme, grapheme_display_cols};
+    use loom_protocol::message::{
+        FLAG_HIDDEN, FLAG_WIDE_CHAR, FLAG_WIDE_CHAR_SPACER, FLAG_WRAPLINE, PackedCell, PackedColor,
+    };
+    use std::collections::HashMap;
+
+    fn wide_row(chars: &str) -> Vec<PackedCell> {
+        chars
+            .chars()
+            .flat_map(|ch| {
+                let mut cell = PackedCell::with_ch(ch);
+                cell.flags = FLAG_WIDE_CHAR.to_le_bytes();
+                let mut spacer = PackedCell::default();
+                spacer.flags = FLAG_WIDE_CHAR_SPACER.to_le_bytes();
+                [cell, spacer]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn cell_grapheme_collects_all_zwj_members_and_wide_spacers() {
+        let mut row = wide_row("👨👩👧👦");
+        row.push(PackedCell::with_ch('A'));
+        let extras = HashMap::from([(20, "👨‍".into()), (22, "👩‍".into()), (24, "👧‍".into())]);
+        assert_eq!(cell_grapheme(&row, 20, 0, &extras), Some(("👨‍👩‍👧‍👦".into(), 6)));
+        assert_eq!(cell_grapheme(&row, 20, 8, &extras), None);
+    }
+
+    #[test]
+    fn cell_grapheme_keeps_regional_indicator_pairs_separate() {
+        let mut row: Vec<_> = "🇺🇸🇨🇳X".chars().map(PackedCell::with_ch).collect();
+        row[3].flags = FLAG_WRAPLINE.to_le_bytes();
+        assert_eq!(
+            cell_grapheme(&row, 0, 0, &HashMap::new()),
+            Some(("🇺🇸".into(), 1))
+        );
+        assert_eq!(
+            cell_grapheme(&row, 0, 2, &HashMap::new()),
+            Some(("🇨🇳".into(), 1))
+        );
+    }
+
+    #[test]
+    fn cell_grapheme_does_not_consume_hidden_or_differently_styled_cells() {
+        let mut row = wide_row("👩💻");
+        let extras = HashMap::from([(0, "👩‍".into())]);
+        row[2].flags = (FLAG_WIDE_CHAR | FLAG_HIDDEN).to_le_bytes();
+        assert_eq!(cell_grapheme(&row, 0, 0, &extras), Some(("👩‍".into(), 0)));
+        row[2].flags = FLAG_WIDE_CHAR.to_le_bytes();
+        row[2].fg = PackedColor::rgb(255, 0, 0);
+        assert_eq!(cell_grapheme(&row, 0, 0, &extras), Some(("👩‍".into(), 0)));
+        assert_eq!(
+            cell_grapheme(&row[..2], 0, 0, &extras),
+            Some(("👩‍".into(), 0))
+        );
+    }
+
+    #[test]
+    fn cell_grapheme_retains_single_cell_accents_and_keycaps() {
+        let row: Vec<_> = "e1X".chars().map(PackedCell::with_ch).collect();
+        let extras = HashMap::from([(10, "e\u{301}".into()), (11, "1\u{fe0f}\u{20e3}".into())]);
+        assert_eq!(
+            cell_grapheme(&row, 10, 0, &extras),
+            Some(("e\u{301}".into(), 0))
+        );
+        assert_eq!(
+            cell_grapheme(&row, 10, 1, &extras),
+            Some(("1\u{fe0f}\u{20e3}".into(), 0))
+        );
+        assert_eq!(cell_grapheme(&row, 10, 2, &extras), None);
+    }
 
     #[test]
     fn grapheme_display_cols_keeps_emoji_clusters_wide() {

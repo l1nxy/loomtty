@@ -21,7 +21,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.1"
 edition = "2024"
 license = "AGPL-3.0-only"
 
@@ -69,6 +69,7 @@ base64 = "0.22"
 winnow = "0.7"
 percent-encoding = "2"
 colorsys = "0.6"
+twox-hash = { version = "2", default-features = false, features = ["xxhash64"] }
 rustybuzz = "0.20"
 unicode-segmentation = "1.11"
 taffy = "0.7"

@@ -118,6 +118,11 @@ pub struct PackedCell {
 
 impl PackedCell {
     pub fn ch(&self) -> char {
+        // Normal ASCII cells are zero-padded. Check all four bytes so a
+        // malformed trailing byte still takes the validating UTF-8 path.
+        if u32::from_le_bytes(self.ch_bytes) < 0x80 {
+            return self.ch_bytes[0] as char;
+        }
         let s = std::str::from_utf8(&self.ch_bytes).unwrap_or("\0");
         s.chars().next().unwrap_or('\0')
     }
@@ -531,6 +536,13 @@ pub enum ClientMessage {
         from_offset: u32,
         direction: i8,
     },
+    /// Atomically focus a specific pane and split beside it. The reply is
+    /// correlated to the requesting client, even with concurrent clients.
+    CreatePaneAt {
+        pane_id: u64,
+        below: bool,
+        request_id: u64,
+    },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -659,6 +671,12 @@ pub enum ServerMessage {
     /// `ClientPaneGrid::scroll_offset` (lines into history from the live
     /// bottom).
     SetScrollOffset { pane_id: u64, offset: u32 },
+    /// Completion of CreatePaneAt, sent only to the requesting client.
+    PaneCreationResult {
+        request_id: u64,
+        pane_id: Option<u64>,
+        error: Option<String>,
+    },
 }
 
 /// Direction of the edge bounce.
@@ -866,13 +884,9 @@ pub struct PaneFrameMeta {
     pub cursor_shape: u8,
     /// Terminal mode flags (mouse mode, alt screen, kitty keyboard levels, etc.)
     pub mode_flags: u16,
-    /// Highest input_seq the server has *received* for this pane, regardless of
-    /// whether the PTY has produced output yet. Bumped synchronously inside
-    /// `handle_input`. Used by the client to validate cursor predictions early
-    /// (Overwatch/Quake-style packet-level ack) — particularly the case where
-    /// the shell silently rejects a Backspace at the prompt boundary, producing
-    /// no PTY output. Without this, late_ack never advances and a hold-Backspace
-    /// session predicts unboundedly past column 0.
+    /// Highest input_seq the server has received for this pane. Receipt does
+    /// not prove that the shell has processed the input; in particular an
+    /// unchanged cursor here cannot distinguish a delayed from a rejected edit.
     pub received_ack: u64,
     /// Highest input_seq that has been *late-acked* — i.e. the PTY has drained
     /// output following that input. Used to validate cell predictions, since
@@ -1161,6 +1175,29 @@ mod tests {
         let decoded: &PackedCell = bytemuck::from_bytes(bytes);
         assert_eq!(decoded.ch(), '中');
         assert_eq!(decoded.fg, PackedColor::indexed(196));
+    }
+
+    #[test]
+    fn packed_cell_ascii_fast_path_preserves_utf8_validation() {
+        let mut cell = PackedCell::default();
+        for first in 0..=u8::MAX {
+            for second in [0, b'A', 0x80, 0xc2, 0xff] {
+                for third in [0, b'A', 0x80, 0xc2, 0xff] {
+                    for fourth in [0, b'A', 0x80, 0xc2, 0xff] {
+                        cell.ch_bytes = [first, second, third, fourth];
+                        let expected = std::str::from_utf8(&cell.ch_bytes)
+                            .ok()
+                            .and_then(|s| s.chars().next())
+                            .unwrap_or('\0');
+                        assert_eq!(cell.ch(), expected, "{:x?}", cell.ch_bytes);
+                    }
+                }
+            }
+        }
+        for ch in ['\0', ' ', 'A', '\u{7f}', 'é', '中', '😀', '\u{10ffff}'] {
+            cell.set_ch(ch);
+            assert_eq!(cell.ch(), ch);
+        }
     }
 
     #[test]

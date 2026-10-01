@@ -19,6 +19,10 @@ use loom_render::glyph_cache::{GlyphCache, GlyphInstance, PaneGlyphRange, Pendin
 use loom_render::rect::{PaneRectRange, Rect};
 use loom_render::sdf_rect::SdfRect;
 
+#[cfg(test)]
+#[path = "blade_atlas_tests.rs"]
+mod atlas_tests;
+
 /// Upper bound on SDF chrome rects per frame. Chrome typically has
 /// ≤ 20 — 256 gives headroom for plugin UIs and modal stacks. If this is
 /// hit the tail is dropped; matches the existing `RectPipeline` behaviour.
@@ -39,6 +43,7 @@ const MAX_RECT_PANE_RANGES: usize = 256;
 const RECT_UNIFORM_RECORD_SIZE: u64 = 48;
 const GLYPH_UNIFORM_RECORD_SIZE: u64 = 64;
 const BLADE_UNIFORM_STRIDE: u64 = 256;
+const INITIAL_GLYPH_UNIFORM_SLOTS: usize = 16;
 
 // ─── Rect pipeline ──────────────────────────────────────────────────
 
@@ -500,10 +505,11 @@ struct AtlasLayer {
     pipeline: gpu::RenderPipeline,
     instance_buffer: gpu::Buffer,
     uniform_buffer: gpu::Buffer,
-    staging_buffer: gpu::Buffer,
+    staging_buffer: Option<gpu::Buffer>,
+    staging_capacity: u64,
+    uniform_capacity: usize,
     /// Bytes per pixel (1 for R8Unorm, 4 for Rgba8UnormSrgb).
     bpp: u32,
-    atlas_size: u32,
     /// Packed blending flags: bit 0 = use_linear_blending, bit 1 = use_linear_correction.
     blending_flags: u32,
 }
@@ -547,7 +553,9 @@ impl AtlasLayer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: gpu::TextureDimension::D2,
-            usage: gpu::TextureUsage::RESOURCE | gpu::TextureUsage::COPY,
+            usage: gpu::TextureUsage::RESOURCE
+                | gpu::TextureUsage::COPY
+                | gpu::TextureUsage::TARGET,
             external: None,
         });
         let texture_view = context.create_texture_view(
@@ -570,7 +578,7 @@ impl AtlasLayer {
 
         let uniform_buffer = context.create_buffer(gpu::BufferDesc {
             name: "glyph_viewport_uniform",
-            size: BLADE_UNIFORM_STRIDE * max_instances.max(1) as u64,
+            size: BLADE_UNIFORM_STRIDE * INITIAL_GLYPH_UNIFORM_SLOTS as u64,
             memory: gpu::Memory::Shared,
         });
 
@@ -579,13 +587,6 @@ impl AtlasLayer {
             name: "glyph_instance_buffer",
             size: buf_size,
             memory: gpu::Memory::Shared,
-        });
-
-        let staging_size = (atlas_size * atlas_size * bpp) as u64;
-        let staging_buffer = context.create_buffer(gpu::BufferDesc {
-            name: "glyph_staging",
-            size: staging_size,
-            memory: gpu::Memory::Upload,
         });
 
         let shader = context.create_shader(gpu::ShaderDesc {
@@ -623,115 +624,116 @@ impl AtlasLayer {
             pipeline,
             instance_buffer,
             uniform_buffer,
-            staging_buffer,
+            staging_buffer: None,
+            staging_capacity: 0,
+            uniform_capacity: INITIAL_GLYPH_UNIFORM_SLOTS,
             bpp,
-            atlas_size,
             blending_flags: cfg.blending_flags,
         }
     }
 
-    /// Flush pending uploads to GPU via staging buffer + transfer commands.
+    /// Grow draw uniforms by batch count, not glyph count. The caller must
+    /// wait for the previous submission before replacing any shared buffer.
+    fn ensure_uniform_capacity(&mut self, context: &gpu::Context, needed: usize) {
+        if needed <= self.uniform_capacity {
+            return;
+        }
+        let capacity = needed.next_power_of_two();
+        let buffer = context.create_buffer(gpu::BufferDesc {
+            name: "glyph_viewport_uniform",
+            size: BLADE_UNIFORM_STRIDE * capacity as u64,
+            memory: gpu::Memory::Shared,
+        });
+        context.destroy_buffer(std::mem::replace(&mut self.uniform_buffer, buffer));
+        self.uniform_capacity = capacity;
+    }
+
+    fn clear(&self, encoder: &mut gpu::CommandEncoder) {
+        // Use the GPU's clear operation. A CPU zero upload would need an
+        // atlas-sized allocation, and must not share bytes with glyph uploads
+        // recorded in the same submission (both copies execute later).
+        let _pass = encoder.render(
+            "glyph_clear",
+            gpu::RenderTargetSet {
+                colors: &[gpu::RenderTarget {
+                    view: self.texture_view,
+                    init_op: gpu::InitOp::Clear(gpu::TextureColor::TransparentBlack),
+                    finish_op: gpu::FinishOp::Store,
+                }],
+                depth_stencil: None,
+            },
+        );
+    }
+
+    /// Upload all pending glyphs in this submission. Size staging storage for
+    /// the actual payload; don't keep a full copy of both atlases in RAM.
+    /// Called only after the previous submission has completed.
     fn flush_uploads(
-        &self,
+        &mut self,
         context: &gpu::Context,
         encoder: &mut gpu::CommandEncoder,
         pending_uploads: &mut Vec<PendingUpload>,
         pending_clear: bool,
     ) {
         if pending_clear {
-            let zeros_size = (self.atlas_size as u64)
-                .saturating_mul(self.atlas_size as u64)
-                .saturating_mul(self.bpp as u64) as usize;
-            unsafe {
-                ptr::write_bytes(self.staging_buffer.data(), 0, zeros_size);
-            }
-            context.sync_buffer(self.staging_buffer);
-            {
-                let mut transfer = encoder.transfer("glyph_clear");
-                transfer.copy_buffer_to_texture(
-                    self.staging_buffer.at(0),
-                    self.atlas_size.saturating_mul(self.bpp),
-                    gpu::TexturePiece {
-                        texture: self.texture,
-                        mip_level: 0,
-                        array_layer: 0,
-                        origin: [0, 0, 0],
-                    },
-                    gpu::Extent {
-                        width: self.atlas_size,
-                        height: self.atlas_size,
-                        depth: 1,
-                    },
-                );
-            }
+            self.clear(encoder);
         }
-
         if pending_uploads.is_empty() {
             return;
         }
 
-        let staging_capacity = (self.atlas_size as u64)
-            .saturating_mul(self.atlas_size as u64)
-            .saturating_mul(self.bpp as u64);
-
-        // Two-phase: first measure how many items fit in the staging
-        // buffer and copy their payloads; then `drain(..fit_count)` so
-        // the tail remains in `pending_uploads` for the next frame.
-        // Previous code used `drain(..)` with a break on overflow, which
-        // silently dropped the unissued tail and left those glyph slots
-        // blank in the atlas.
-        let mut cursor: u64 = 0;
-        let mut fit_count = 0usize;
-
-        for upload in pending_uploads.iter() {
-            let row_bytes = (upload.w as u64).saturating_mul(self.bpp as u64);
-            let total_bytes = row_bytes.saturating_mul(upload.h as u64);
-
-            if cursor + total_bytes > staging_capacity {
-                log::warn!(
-                    "staging buffer overflow, deferring {} glyph uploads to next frame",
-                    pending_uploads.len() - fit_count,
-                );
-                break;
+        // Vulkan requires buffer-to-texture offsets to be 4-byte aligned,
+        // including R8 glyphs with an odd number of pixels.
+        let upload_size = |upload: &PendingUpload| {
+            let bytes = u64::from(upload.w) * u64::from(upload.h) * u64::from(self.bpp);
+            (bytes + 3) & !3
+        };
+        let needed = pending_uploads.iter().map(upload_size).sum::<u64>();
+        if needed > self.staging_capacity {
+            let capacity = needed.next_power_of_two().max(64 * 1024);
+            let buffer = context.create_buffer(gpu::BufferDesc {
+                name: "glyph_staging",
+                size: capacity,
+                memory: gpu::Memory::Upload,
+            });
+            if let Some(old) = self.staging_buffer.replace(buffer) {
+                context.destroy_buffer(old);
             }
-
-            unsafe {
-                ptr::copy_nonoverlapping(
-                    upload.data.as_ptr(),
-                    self.staging_buffer.data().add(cursor as usize),
-                    total_bytes as usize,
-                );
-            }
-            cursor += total_bytes;
-            fit_count += 1;
+            self.staging_capacity = capacity;
         }
-
-        context.sync_buffer(self.staging_buffer);
-
-        let mut offset: u64 = 0;
-        for upload in pending_uploads.drain(..fit_count) {
-            let row_bytes = (upload.w as u64).saturating_mul(self.bpp as u64);
-            let total_bytes = row_bytes.saturating_mul(upload.h as u64);
-
-            {
-                let mut transfer = encoder.transfer("glyph_upload");
-                transfer.copy_buffer_to_texture(
-                    self.staging_buffer.at(offset),
-                    row_bytes as u32,
-                    gpu::TexturePiece {
-                        texture: self.texture,
-                        mip_level: 0,
-                        array_layer: 0,
-                        origin: [upload.x, upload.y, 0],
-                    },
-                    gpu::Extent {
-                        width: upload.w,
-                        height: upload.h,
-                        depth: 1,
-                    },
-                );
+        let Some(staging) = self.staging_buffer else {
+            return;
+        };
+        let mut cursor = 0;
+        for upload in pending_uploads.iter() {
+            let bytes = (u64::from(upload.w) * u64::from(upload.h) * u64::from(self.bpp)) as usize;
+            assert_eq!(upload.data.len(), bytes, "invalid glyph upload size");
+            unsafe {
+                ptr::copy_nonoverlapping(upload.data.as_ptr(), staging.data().add(cursor), bytes);
             }
-            offset += total_bytes;
+            cursor += upload_size(upload) as usize;
+        }
+        context.sync_buffer(staging);
+
+        let mut offset = 0;
+        let mut transfer = encoder.transfer("glyph_upload");
+        for upload in pending_uploads.drain(..) {
+            transfer.copy_buffer_to_texture(
+                staging.at(offset),
+                upload.w * self.bpp,
+                gpu::TexturePiece {
+                    texture: self.texture,
+                    mip_level: 0,
+                    array_layer: 0,
+                    origin: [upload.x, upload.y, 0],
+                },
+                gpu::Extent {
+                    width: upload.w,
+                    height: upload.h,
+                    depth: 1,
+                },
+            );
+            offset += upload_size(&upload);
         }
     }
 
@@ -758,7 +760,6 @@ impl AtlasLayer {
     fn write_uniform(
         &self,
         slot: usize,
-        max_instances: usize,
         viewport_w: f32,
         viewport_h: f32,
         pane_origin: [f32; 2],
@@ -768,7 +769,7 @@ impl AtlasLayer {
         let offset = slot as u64 * BLADE_UNIFORM_STRIDE;
         debug_assert!(
             offset + GLYPH_UNIFORM_RECORD_SIZE
-                <= BLADE_UNIFORM_STRIDE * max_instances.max(1) as u64
+                <= BLADE_UNIFORM_STRIDE * self.uniform_capacity as u64
         );
         let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
         let flags = self.blending_flags;
@@ -807,12 +808,11 @@ impl AtlasLayer {
             let start = (batch.start as usize).min(count);
             let end = start.saturating_add(batch.count as usize).min(count);
             let (x, y, w, h) = batch.scissor;
-            if start >= end || w == 0 || h == 0 || *uniform_slot >= max_instances {
+            if start >= end || w == 0 || h == 0 || *uniform_slot >= self.uniform_capacity {
                 continue;
             }
             let uniform_offset = self.write_uniform(
                 *uniform_slot,
-                max_instances,
                 viewport_w,
                 viewport_h,
                 batch.pane_origin,
@@ -845,7 +845,9 @@ impl AtlasLayer {
         context.destroy_render_pipeline(&mut self.pipeline);
         context.destroy_buffer(self.instance_buffer);
         context.destroy_buffer(self.uniform_buffer);
-        context.destroy_buffer(self.staging_buffer);
+        if let Some(buffer) = self.staging_buffer.take() {
+            context.destroy_buffer(buffer);
+        }
         context.destroy_texture_view(self.texture_view);
         context.destroy_sampler(self.sampler);
         context.destroy_texture(self.texture);
@@ -1169,15 +1171,9 @@ impl GlyphAtlasGpu {
         }
     }
 
-    /// Flush pending glyph uploads from the cache to GPU.
-    ///
-    /// If the per-layer staging buffer can't fit every pending upload in
-    /// one frame, the tails stay in `alpha_pending` / `color_pending`
-    /// after `flush_uploads` returns; those tails are pushed back into
-    /// the cache via `restore_pending` so the next frame retries them
-    /// instead of dropping the glyphs on the floor.
+    /// Flush every pending upload; staging storage grows to fit the payload.
     pub fn flush_uploads(
-        &self,
+        &mut self,
         context: &gpu::Context,
         encoder: &mut gpu::CommandEncoder,
         cache: &mut GlyphCache,
@@ -1194,6 +1190,8 @@ impl GlyphAtlasGpu {
     pub fn init_textures(&self, encoder: &mut gpu::CommandEncoder) {
         encoder.init_texture(self.alpha.texture);
         encoder.init_texture(self.color.texture);
+        self.alpha.clear(encoder);
+        self.color.clear(encoder);
     }
 
     /// Upload alpha glyph instances. Called once per frame.
@@ -1538,6 +1536,22 @@ impl Renderer {
             }
         };
 
+        // Do not overwrite or replace buffers while the GPU still owns them.
+        // Keep last_sync so the next frame retries the same fence.
+        if !gpu_idle {
+            return;
+        }
+        // Each layer draws inactive panes, active panes, then three chrome
+        // ranges (base, overlay, top). Every draw needs its own uniform slot.
+        atlas_gpu.alpha.ensure_uniform_capacity(
+            &self.context,
+            scene.glyph_batches.len() + scene.active_glyph_batches.len() + 3,
+        );
+        atlas_gpu.color.ensure_uniform_capacity(
+            &self.context,
+            scene.color_glyph_batches.len() + scene.active_color_glyph_batches.len() + 3,
+        );
+
         let (vw, vh) = self.surface_size();
         let vw_f = vw as f32;
         let vh_f = vh as f32;
@@ -1585,9 +1599,7 @@ impl Renderer {
             all_bg.extend_from_slice(scene.bg_rects);
             let active_bg_idx = 1 + scene.active_bg_start;
             let overlay_bg_idx = 1 + scene.overlay_bg_start;
-            if gpu_idle {
-                self.rects.ensure_capacity(&self.context, all_bg.len());
-            }
+            self.rects.ensure_capacity(&self.context, all_bg.len());
             let total_bg = all_bg.len().min(self.rects.max_rects);
             self.rects.upload(&all_bg, vw_f, vh_f);
             let mut all_bg_ranges = Vec::with_capacity(1 + scene.bg_rect_ranges.len());

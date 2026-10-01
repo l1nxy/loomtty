@@ -12,6 +12,64 @@ impl Server {
         responses: &mut Vec<ServerResponse>,
     ) {
         match msg {
+            ClientMessage::CreatePaneAt {
+                pane_id,
+                below,
+                request_id,
+            } => {
+                let result = if let Some(mut session) = self.sessions.remove(session_name) {
+                    let result = if !session.focus_pane(pane_id) {
+                        Err("The target pane no longer exists".to_string())
+                    } else {
+                        let result = if below {
+                            session.create_tile_in_active_column(
+                                &mut self.next_pane_id,
+                                &mut self.clients,
+                            )
+                        } else {
+                            session.create_pane(&mut self.next_pane_id, &mut self.clients)
+                        };
+                        result
+                            .inspect(|&id| {
+                                Self::create_pane_and_sync_layout(
+                                    &mut session,
+                                    &mut self.clients,
+                                    session_name,
+                                    id,
+                                    responses,
+                                );
+                            })
+                            .map_err(|error| {
+                                // Focusing the target changed the layout even
+                                // if PTY allocation failed; keep clients in sync.
+                                Self::layout_changed(
+                                    &mut session,
+                                    &mut self.clients,
+                                    session_name,
+                                    true,
+                                    responses,
+                                );
+                                error.to_string()
+                            })
+                    };
+                    self.sessions.insert(session_name.to_string(), session);
+                    result
+                } else {
+                    Err("The target session no longer exists".to_string())
+                };
+                let (pane_id, error) = match result {
+                    Ok(id) => (Some(id), None),
+                    Err(error) => (None, Some(error)),
+                };
+                responses.push(ServerResponse::SendToClient(
+                    client_id,
+                    ServerMessage::PaneCreationResult {
+                        request_id,
+                        pane_id,
+                        error,
+                    },
+                ));
+            }
             ClientMessage::CreatePane => {
                 if let Some(mut session) = self.sessions.remove(session_name) {
                     match session.create_pane(&mut self.next_pane_id, &mut self.clients) {

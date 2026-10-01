@@ -18,6 +18,7 @@ unicode-segmentation = { workspace = true }
 unicode-width = "0.2"
 unicode-properties = "0.1"
 ttf-parser = "0.25"
+twox-hash = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 crossfont = { workspace = true }

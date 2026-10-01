@@ -1,0 +1,17 @@
+import sys,subprocess
+from pathlib import Path
+sys.path.insert(0,'/Users/linxy/.codex/worktrees/5306/loomtty/bench')
+import macos_bench as b
+original=b.measure_phase
+def profile(directory,processes,sequence,command,timeout):
+    profilers=[]
+    if command['name'] in ('tui_full','tui_partial'):
+        for p in processes:
+            profilers.append(subprocess.Popen(['sample',str(p.pid),'10','1','-file',str(directory/f"{command['name']}-{p.label}.sample.txt")],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL))
+    result=original(directory,processes,sequence,command,timeout)
+    for p in profilers:
+        p.wait(timeout=15)
+    return result
+b.measure_phase=profile
+sys.argv=['macos_bench.py','--apps','loomtty','--rounds','1','--mib','.25','--frames','1200','--latency-samples','20','--idle-seconds','.5','--loom-height','496','--output','/tmp/loom-cpu-profile-02-20260930']
+raise SystemExit(b.main())

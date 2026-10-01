@@ -47,7 +47,7 @@ impl App {
         }
     }
 
-    fn sanitize_overlay_input(text: &str) -> Option<String> {
+    pub(super) fn sanitize_overlay_input(text: &str) -> Option<String> {
         let mut normalized = String::with_capacity(text.len());
         let mut pending_space = false;
 
@@ -523,6 +523,11 @@ impl App {
             return;
         }
 
+        self.handle_text_paste(text);
+    }
+
+    /// Common text path for clipboard and native Services paste results.
+    pub(crate) fn handle_text_paste(&mut self, text: String) {
         if self.queue_overlay_paste(&text) {
             log::info!("clipboard paste routed to overlay flow");
             return;
@@ -757,6 +762,8 @@ impl App {
                         None
                     };
                 let old_cursor_row = grid.cursor_line;
+                let old_prediction_cursor = self.core.prediction.get_overlay_cursor(pid);
+                let mut dirty_rows = self.core.prediction.dirty_rows(pid);
                 if plain_backspace {
                     self.core
                         .prediction
@@ -773,7 +780,12 @@ impl App {
                         .prediction
                         .new_user_input_with_min_ack(pid, &bytes, grid, seq);
                 }
-                let dirty_rows = self.core.prediction.dirty_rows(pid);
+                dirty_rows.extend(self.core.prediction.dirty_rows(pid));
+                if let Some((row, _)) = old_prediction_cursor
+                    && row >= 0
+                {
+                    dirty_rows.push(row as u16);
+                }
                 let predicted_cursor = self.core.prediction.get_overlay_cursor(pid);
                 if (!dirty_rows.is_empty() || predicted_cursor.is_some())
                     && let Some(grid) = self.core.pane_grids.get_mut(&pid)
@@ -924,6 +936,41 @@ mod tests {
             Some("ssh user@host")
         );
         assert!(app.core.pending_paste.is_none());
+    }
+
+    #[test]
+    fn native_text_paste_preserves_bracketing_and_large_paste_confirmation() {
+        let mut app = make_app();
+        app.core
+            .workspaces
+            .active_mut()
+            .add_column_right(42, loom_layout::column::ColumnWidth::Proportion(1.0));
+        let mut grid = crate::grid::ClientPaneGrid::new(8, 2, 0);
+        grid.mode_flags = loom_protocol::message::MODE_BRACKETED_PASTE;
+        app.core.pane_grids.insert(42, grid);
+        let (tx, rx) = crossbeam_channel::unbounded();
+        app.core.server_tx = Some(tx);
+        app.core.config.terminal.paste_warn_threshold = 100;
+        app.handle_text_paste("中e\u{301}".into());
+        match rx.try_recv().unwrap() {
+            ClientMessage::Input { pane_id, data, .. } => {
+                assert_eq!(pane_id, 42);
+                assert_eq!(data, "\x1b[200~中e\u{301}\x1b[201~".as_bytes());
+            }
+            _ => panic!("expected input"),
+        }
+        app.core.config.terminal.paste_warn_threshold = 3;
+        app.handle_text_paste("abcdef".into());
+        assert!(rx.is_empty());
+        assert_eq!(app.core.pending_paste.as_ref().unwrap().info.text, "abcdef");
+        app.confirm_pending_paste();
+        match rx.try_recv().unwrap() {
+            ClientMessage::Input { pane_id, data, .. } => {
+                assert_eq!(pane_id, 42);
+                assert_eq!(data, b"\x1b[200~abcdef\x1b[201~");
+            }
+            _ => panic!("expected confirmed input"),
+        }
     }
 
     #[test]

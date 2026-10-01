@@ -78,6 +78,34 @@ fn grid_contains(pane: &Pane, needle: &str) -> bool {
 // ── Original tests ──────────────────────────────────────────────────
 
 #[test]
+fn viewport_fingerprint_tracks_content_at_both_row_edges() {
+    use alacritty_terminal::term::cell::Flags;
+    use alacritty_terminal::vte::ansi::Color;
+
+    let mut pane = new_test_pane();
+    let initial = pane.viewport_row_fingerprint(0).unwrap();
+    assert_eq!(pane.viewport_row_fingerprint(1), Some(initial));
+    assert_eq!(pane.viewport_row_fingerprint(3), None);
+    for col in [0, 3] {
+        let point = Point::new(Line(0), Column(col));
+        let original = pane.term.grid()[point].clone();
+        for field in 0..4 {
+            let cell = &mut pane.term.grid_mut()[point];
+            match field {
+                0 => cell.c = '中',
+                1 => cell.fg = Color::Indexed(42),
+                2 => cell.bg = Color::Indexed(43),
+                _ => cell.flags.insert(Flags::BOLD | Flags::ITALIC),
+            }
+            assert_ne!(pane.viewport_row_fingerprint(0), Some(initial));
+            assert_eq!(pane.viewport_row_fingerprint(1), Some(initial));
+            pane.term.grid_mut()[point] = original.clone();
+            assert_eq!(pane.viewport_row_fingerprint(0), Some(initial));
+        }
+    }
+}
+
+#[test]
 fn set_cell_size_rounds_to_window_size_pixels() {
     let mut pane = new_test_pane();
     pane.set_cell_size(9.4, 17.6);
@@ -105,6 +133,27 @@ fn extract_damage_resets_after_read() {
         .extract_damage()
         .expect("cursor line damage remains stable after reset");
     assert_eq!(third, vec![(0, 0, 3)]);
+}
+
+#[test]
+fn grapheme_damage_tracks_combining_marks_arriving_in_later_chunks() {
+    let mut pane = new_test_pane();
+    pane.process_chunks(&[b"e".to_vec()]);
+    let plain = pane.viewport_row_fingerprint(0);
+    assert!(!pane.damage_requires_grapheme_sync(&[(0, 0, 3)]));
+
+    pane.process_chunks(&["\u{301}".as_bytes().to_vec()]);
+    assert_ne!(pane.viewport_row_fingerprint(0), plain);
+    assert!(pane.damage_requires_grapheme_sync(&[(0, 0, 0)]));
+    assert!(!pane.damage_requires_grapheme_sync(&[(0, 1, 3)]));
+    assert_eq!(
+        pane.snapshot(1).grapheme_extras.0,
+        vec![(0, "\u{301}".into())]
+    );
+
+    pane.process_chunks(&[b"\rX".to_vec()]);
+    assert!(!pane.damage_requires_grapheme_sync(&[(0, 0, 3)]));
+    assert!(pane.snapshot(2).grapheme_extras.0.is_empty());
 }
 
 #[test]

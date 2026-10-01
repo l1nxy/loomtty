@@ -13,9 +13,9 @@ use crate::app::App;
 use crate::app::loom_ui_adapter::paint_element_tree;
 use loom_ui::{Div, ElevationIndex, Styled, deferred, div, text};
 
-const HIT_DIALOG: u64 = 1;
-const HIT_PASTE: u64 = 2;
-const HIT_CANCEL: u64 = 3;
+pub(super) const HIT_DIALOG: u64 = 1;
+pub(super) const HIT_PASTE: u64 = 2;
+pub(super) const HIT_CANCEL: u64 = 3;
 
 fn paste_dialog_hit_from_id(hit_id: Option<u64>) -> UiPasteDialogHit {
     match hit_id {
@@ -57,6 +57,12 @@ impl PasteDialogComponent {
             title,
             preview,
         })
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn accessibility_layout(&self, cx: &UiContext<'_>) -> loom_ui::LayoutSnapshot {
+        let root = self.build_tree(cx);
+        super::types::with_hit_layout(&root, cx, Clone::clone)
     }
 
     pub(super) fn hit_test(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> UiPasteDialogHit {

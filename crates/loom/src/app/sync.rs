@@ -572,6 +572,16 @@ impl App {
                             needs_redraw = true;
                         }
                     }
+                    ServerEvent::Control(ServerMessage::PaneCreationResult {
+                        request_id,
+                        pane_id,
+                        error,
+                    }) => {
+                        #[cfg(target_os = "macos")]
+                        crate::macos::scripting_result(request_id, pane_id, error);
+                        #[cfg(not(target_os = "macos"))]
+                        let _ = (request_id, pane_id, error);
+                    }
                     // IPC-only responses — not relevant for the GUI client
                     ServerEvent::Control(ServerMessage::SessionInfoReply { .. })
                     | ServerEvent::Control(ServerMessage::PaneListReply { .. })
@@ -752,13 +762,40 @@ impl App {
         true
     }
 
+    #[cfg(target_os = "macos")]
+    pub(crate) fn apply_system_theme(&mut self, dark: bool) {
+        if !self.core.config.theme.follows_system() {
+            return;
+        }
+        self.core.config.theme.resolve_for_appearance(dark);
+        self.cached_color_table = loom_render::terminal::ColorTable::new(&self.core.config);
+        self.cached_resolved_theme.reload(&self.core.config.theme);
+        self.clear_render_caches();
+        for grid in self.core.pane_grids.values_mut() {
+            grid.dirty = true;
+        }
+        self.schedule_redraw();
+    }
+
     pub fn reload_config(&mut self) {
         match loom_config::config::LoomConfig::load() {
             Ok(new_config) => {
+                #[cfg(target_os = "macos")]
+                let new_config = {
+                    let mut config = new_config;
+                    if config.theme.follows_system() {
+                        config.theme.resolve_for_appearance(
+                            crate::macos::system_dark_appearance().unwrap_or(true),
+                        );
+                    }
+                    config
+                };
                 let font_changed = {
                     let old = &self.core.config.font;
                     let new = &new_config.font;
                     new.family != old.family
+                        || new.ui.as_ref().map(|ui| (&ui.family, ui.size))
+                            != old.ui.as_ref().map(|ui| (&ui.family, ui.size))
                         || (new.size - old.size).abs() > 0.01
                         || new.features != old.features
                         || new.disable_ligatures != old.disable_ligatures
@@ -779,6 +816,10 @@ impl App {
                 let background_image_changed = self.core.config.appearance.background_image
                     != new_config.appearance.background_image;
                 self.core.config = new_config;
+                #[cfg(target_os = "macos")]
+                if let Some(window) = &self.window {
+                    super::apply_macos_window_config(window, &self.core.config);
+                }
                 self.cached_color_table = loom_render::terminal::ColorTable::new(&self.core.config);
                 self.cached_resolved_theme.reload(&self.core.config.theme);
                 self.reload_input_config();
@@ -817,6 +858,41 @@ mod tests {
     /// Tests that touch the global `last-session` file must hold this lock
     /// to prevent flaky parallel failures in CI.
     static LAST_SESSION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn appearance_change_refreshes_chrome_and_explicit_choice_stops_following() {
+        let mut config = LoomConfig::default();
+        config.theme.light_preset = "loom_light".into();
+        config.theme.dark_preset = "loom_dark".into();
+        let mut app = App::new(config, "appearance-test");
+        app.apply_system_theme(false);
+        assert_eq!(app.core.config.theme.background, "#FAF8F5");
+        assert_eq!(app.cached_resolved_theme.surface, [1.0, 1.0, 1.0, 1.0]);
+        app.apply_system_theme(true);
+        assert_eq!(app.core.config.theme.background, "#1C1B1A");
+        assert_ne!(app.cached_resolved_theme.surface, [1.0, 1.0, 1.0, 1.0]);
+        app.apply_theme_preset("nord".into());
+        app.apply_system_theme(false);
+        assert_eq!(app.core.config.theme.background, "#2E3440");
+        assert!(!app.core.config.theme.follows_system());
+        assert!(app.pending_redraw);
+    }
+
+    #[test]
+    fn auxiliary_session_does_not_replace_normal_launch_preference() {
+        let _lock = LAST_SESSION_LOCK.lock().unwrap();
+        let _state_home = ScopedStateHome::new("auxiliary-session");
+        let mut app = App::new(LoomConfig::default(), "normal");
+        app.core.write_last_session();
+        app.core.remembers_last_session = false;
+        app.core.session_name = "quick-test".into();
+        app.core.write_last_session();
+        assert_eq!(
+            std::fs::read_to_string(AppModel::last_session_path()).unwrap(),
+            "normal"
+        );
+    }
 
     struct ScopedStateHome {
         path: std::path::PathBuf,

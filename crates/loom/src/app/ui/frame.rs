@@ -146,8 +146,12 @@ impl UiFrame {
     /// lowest chrome z-tier. Caller records the per-stream lengths after
     /// this returns to know the Base/Overlay split.
     pub(super) fn paint_base(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        self.top_bar.paint(self.chrome.top_bar, cx, scene);
-        self.hints_bar.paint(cx, scene);
+        if !self.chrome.top_bar.is_empty() {
+            self.top_bar.paint(self.chrome.top_bar, cx, scene);
+        }
+        if !self.chrome.hints_bar.is_empty() {
+            self.hints_bar.paint(cx, scene);
+        }
         if let (Some(tab_bar), Some(_rect)) = (&mut self.side_tab_bar, self.chrome.side_tab_bar) {
             tab_bar.paint(cx, scene);
         }
@@ -510,21 +514,25 @@ pub(crate) fn chrome_rects(
             hints_bar_h,
         ),
     };
-    let side_tab_bar = match app.core.config.tabbar.position {
-        TabBarPosition::Integrated => None,
-        TabBarPosition::Left | TabBarPosition::Right => {
-            let w = app.core.config.tabbar.width;
-            let x = match app.core.config.tabbar.position {
-                TabBarPosition::Left => 0.0,
-                TabBarPosition::Right => (vw - w).max(0.0),
-                TabBarPosition::Integrated => unreachable!(),
-            };
-            let y = match app.core.config.statusbar.position {
-                StatusBarPosition::Top => top_bar_h,
-                StatusBarPosition::Bottom => 0.0,
-            };
-            let h = (vh - top_bar_h - hints_bar_h).max(0.0);
-            Some(UiRect::new(x, y, w, h))
+    let side_tab_bar = if app.native_window_chrome {
+        None
+    } else {
+        match app.core.config.tabbar.position {
+            TabBarPosition::Integrated => None,
+            TabBarPosition::Left | TabBarPosition::Right => {
+                let w = app.core.config.tabbar.width;
+                let x = match app.core.config.tabbar.position {
+                    TabBarPosition::Left => 0.0,
+                    TabBarPosition::Right => (vw - w).max(0.0),
+                    TabBarPosition::Integrated => unreachable!(),
+                };
+                let y = match app.core.config.statusbar.position {
+                    StatusBarPosition::Top => top_bar_h,
+                    StatusBarPosition::Bottom => 0.0,
+                };
+                let h = (vh - top_bar_h - hints_bar_h).max(0.0);
+                Some(UiRect::new(x, y, w, h))
+            }
         }
     };
 

@@ -154,6 +154,12 @@ impl SettingsPanelComponent {
         self.total_rows.saturating_sub(self.visible_rows)
     }
 
+    #[cfg(target_os = "macos")]
+    pub(super) fn accessibility_layout(&self, cx: &UiContext<'_>) -> loom_ui::LayoutSnapshot {
+        let root = self.build_tree(cx);
+        super::types::with_hit_layout(&root, cx, Clone::clone)
+    }
+
     pub(super) fn hit_test(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<SettingsHit> {
         self.hover_hit_id(mx, my, cx).and_then(decode)
     }
@@ -406,6 +412,7 @@ impl SettingsPanelComponent {
             .child(
                 div()
                     .w(track_w)
+                    .hit_id(encode_chrome(ChromeOp::Scroll))
                     .h(track_h)
                     .rounded(theme.radius.sm)
                     .bg(tokens::tint(theme.border, tokens::ALPHA_SCROLL_TRACK))
@@ -567,7 +574,7 @@ pub(crate) fn action_for(hit: Option<SettingsHit>) -> UiAction {
     match hit {
         None => UiAction::CloseSettings,
         Some(SettingsHit::Chrome(op)) => match op {
-            ChromeOp::Dialog => UiAction::SettingsNoOp,
+            ChromeOp::Dialog | ChromeOp::Scroll => UiAction::SettingsNoOp,
             ChromeOp::Close => UiAction::CloseSettings,
             ChromeOp::OpenToml => UiAction::OpenSettingsToml,
         },

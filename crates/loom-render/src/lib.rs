@@ -15,6 +15,35 @@ use glyph_cache::{GlyphInstance, PaneGlyphRange};
 use rect::{PaneRectRange, Rect};
 use sdf_rect::SdfRect;
 
+/// Convert configured typographic points to framebuffer pixels. AppKit uses
+/// 72 logical DPI; applying the Windows/Linux 96 DPI base on macOS makes text
+/// a third larger than the same point size in other native Mac applications.
+pub fn font_pixels(size_pt: f32, scale_factor: f64) -> f32 {
+    let logical_dpi = if cfg!(target_os = "macos") {
+        72.0
+    } else {
+        96.0
+    };
+    size_pt * (logical_dpi * scale_factor as f32) / 72.0
+}
+
+#[cfg(test)]
+mod font_size_tests {
+    #[test]
+    fn point_sizes_use_platform_dpi_and_backing_scale() {
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(super::font_pixels(14.0, 1.0), 14.0);
+            assert_eq!(super::font_pixels(14.0, 2.0), 28.0);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert_eq!(super::font_pixels(12.0, 1.0), 16.0);
+            assert_eq!(super::font_pixels(12.0, 1.5), 24.0);
+        }
+    }
+}
+
 /// All data needed to render a single frame.
 /// Shared across all backends.
 pub struct FrameScene<'a> {

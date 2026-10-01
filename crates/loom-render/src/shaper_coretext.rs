@@ -33,24 +33,20 @@ fn create_ct_line(font: &CTFont, text: &str) -> CTLine {
     CTLine::new_with_attributed_string(attr_string.as_concrete_TypeRef())
 }
 
-/// Whether CoreText laid `run` out with `font` itself. CTLine applies the
-/// system cascade list, so characters `font` can't render come back in runs
-/// using a substitute font (e.g. PingFang for CJK in Menlo). Those glyph IDs
-/// index the substitute, not `font`; rasterizing them with `font` draws
-/// unrelated glyphs, so callers must skip such runs and let the next font in
-/// loom's own fallback chain handle the characters.
+/// CoreText silently substitutes fonts (including for an ASCII keycap with
+/// VS16). Glyph IDs are local to a font: returning a substituted face's ID
+/// with the caller's face would rasterize an unrelated letter. Let the
+/// caller's explicit font fallback choose that face instead.
 fn run_uses_font(run: &CTRun, font: &CTFont) -> bool {
-    let Some(attrs) = run.attributes() else {
-        return true;
+    let Some(attributes) = run.attributes() else {
+        return false;
     };
+    // SAFETY: CoreText's attribute key is a process-lifetime CFString constant.
     let key = unsafe { CFString::wrap_under_get_rule(kCTFontAttributeName) };
-    let Some(value) = attrs.find(&key) else {
-        return true;
-    };
-    let Some(run_font) = value.downcast::<CTFont>() else {
-        return true;
-    };
-    run_font.postscript_name() == font.postscript_name()
+    attributes
+        .find(key)
+        .and_then(|value| value.downcast::<CTFont>())
+        .is_some_and(|actual| actual.postscript_name() == font.postscript_name())
 }
 
 /// Shape a single character and return its glyph ID.
@@ -104,7 +100,7 @@ pub(crate) fn ct_shape_grapheme(font: &CTFont, cluster: &str) -> Option<u32> {
     let mut first_nonzero_glyph: Option<u32> = None;
     for run in runs.iter() {
         if !run_uses_font(&run, font) {
-            continue;
+            return None;
         }
         let glyphs = run.glyphs();
         total_glyphs += glyphs.len();

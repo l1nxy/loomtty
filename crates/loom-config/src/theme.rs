@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 /// # background = "#000000"
 /// ```
 ///
-/// Available presets: "one_dark", "one_half_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark", "ghostty", "loom_dark"
+/// Available presets: "loom_light", "one_dark", "one_half_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark", "ghostty", "loom_dark"
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 #[derive(Default)]
@@ -18,6 +18,9 @@ pub struct ThemeConfig {
     /// Preset name. Applied first, then individual fields override.
     #[serde(default)]
     pub preset: String,
+    /// Optional presets selected by the system appearance. Empty uses `preset`.
+    pub light_preset: String,
+    pub dark_preset: String,
     // Terminal colors
     pub foreground: ThemeValue,
     pub background: ThemeValue,
@@ -122,7 +125,9 @@ impl From<String> for ThemeValue {
 impl ThemeValue {
     fn apply_fallback(&mut self, fallback: ThemeValue) {
         if !self.explicitly_set {
-            *self = fallback;
+            // Preset fills remain implicit so switching appearance can replace
+            // them. Explicit user values (including empty strings) stay fixed.
+            self.value = fallback.value;
         }
     }
 }
@@ -219,11 +224,31 @@ impl ThemeConfig {
         ]
     }
 
-    /// Resolve preset: fills empty fields from the preset, preserving user overrides.
-    /// Fields default to "" (empty), so any non-empty value was explicitly set by the user.
+    /// Resolve implicit fields from the preset, preserving explicit user overrides.
+    /// Explicit empty strings are also overrides; fallback fills stay implicit.
     pub fn resolve_preset(&mut self) {
-        let base = self.preset_theme();
+        let base = Self::preset_theme(&self.preset);
         self.apply_missing_fields(base);
+    }
+
+    pub fn follows_system(&self) -> bool {
+        !self.light_preset.is_empty() || !self.dark_preset.is_empty()
+    }
+
+    /// Re-resolve only implicit colors; do not promote previous preset values
+    /// into user overrides, or overwrite the configured fallback preset name.
+    pub fn resolve_for_appearance(&mut self, dark: bool) {
+        let selected = if dark {
+            &self.dark_preset
+        } else {
+            &self.light_preset
+        };
+        let selected = if selected.is_empty() {
+            &self.preset
+        } else {
+            selected
+        };
+        self.apply_missing_fields(Self::preset_theme(selected));
     }
 
     /// Names of the built-in presets, in the order surfaced by the
@@ -234,6 +259,7 @@ impl ThemeConfig {
     pub fn preset_names() -> &'static [&'static str] {
         &[
             "loom_dark",
+            "loom_light",
             "one_dark",
             "one_half_dark",
             "catppuccin_mocha",
@@ -245,19 +271,20 @@ impl ThemeConfig {
         ]
     }
 
-    fn preset_theme(&self) -> ThemeConfig {
-        let toml_str = match self.preset.as_str() {
+    fn preset_theme(preset: &str) -> ThemeConfig {
+        let toml_str = match preset {
             "catppuccin_mocha" => include_str!("../themes/catppuccin_mocha.toml"),
             "tokyo_night" => include_str!("../themes/tokyo_night.toml"),
             "dracula" => include_str!("../themes/dracula.toml"),
             "nord" => include_str!("../themes/nord.toml"),
             "gruvbox_dark" => include_str!("../themes/gruvbox_dark.toml"),
             "" | "loom_dark" => include_str!("../themes/loom_dark.toml"),
+            "loom_light" => include_str!("../themes/loom_light.toml"),
             "ghostty" => include_str!("../themes/ghostty.toml"),
             "one_dark" => include_str!("../themes/one_dark.toml"),
             "one_half_dark" => include_str!("../themes/one_half_dark.toml"),
             _ => {
-                log::warn!("unknown theme preset '{}', using loom_dark", self.preset);
+                log::warn!("unknown theme preset '{preset}', using loom_dark");
                 include_str!("../themes/loom_dark.toml")
             }
         };
@@ -393,6 +420,37 @@ fn apply_if_missing(slot: &mut ThemeValue, fallback: ThemeValue) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appearance_changes_replace_implicit_colors_and_preserve_overrides() {
+        let mut theme: ThemeConfig = toml::from_str(
+            r##"
+            preset = "nord"
+            light_preset = "loom_light"
+            dark_preset = "loom_dark"
+            accent = "#123456"
+            red = ""
+        "##,
+        )
+        .unwrap();
+        theme.resolve_preset();
+        for _ in 0..3 {
+            theme.resolve_for_appearance(false);
+            assert_eq!(theme.background, "#FAF8F5");
+            assert_eq!(theme.ui_surface, "#FFFFFF");
+            assert_eq!(theme.accent, "#123456");
+            assert_eq!(theme.red, "");
+            theme.resolve_for_appearance(true);
+            assert_eq!(theme.background, "#1C1B1A");
+            assert_eq!(theme.ui_surface, ""); // dark chrome's usual fallback
+            assert_eq!(theme.accent, "#123456");
+            assert_eq!(theme.red, "");
+            assert_eq!(theme.preset, "nord");
+        }
+        theme.dark_preset.clear();
+        theme.resolve_for_appearance(true);
+        assert_eq!(theme.background, "#2E3440");
+    }
 
     #[test]
     fn resolve_preset_keeps_overrides_and_fills_missing_values() {

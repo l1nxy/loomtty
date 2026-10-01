@@ -44,9 +44,9 @@ use rasterize::{RasterizedGlyph, cache_rasterized_glyph};
 use rasterize::{convert_crossfont_glyph, rasterize_glyph_id_ft};
 #[cfg(target_os = "macos")]
 use rasterize_coretext::CoreTextRasterizer;
-use types::FontClass;
 #[cfg(target_os = "linux")]
 use types::FontKeySet;
+use types::{FontClass, GlyphIdKey};
 
 #[cfg(windows)]
 use rasterize_dwrite::{DWriteRasterizer, compute_cjk_pixel_size_dwrite, compute_dwrite_metrics};
@@ -160,7 +160,7 @@ pub struct GlyphCache {
     pub max_instances: usize,
     // Caching
     cache: HashMap<(char, FontStyle), GlyphEntry>,
-    glyph_id_cache: HashMap<(u32, FontClass, FontStyle, bool), GlyphEntry>,
+    glyph_id_cache: HashMap<GlyphIdKey, GlyphEntry>,
 
     // ── Platform-specific rasterizer state ──
 
@@ -230,7 +230,7 @@ impl GlyphCache {
     pub fn new(params: &FontInitParams) -> Self {
         let atlas_size = params.render_config.atlas_size;
         let max_instances = params.render_config.max_glyph_instances;
-        let pixel_size = params.font_size_pt * (96.0 * params.dpi_scale as f32) / 72.0;
+        let pixel_size = crate::font_pixels(params.font_size_pt, params.dpi_scale);
 
         // ── Platform-specific init ──
 
@@ -958,7 +958,7 @@ impl GlyphCache {
         style: FontStyle,
         wide: bool,
     ) -> Option<GlyphEntry> {
-        let key = (glyph_id, font_class, style, wide);
+        let key = GlyphIdKey::new(glyph_id, font_class, style, wide);
         if let Some(entry) = self.glyph_id_cache.get(&key) {
             return Some(*entry);
         }
@@ -1258,7 +1258,7 @@ mod tests {
             .cache
             .insert(('A', FontStyle::Regular), GlyphEntry::EMPTY);
         cache.glyph_id_cache.insert(
-            (1, FontClass::Primary, FontStyle::Regular, false),
+            GlyphIdKey::new(1, FontClass::Primary, FontStyle::Regular, false),
             GlyphEntry::EMPTY,
         );
         cache.alpha_pending.push(PendingUpload {

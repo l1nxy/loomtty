@@ -68,7 +68,8 @@ export type ClientMessage =
   | { tag: "Ping"; seq: bigint; clientTimeUs: bigint }
   | { tag: "CapturePane"; sessionName: string; paneId: bigint; opts: CapturePaneOpts }
   | { tag: "ListPrompts"; sessionName: string; paneId: bigint }
-  | { tag: "JumpToPrompt"; sessionName: string; paneId: bigint; fromOffset: number; direction: number };
+  | { tag: "JumpToPrompt"; sessionName: string; paneId: bigint; fromOffset: number; direction: number }
+  | { tag: "CreatePaneAt"; paneId: bigint; below: boolean; requestId: bigint };
 
 export interface ColumnState {
   tiles: (TileState)[];
@@ -134,7 +135,8 @@ export type ServerMessage =
   | { tag: "Pong"; seq: bigint; clientTimeUs: bigint }
   | { tag: "PaneCapture"; sessionName: string; paneId: bigint; text: string; truncated: boolean }
   | { tag: "PromptListReply"; sessionName: string; paneId: bigint; marks: (PromptMarkInfo)[] }
-  | { tag: "SetScrollOffset"; paneId: bigint; offset: number };
+  | { tag: "SetScrollOffset"; paneId: bigint; offset: number }
+  | { tag: "PaneCreationResult"; requestId: bigint; paneId: (bigint | null); error: (string | null) };
 
 export interface SessionDetailInfo {
   name: string;

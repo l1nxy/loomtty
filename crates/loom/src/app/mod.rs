@@ -157,9 +157,17 @@ pub(crate) struct UiFontInit {
 pub(crate) struct App {
     /// Core logic state — platform-agnostic.
     pub core: AppModel,
+    ime_target: Option<ime::Target>,
+    ime_generation: u64,
 
     // --- Shell-only fields (GPU / windowing / platform) ---
     pub window: Option<Arc<Window>>,
+    /// AppKit owns tabs; GPU chrome keeps only the terminal hints/status row.
+    pub native_window_chrome: bool,
+    #[cfg(target_os = "macos")]
+    pub native_quick_terminal: bool,
+    #[cfg(target_os = "macos")]
+    pub native_initially_hidden: bool,
     pub renderer: Option<Renderer>,
     pub glyph_cache: Option<GlyphCache>,
     pub glyph_atlas_gpu: Option<GlyphAtlasGpu>,
@@ -463,7 +471,7 @@ impl App {
         // grid lands on whole pixels — fractional ppem (e.g. 10pt → 13.33px)
         // makes proportional UI glyphs render as if hinting were disabled,
         // softening edges of W/M and similar dense-stroke characters.
-        let ui_px = (size_pt * (96.0 * dpi_scale as f32) / 72.0).round();
+        let ui_px = loom_render::font_pixels(size_pt, dpi_scale).round();
         UiFontInit {
             path,
             id,
@@ -490,40 +498,41 @@ impl App {
 
         let id = init.id.or_else(|| terminal_shaper.primary_font_id());
 
-        // Prefer shared font data from the terminal shaper (avoids re-reading
-        // multi-MB font files from disk). Fall back to file path for UI font
-        // overrides whose data isn't in the terminal shaper.
-        let primary = if init.path.is_some() {
-            // UI font override — may differ from terminal font.
-            // Try to share data if it's the terminal font, otherwise read path.
-            id.and_then(|fid| terminal_shaper.font_data_arc(fid))
-                .map(|(data, idx)| UiFontData::Shared(data, idx))
-                .or_else(|| init.path.clone().map(|(p, i)| UiFontData::Path(p, i)))
-        } else {
-            // No override — use terminal primary font data.
-            id.and_then(|fid| terminal_shaper.font_data_arc(fid))
-                .map(|(data, idx)| UiFontData::Shared(data, idx))
+        // CoreText loads file URLs; rustybuzz can share the terminal shaper's
+        // font bytes. Always keep a path fallback for fonts not held as bytes.
+        let font_source = |id: Option<loom_render::fontdb::ID>, path: Option<(String, u32)>| {
+            #[cfg(not(target_os = "macos"))]
+            if let Some((data, index)) = id.and_then(|fid| terminal_shaper.font_data_arc(fid)) {
+                return Some(UiFontData::Shared(data, index));
+            }
+            #[cfg(target_os = "macos")]
+            let _ = id;
+            path.map(|(p, i)| UiFontData::Path(p, i))
         };
-
-        let cjk = terminal_shaper
-            .cjk_font_id()
-            .and_then(|fid| terminal_shaper.font_data_arc(fid))
-            .map(|(data, idx)| UiFontData::Shared(data, idx));
-
-        let emoji = terminal_shaper
-            .emoji_font_id()
-            .and_then(|fid| terminal_shaper.font_data_arc(fid))
-            .map(|(data, idx)| UiFontData::Shared(data, idx));
+        let primary = font_source(
+            id,
+            init.path
+                .clone()
+                .or_else(|| terminal_shaper.primary_font_path()),
+        );
+        let cjk = font_source(
+            terminal_shaper.cjk_font_id(),
+            terminal_shaper.cjk_font_path(),
+        );
+        let emoji = font_source(
+            terminal_shaper.emoji_font_id(),
+            terminal_shaper.emoji_font_path(),
+        );
 
         let pixel_size = init
             .pixel_size
-            .unwrap_or_else(|| config_font_size_pt * (96.0 * dpi_scale as f32) / 72.0);
+            .unwrap_or_else(|| loom_render::font_pixels(config_font_size_pt, dpi_scale));
         // Terminal primary font as last-resort fallback — covers Braille,
         // box drawing, Nerd Font icons that the proportional UI font lacks.
-        let terminal_primary = terminal_shaper
-            .primary_font_id()
-            .and_then(|fid| terminal_shaper.font_data_arc(fid))
-            .map(|(data, idx)| UiFontData::Shared(data, idx));
+        let terminal_primary = font_source(
+            terminal_shaper.primary_font_id(),
+            terminal_shaper.primary_font_path(),
+        );
 
         loom_render::ui_shaper::UiTextShaper::new(loom_render::ui_shaper::UiShaperParams {
             primary,
@@ -542,12 +551,27 @@ impl App {
     }
 
     pub fn new(config: LoomConfig, session_name: impl Into<String>) -> Self {
+        #[cfg(target_os = "macos")]
+        let config = {
+            let mut config = config;
+            if config.theme.follows_system() {
+                config
+                    .theme
+                    .resolve_for_appearance(crate::macos::system_dark_appearance().unwrap_or(true));
+            }
+            config
+        };
         let cached_color_table = ColorTable::new(&config);
         let cached_resolved_theme = loom_ui::ResolvedTheme::from_config(&config.theme);
         let core = AppModel::new(config, session_name);
         App {
             core,
             window: None,
+            native_window_chrome: false,
+            #[cfg(target_os = "macos")]
+            native_quick_terminal: false,
+            #[cfg(target_os = "macos")]
+            native_initially_hidden: false,
             renderer: None,
             glyph_cache: None,
             glyph_atlas_gpu: None,
@@ -591,6 +615,8 @@ impl App {
                 m
             },
             window_focused: true,
+            ime_target: None,
+            ime_generation: 0,
             config_watcher: None,
             config_change_rx: None,
             pending_self_config_write_deadline: None,
@@ -1468,6 +1494,9 @@ impl App {
     /// chrome cache key (display now reads hover declaratively via
     /// `cx.is_hovered(hit_id)` after Step 28).
     pub(crate) fn current_pane_tab_hover(&self) -> Option<u64> {
+        if self.native_window_chrome {
+            return None;
+        }
         if !matches!(
             self.core.config.tabbar.position,
             loom_config::config::TabBarPosition::Integrated,
@@ -1556,6 +1585,13 @@ impl App {
     }
 
     pub fn status_bar_height(&self) -> f32 {
+        if self.native_window_chrome {
+            return 0.0;
+        }
+        self.chrome_row_height()
+    }
+
+    fn chrome_row_height(&self) -> f32 {
         let cell_h = self
             .glyph_cache
             .as_ref()
@@ -1569,9 +1605,14 @@ impl App {
         cell_h + padding
     }
 
-    /// Height of the bottom hints bar (same size as the status bar).
+    /// Native windows put pane controls in AppKit chrome and use the entire
+    /// content view for terminals; the custom hints row must not reserve space.
     pub fn hints_bar_height(&self) -> f32 {
-        self.status_bar_height()
+        if self.native_window_chrome {
+            0.0
+        } else {
+            self.chrome_row_height()
+        }
     }
 
     /// Total vertical space occupied by chrome (status bar + hints bar).
@@ -1583,6 +1624,9 @@ impl App {
     /// Matches the `Fixed` size hint used by `TabBarComponent` so that
     /// `Border`'s `left` / `right` slot width equals this value.
     pub fn total_chrome_width(&self) -> f32 {
+        if self.native_window_chrome {
+            return 0.0;
+        }
         match self.core.config.tabbar.position {
             loom_config::config::TabBarPosition::Integrated => 0.0,
             loom_config::config::TabBarPosition::Left
@@ -1607,6 +1651,9 @@ impl App {
     /// X origin of the terminal viewport — shifted right by the side
     /// tab bar's width when the tab bar is on the left, zero otherwise.
     pub fn content_origin_x(&self) -> f32 {
+        if self.native_window_chrome {
+            return 0.0;
+        }
         match self.core.config.tabbar.position {
             loom_config::config::TabBarPosition::Left => self.core.config.tabbar.width,
             _ => 0.0,
@@ -1622,6 +1669,9 @@ impl App {
     /// Map an absolute screen X coordinate into terminal-local X, or
     /// `None` if the point is inside the side tab bar (or to its left/right).
     pub fn content_x_from_screen(&self, screen_x: f32, window_width: f32) -> Option<f32> {
+        if self.native_window_chrome {
+            return Some(screen_x);
+        }
         match self.core.config.tabbar.position {
             loom_config::config::TabBarPosition::Integrated => Some(screen_x),
             loom_config::config::TabBarPosition::Left => {
@@ -1947,11 +1997,55 @@ impl App {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn apply_macos_window_config(window: &Window, config: &LoomConfig) {
+    use loom_config::config::MacosOptionAsAlt;
+    use winit::platform::macos::{OptionAsAlt, WindowExtMacOS};
+    // The creation attribute forces NSWindowTabbingModePreferred in winit.
+    // Set only the identifier here so explicit New Window requests stay independent.
+    window.set_tabbing_identifier("loomtty");
+    window.set_option_as_alt(match config.window.macos_option_as_alt {
+        MacosOptionAsAlt::None => OptionAsAlt::None,
+        MacosOptionAsAlt::Left => OptionAsAlt::OnlyLeft,
+        MacosOptionAsAlt::Right => OptionAsAlt::OnlyRight,
+        MacosOptionAsAlt::Both => OptionAsAlt::Both,
+    });
+    if config.theme.follows_system() {
+        // Inherit the application appearance so winit delivers ThemeChanged.
+        window.set_theme(None);
+        return;
+    }
+    // Match native titlebar/traffic-light contrast to the terminal background.
+    let [r, g, b, _] = loom_config::theme::ThemeConfig::parse_color(&config.theme.background);
+    window.set_theme(Some(if 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 {
+        winit::window::Theme::Light
+    } else {
+        winit::window::Theme::Dark
+    }));
+}
+
 #[cfg(test)]
 mod tests_app_layout {
     use super::App;
     use loom_config::config::{LoomConfig, StatusBarPosition};
     use winit::dpi::PhysicalSize;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn ui_inherits_terminal_font_without_retaining_raw_font_bytes() {
+        let terminal = loom_render::shaper::TextShaper::new("Menlo");
+        let init = super::UiFontInit {
+            path: None,
+            id: None,
+            pixel_size: Some(24.0),
+        };
+        let mut ui = App::build_ui_shaper(&init, &terminal, 12.0, 2.0, 16.0, 31.0);
+        assert!(ui.has_face());
+        let glyphs = ui.shape("Loom");
+        assert_eq!(glyphs.len(), 4);
+        assert!(glyphs.iter().all(|g| g.glyph_id != 0 && g.x_advance > 0.0));
+        assert_eq!(ui.font_id(), terminal.primary_font_id());
+    }
 
     fn make_app(statusbar_position: StatusBarPosition) -> App {
         let mut config = LoomConfig::default();
@@ -1990,5 +2084,40 @@ mod tests_app_layout {
             Some(content_h - 1.0)
         );
         assert_eq!(app.content_y_from_screen(content_h + 1.0), None);
+    }
+
+    #[test]
+    fn native_resize_sends_full_content_height_and_keeps_bottom_interactive() {
+        use loom_protocol::message::ClientMessage;
+
+        for position in [StatusBarPosition::Top, StatusBarPosition::Bottom] {
+            let mut app = make_app(position);
+            app.native_window_chrome = true;
+            let (tx, rx) = crossbeam_channel::unbounded();
+            app.core.server_tx = Some(tx);
+
+            // AppKit has already removed its title/tab bar from inner_size.
+            // Exercise successive resizes, including a Retina-sized surface.
+            for (width, height) in [(900, 700), (1800, 1400), (800, 611)] {
+                app.apply_resize(PhysicalSize::new(width, height));
+                let view = &app.core.workspaces.view_size;
+                assert_eq!((view.width, view.height), (width as f32, height as f32));
+                assert_eq!(app.content_y_from_screen(0.0), Some(0.0));
+                assert_eq!(
+                    app.content_y_from_screen(height as f32 - 1.0),
+                    Some(height as f32 - 1.0)
+                );
+                assert_eq!(app.content_y_from_screen(height as f32), None);
+                let ClientMessage::Resize {
+                    width: sent_width,
+                    height: sent_height,
+                    ..
+                } = rx.try_recv().expect("resize reaches the server")
+                else {
+                    panic!("expected a Resize message");
+                };
+                assert_eq!((sent_width, sent_height), (width, height));
+            }
+        }
     }
 }

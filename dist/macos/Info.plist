@@ -24,6 +24,40 @@
     <string>11.0</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.developer-tools</string>
+    <key>NSAppleScriptEnabled</key>
+    <true/>
+    <key>OSAScriptingDefinition</key>
+    <string>loomtty.sdef</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>Folders</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSItemContentTypes</key><array><string>public.directory</string></array>
+        </dict>
+    </array>
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key><dict><key>default</key><string>New loomtty Window Here</string></dict>
+            <key>NSMessage</key><string>openDirectory</string>
+            <key>NSPortName</key><string>loomtty</string>
+            <key>NSSendFileTypes</key><array><string>public.item</string></array>
+            <key>NSRequiredContext</key><dict/>
+            <key>NSUserData</key><string>window</string>
+        </dict>
+        <dict>
+            <key>NSMenuItem</key><dict><key>default</key><string>New loomtty Tab Here</string></dict>
+            <key>NSMessage</key><string>openDirectory</string>
+            <key>NSPortName</key><string>loomtty</string>
+            <key>NSSendFileTypes</key><array><string>public.item</string></array>
+            <key>NSRequiredContext</key><dict/>
+            <key>NSUserData</key><string>tab</string>
+        </dict>
+    </array>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key>

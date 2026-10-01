@@ -66,6 +66,12 @@ impl App {
         use loom_protocol::message::ClientMessage;
 
         self.window_focused = focused;
+        #[cfg(target_os = "macos")]
+        if let Some(window) = &self.window {
+            // Clear AppKit/winit's marked text too. Clearing only our painted
+            // preedit leaves the old composition alive when this window returns.
+            window.set_ime_allowed(focused);
+        }
         self.send(ClientMessage::FocusChange { focused });
 
         if focused {
@@ -84,6 +90,8 @@ impl App {
             // first keystrokes went there is bad UX. Drag teardown handles the
             // case where the finalising mouse-up lands in another window.
             self.enter_modal_close_peers(ModalKind::None);
+            self.modifiers = winit::keyboard::ModifiersState::empty();
+            self.handle_ime(winit::event::Ime::Disabled);
         }
 
         self.schedule_redraw();
@@ -240,6 +248,13 @@ impl ApplicationHandler for App {
             let mut needs_redraw = is_animating || is_resizing || leader_expired;
 
             if self.process_server_events() {
+                needs_redraw = true;
+            }
+
+            for pane_id in self.core.prediction.expire_predictions(Instant::now()) {
+                if let Some(grid) = self.core.pane_grids.get_mut(&pane_id) {
+                    grid.dirty = true;
+                }
                 needs_redraw = true;
             }
 
@@ -433,6 +448,15 @@ impl ApplicationHandler for App {
         {
             use winit::platform::macos::WindowAttributesExtMacOS;
             attrs = attrs.with_titlebar_transparent(true);
+            if self.native_initially_hidden {
+                attrs = attrs.with_visible(false).with_active(false);
+            }
+            if self.native_quick_terminal {
+                attrs = crate::macos::quick_terminal::attributes(
+                    attrs,
+                    &self.core.config.window.macos_quick_terminal,
+                );
+            }
         }
 
         let window = Arc::new(
@@ -444,9 +468,10 @@ impl ApplicationHandler for App {
 
         #[cfg(target_os = "macos")]
         {
-            use winit::platform::macos::{OptionAsAlt, WindowExtMacOS};
-            // OnlyLeft: left Option = Alt (for keybindings), right Option = special chars (é, ñ, #)
-            window.set_option_as_alt(OptionAsAlt::OnlyLeft);
+            super::apply_macos_window_config(&window, &self.core.config);
+            if self.native_quick_terminal {
+                crate::macos::quick_terminal::configure_window(&window);
+            }
         }
         let dpi_scale = window.scale_factor();
         let mut renderer = loom_gpu::Renderer::new(window.clone(), &self.core.config.render)
@@ -732,10 +757,18 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::DroppedFile(path) => {
+                if self.modal_captures_keyboard() {
+                    return;
+                }
                 let quoted = super::clipboard_image::quote_path_for_shell(&path.to_string_lossy());
                 let text = format!("{quoted} ");
                 self.send_paste_to_active_pane(text.as_bytes());
                 self.schedule_redraw();
+            }
+
+            #[cfg(target_os = "macos")]
+            WindowEvent::ThemeChanged(theme) => {
+                self.apply_system_theme(theme == winit::window::Theme::Dark);
             }
 
             WindowEvent::RedrawRequested => self.render(),
@@ -744,7 +777,20 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.cancel_stale_ime();
+        // Keyboard events can create predictions after new_events chose Wait.
+        // Install their deadline here, after the entire event batch, so an
+        // idle, non-blinking window still clears them when the peer stalls.
+        if let Some(deadline) = self.core.prediction.next_expiry() {
+            match event_loop.control_flow() {
+                ControlFlow::Wait => event_loop.set_control_flow(ControlFlow::WaitUntil(deadline)),
+                ControlFlow::WaitUntil(wake) if deadline < wake => {
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+                }
+                _ => {}
+            }
+        }
         self.flush_pending_redraw();
     }
 }

@@ -97,10 +97,11 @@ impl TopBarComponent {
     pub fn capture(app: &App, layout: TopBarLayout, cx: &UiContext<'_>) -> Self {
         let (mode_label, mode_color) = app.current_mode_label();
         let workspace_label = app.workspace_indicator_label();
-        let show_integrated_tabs = matches!(
-            app.core.config.tabbar.position,
-            loom_config::config::TabBarPosition::Integrated,
-        );
+        let show_integrated_tabs = !app.native_window_chrome
+            && matches!(
+                app.core.config.tabbar.position,
+                loom_config::config::TabBarPosition::Integrated,
+            );
         // Tab snapshot is only needed when we draw them inline. Saves
         // a Vec allocation + label cloning for side-bar configs.
         let pane_tabs = if show_integrated_tabs {
@@ -303,6 +304,50 @@ impl TopBarComponent {
         }
         let root = self.build_hit_tree(rect, cx);
         Some(top_bar_hit_from_id(ui_hit_id(&root, cx, mx, my)))
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn accessibility(&self, cx: &UiContext<'_>) -> Vec<super::accessibility::Node> {
+        use super::accessibility::{Node, Role};
+        if self.bar_rect(cx).is_empty() {
+            return Vec::new();
+        }
+        let root = self.build_hit_tree(self.bar_rect(cx), cx);
+        super::types::with_hit_layout(&root, cx, |layout| {
+            layout
+                .nodes()
+                .iter()
+                .filter_map(|element| {
+                    let id = element.hit_id?;
+                    let (label, action, selected) = match top_bar_hit_from_id(Some(id)) {
+                        UiTopBarHit::Session => (
+                            format!("Session: {}", self.session_text),
+                            UiAction::OpenSessionPalette,
+                            false,
+                        ),
+                        UiTopBarHit::Workspace => (
+                            self.workspace_label.clone(),
+                            UiAction::CycleWorkspace,
+                            false,
+                        ),
+                        UiTopBarHit::Mode => (
+                            format!("Overview; {}", self.mode_label),
+                            UiAction::ToggleOverview,
+                            self.is_overview,
+                        ),
+                        UiTopBarHit::PaneTab(pane) => {
+                            let tab = self.pane_tabs.iter().find(|tab| tab.pane_id == pane)?;
+                            (tab.label.clone(), UiAction::FocusPaneTab(pane), tab.active)
+                        }
+                        UiTopBarHit::Background => return None,
+                    };
+                    let mut node = Node::new(id, label, element.bounds, Role::Button);
+                    node.press = Some(action);
+                    node.selected = selected;
+                    Some(node)
+                })
+                .collect()
+        })
     }
 
     pub(super) fn hit_test(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiTopBarHit> {

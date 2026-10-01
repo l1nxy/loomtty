@@ -46,6 +46,7 @@ Throughout this page, `Alt x` means "leader + x".
 | `Alt s` | `enter_mode:scroll` | Enter [scroll mode](#scroll-mode) |
 | `Alt m` | `enter_mode:move` | Enter [move mode](#move-mode) |
 | `Alt f` | `column_width_full` | Full-width column |
+| `Alt =` | `equalize_adjacent_columns` | Equalize the active column and its right neighbor |
 | `Alt b` | `toggle_broadcast` | Broadcast input to all panes in the workspace |
 | `Alt c` | `consume_into_column` | Consume right neighbor into the column as a tile |
 | `Alt e` | `expel_from_column` | Expel the active tile into a new column |

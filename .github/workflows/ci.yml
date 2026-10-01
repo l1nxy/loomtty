@@ -76,6 +76,14 @@ jobs:
         run: cargo test --workspace
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
+      - name: App Intents bridge
+        run: dist/macos/app-intents/test.sh
+      - name: App Intents build and tests
+        run: |
+          cargo test -p loomtty --lib --features macos-app-intents
+          cargo build -p loomtty --bin loomtty --features macos-app-intents
+      - name: Native bundle and discovery metadata
+        run: dist/macos/make-app.sh --bindir "$PWD/target/debug" --app-only
 
   # ── Windows ────────────────────────────────────────
   windows:

@@ -48,6 +48,7 @@ impl ClientPaneGrid {
     /// SM data is decoded directly into the viewport buffer (no intermediate alloc).
     /// Scrollback is decoded into a temporary buffer, then sliced into rows.
     pub fn apply_full_sync(&mut self, sync: &FullPaneSyncBorrowed) {
+        self.content_revision = self.content_revision.wrapping_add(1);
         let old_cols = self.cols as usize;
         let old_scrollback_rows = self.scrollback.len();
         let old_grapheme_map = std::mem::take(&mut self.grapheme_map);
@@ -115,9 +116,10 @@ impl ClientPaneGrid {
                         sync.grapheme_extras.build_lookup_with_offset(&sb_cells, 0);
                     for (idx, grapheme) in sb_grapheme_map {
                         let idx = idx as usize;
-                        if idx < sb_cells.len() {
+                        let buffer_idx = scrollback_base * new_cols + idx;
+                        if idx < sb_cells.len() && buffer_idx >= trim_count * new_cols {
                             rebased_grapheme_map
-                                .insert((scrollback_base * new_cols + idx) as u32, grapheme);
+                                .insert((buffer_idx - trim_count * new_cols) as u32, grapheme);
                         }
                     }
                 }
@@ -171,6 +173,19 @@ impl ClientPaneGrid {
         self.kitty_flags = sync.meta.mode_flags & MODE_KITTY_ALL;
         self.password_input = sync.meta.mode_flags & MODE_PASSWORD_INPUT != 0;
         self.title = sync.title.clone();
+        if new_rows == 0 && !cols_changed {
+            // A history-only frame leaves the viewport intact. Its graphemes
+            // move with the viewport's new offset in the combined buffer.
+            let old_base = old_scrollback_rows * old_cols;
+            let new_base = self.scrollback.len() * new_cols;
+            for (&index, grapheme) in &old_grapheme_map {
+                let index = index as usize;
+                if index >= old_base && index - old_base < self.viewport.len() {
+                    rebased_grapheme_map
+                        .insert((new_base + index - old_base) as u32, grapheme.clone());
+                }
+            }
+        }
         self.grapheme_map = rebased_grapheme_map;
         // Build grapheme lookup from viewport cells (already decoded in place).
         let sync_grapheme_map = sync
@@ -180,13 +195,15 @@ impl ClientPaneGrid {
             let buffer_idx = (self.scrollback.len() * new_cols + idx as usize) as u32;
             self.grapheme_map.insert(buffer_idx, grapheme);
         }
-        self.hyperlink_map.clear();
-        for &(id, ref uri) in &sync.hyperlink_extras.link_map {
-            self.hyperlink_map.insert(id, uri.clone());
-        }
-        self.hyperlink_cell_map.clear();
-        for &(cell_idx, link_id) in &sync.hyperlink_extras.cell_links {
-            self.hyperlink_cell_map.insert(cell_idx, link_id);
+        if new_rows > 0 {
+            self.hyperlink_map.clear();
+            for &(id, ref uri) in &sync.hyperlink_extras.link_map {
+                self.hyperlink_map.insert(id, uri.clone());
+            }
+            self.hyperlink_cell_map.clear();
+            for &(cell_idx, link_id) in &sync.hyperlink_extras.cell_links {
+                self.hyperlink_cell_map.insert(cell_idx, link_id);
+            }
         }
         self.cwd = sync.cwd.clone();
         self.dirty = true;
@@ -195,6 +212,7 @@ impl ClientPaneGrid {
     /// Apply incremental CellDelta: patch the live viewport directly using flat buffer indexing.
     /// Kept for use with non-borrowed CellDelta (e.g. tests, offline replay).
     pub fn apply_delta(&mut self, delta: &CellDelta) {
+        self.content_revision = self.content_revision.wrapping_add(1);
         self.cursor_line = delta.cursor_line;
         self.cursor_col = delta.cursor_col;
         self.cursor_shape = delta.cursor_shape;
@@ -216,9 +234,11 @@ impl ClientPaneGrid {
             if copy_len > 0 {
                 let dst_start = line * cols + col_start;
                 let dst_end = line * cols + col_end;
-                // Evict stale hyperlink entries for overwritten cells
+                // Evict stale side-table entries for overwritten cells
                 for idx in dst_start..dst_end {
                     self.hyperlink_cell_map.remove(&(idx as u32));
+                    self.grapheme_map
+                        .remove(&((self.scrollback.len() * cols + idx) as u32));
                 }
                 self.viewport[dst_start..dst_end].copy_from_slice(&region.cells[..copy_len]);
                 self.mark_row_dirty(line);
@@ -230,6 +250,7 @@ impl ClientPaneGrid {
     /// Apply incremental CellDeltaBorrowed (SM-decoded): decode opcode streams
     /// directly into the viewport flat buffer. Only marks individual dirty rows.
     pub fn apply_delta_borrowed(&mut self, delta: &CellDeltaBorrowed) {
+        self.content_revision = self.content_revision.wrapping_add(1);
         // Track if cursor moved (old and new cursor rows need redraw)
         let old_cursor_line = self.cursor_line;
         let old_mode_flags = self.mode_flags;
@@ -257,9 +278,11 @@ impl ClientPaneGrid {
             if copy_len > 0 {
                 let dst_start = line * cols + col_start;
                 let dst_end = dst_start + copy_len;
-                // Evict stale hyperlink entries for overwritten cells
+                // Evict stale side-table entries for overwritten cells
                 for idx in dst_start..dst_end {
                     self.hyperlink_cell_map.remove(&(idx as u32));
+                    self.grapheme_map
+                        .remove(&((self.scrollback.len() * cols + idx) as u32));
                 }
                 let sm_data = delta.sm_data(i);
                 match loom_protocol::codec::decode_sm_cells(

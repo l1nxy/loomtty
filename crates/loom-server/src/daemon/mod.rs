@@ -4,6 +4,8 @@ mod damage;
 pub(crate) mod server;
 pub(crate) mod session;
 mod tick;
+#[cfg(unix)]
+mod unix_socket;
 mod web;
 
 use anyhow::{Context, Result};
@@ -41,6 +43,10 @@ pub struct DaemonState {
     input_notify: Arc<Notify>,
     #[cfg(unix)]
     listener: UnixListener,
+    // Keep ownership through graceful shutdown and socket removal, including
+    // after run_daemon_loop moves the listener out of this state.
+    #[cfg(unix)]
+    _socket_lock: std::fs::File,
     #[cfg(windows)]
     pipe_name: String,
     #[cfg(windows)]
@@ -113,37 +119,10 @@ pub async fn prepare_daemon_with(
     }
 
     #[cfg(unix)]
-    let listener = {
-        // Set restrictive umask so the socket file is created with 0o700
-        let old_umask = unsafe { libc::umask(0o077) };
-
-        let result: Result<UnixListener> = match UnixListener::bind(&sock_path) {
-            Ok(l) => Ok(l),
-            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-                // Symlink-safe removal: check that the existing path is a socket,
-                // not a symlink planted by an attacker.
-                let tmp_path = sock_path.with_extension("tmp");
-                if tmp_path.exists() {
-                    let meta = tmp_path.symlink_metadata()?;
-                    if meta.file_type().is_symlink() {
-                        unsafe { libc::umask(old_umask) };
-                        anyhow::bail!(
-                            "refusing to remove {}: path is a symlink (possible attack)",
-                            tmp_path.display()
-                        );
-                    }
-                    std::fs::remove_file(&tmp_path)?;
-                }
-                let listener = UnixListener::bind(&tmp_path)?;
-                std::fs::rename(&tmp_path, &sock_path)?;
-                Ok(listener)
-            }
-            Err(e) => Err(e.into()),
-        };
-
-        // Restore original umask regardless of outcome
-        unsafe { libc::umask(old_umask) };
-        result?
+    let (listener, socket_lock) = {
+        let (listener, lock) = unix_socket::bind(&sock_path)
+            .with_context(|| format!("cannot own server socket {}", sock_path.display()))?;
+        (UnixListener::from_std(listener)?, lock)
     };
     #[cfg(windows)]
     let pipe_name = transport::server_pipe_name();
@@ -204,8 +183,9 @@ pub async fn prepare_daemon_with(
     let tick_state = state.clone();
     let tick_shutdown = shutdown.clone();
     let tick_input_notify = input_notify.clone();
+    let frame_interval = std::time::Duration::from_millis(config.render.frame_interval_ms.max(1));
     tokio::spawn(async move {
-        tick::run_tick_loop(tick_state, tick_shutdown, tick_input_notify).await;
+        tick::run_tick_loop(tick_state, tick_shutdown, tick_input_notify, frame_interval).await;
     });
 
     // Signal handling
@@ -255,6 +235,8 @@ pub async fn prepare_daemon_with(
         input_notify,
         #[cfg(unix)]
         listener,
+        #[cfg(unix)]
+        _socket_lock: socket_lock,
         #[cfg(windows)]
         pipe_name,
         #[cfg(windows)]

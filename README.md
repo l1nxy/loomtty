@@ -12,8 +12,9 @@ workspaces, a built-in browser client, and remote attach over a binary protocol.
 ![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20Windows%20%7C%20macOS%20%28WIP%29-blue)
 
 > **🚧 Early and experimental (v0.1).** Expect rough edges — not everything is
-> guaranteed to work yet. Primarily developed on Linux and Windows; **macOS is
-> untested, treat it as work in progress.**
+> guaranteed to work yet. macOS has an [AppKit application shell](dist/macos/README.md#native-application-behavior)
+> with native menus, windows, tabs, Quick Terminal, and AppleScript; desktop interaction validation is still
+> in progress.
 
 https://github.com/user-attachments/assets/6b078921-1065-4867-a412-e2f9c949fb9a
 
@@ -65,14 +66,18 @@ Run `loomtty init` for an interactive config wizard.
 **Leader:** `Alt` (configurable). loomtty defaults to sticky / zellij-style
 input, so you hold `Alt` and press the key — e.g. `Alt n` opens a new column.
 Set `[input] mode = "prefix"` for tmux-style tap-leader-then-key.
+On macOS, use **left Option** for Alt by default; right Option still types
+special characters. Configure `window.macos_option_as_alt` to change this.
 
 | Keys | Action |
 |------|--------|
 | `Alt h` `j` `k` `l` | Focus pane left / down / up / right |
 | `Alt n` | New column |
 | `Alt d` | Split down (new row) |
+| `Alt Shift+d` | Stack a tile below in the current column |
 | `Alt x` | Close pane |
 | `Alt f` | Full-width column |
+| `Alt =` | Equalize the active column and its right neighbor |
 | `Alt r` | Resize mode |
 | `Alt s` / `Alt m` | Scroll / move mode |
 | `Alt b` | Broadcast input to all panes |
@@ -95,7 +100,7 @@ family = "JetBrains Mono"
 size = 12.0
 
 [theme]
-preset = "loom_dark"   # one_dark, catppuccin_mocha, tokyo_night, dracula, nord, gruvbox_dark, ghostty, …
+preset = "loom_dark"   # loom_light, one_dark, catppuccin_mocha, tokyo_night, dracula, nord, gruvbox_dark, ghostty, …
 
 [keys]
 leader = "alt"
@@ -106,7 +111,16 @@ mode = "sticky"        # "sticky" (zellij-style) or "prefix" (tmux-style)
 
 Every option, default, and valid range is documented in
 [`crates/loom-config/src/schema.rs`](crates/loom-config/src/schema.rs). You can
-also edit settings live from the in-app settings panel.
+also edit settings live from the in-app settings panel. On macOS, **⌘,** opens
+a native Settings window with searchable categories and standard macOS controls.
+Changes save automatically; invalid values show an error without changing the
+configuration. **⌘W** closes Settings and returns to the terminal.
+
+For isolated runs, `LOOM_CONFIG_FILE` overrides the config file and
+`LOOM_STATE_DIR` overrides the session-state directory (use absolute paths).
+Both the client and server must receive the same overrides. On macOS, a private
+`TMPDIR` also isolates the server socket. See [bench/README.md](bench/README.md)
+for the macOS terminal comparison suite.
 
 ## Shell Integration
 

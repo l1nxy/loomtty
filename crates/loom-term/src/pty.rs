@@ -158,22 +158,6 @@ impl Pty {
                 b.arg(c);
                 b
             }
-        } else if cfg!(target_os = "macos") && (shell.is_empty() || shell.contains('/')) {
-            // macOS terminals start the shell as a login shell (Terminal.app,
-            // iTerm2, Alacritty all do). An app launched from Finder/Dock
-            // inherits launchd's bare environment — PATH is just
-            // /usr/bin:/bin:/usr/sbin:/sbin — and only login-time config
-            // (/etc/zprofile's path_helper, `brew shellenv` in ~/.zprofile or
-            // fish's config) fills it in. `new_default_prog` runs `$SHELL`
-            // with a `-`-prefixed argv0, the conventional login-shell marker.
-            let shell_path = if shell.is_empty() {
-                default_shell()
-            } else {
-                shell.to_string()
-            };
-            let mut b = CommandBuilder::new_default_prog();
-            b.env("SHELL", shell_path);
-            b
         } else if !shell.is_empty() {
             CommandBuilder::new(shell)
         } else if cfg!(windows) {
@@ -181,6 +165,11 @@ impl Pty {
         } else {
             CommandBuilder::new(default_shell())
         };
+
+        #[cfg(target_os = "macos")]
+        if shell.is_empty() {
+            configure_macos_login_shell(&mut cmd, command);
+        }
 
         // launchd hands GUI apps no locale, so shells fall back to the "C"
         // locale and mangle non-ASCII input/output. Mirror Terminal.app and
@@ -450,5 +439,49 @@ impl Drop for Pty {
         }
         // Reader thread exits once the pipe returns EOF/error after
         // ClosePseudoConsole completes (or fd close on Unix).
+    }
+}
+
+/// Finder launches do not inherit an interactive shell's PATH. A login shell
+/// reads /etc/zprofile (path_helper), ~/.zprofile, or the equivalent startup
+/// files. Explicit commands and configured shell programs keep their own argv.
+#[cfg(target_os = "macos")]
+fn configure_macos_login_shell(cmd: &mut CommandBuilder, command: Option<&str>) {
+    if command.is_some_and(|command| !command.is_empty()) {
+        return;
+    }
+    let shell = cmd
+        .get_argv()
+        .first()
+        .and_then(|program| std::path::Path::new(program).file_name())
+        .and_then(|name| name.to_str());
+    if matches!(shell, Some("zsh" | "bash" | "sh" | "fish" | "ksh" | "dash")) {
+        cmd.arg("-l");
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    use super::*;
+
+    #[test]
+    fn standard_interactive_shells_are_login_shells() {
+        for shell in ["/bin/zsh", "/bin/bash", "/opt/homebrew/bin/fish"] {
+            let mut cmd = CommandBuilder::new(shell);
+            configure_macos_login_shell(&mut cmd, None);
+            assert_eq!(cmd.get_argv()[1], "-l");
+        }
+    }
+
+    #[test]
+    fn explicit_commands_and_custom_programs_keep_their_arguments() {
+        let mut cmd = CommandBuilder::new("sh");
+        cmd.args(["-c", "printf hello"]);
+        let original = cmd.get_argv().clone();
+        configure_macos_login_shell(&mut cmd, Some("printf hello"));
+        assert_eq!(*cmd.get_argv(), original);
+        let mut cmd = CommandBuilder::new("custom-shell");
+        configure_macos_login_shell(&mut cmd, None);
+        assert_eq!(cmd.get_argv().len(), 1);
     }
 }

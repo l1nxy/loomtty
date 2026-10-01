@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<dictionary title="loomtty">
+  <suite name="loomtty Suite" code="Loom" description="Native windows, tabs, and multiplexed terminals.">
+    <command name="get" code="coregetd" description="Read an object or property.">
+      <cocoa class="NSGetCommand"/>
+      <direct-parameter type="specifier"/>
+      <result type="any"/>
+    </command>
+    <command name="count" code="corecnte" description="Count objects.">
+      <cocoa class="NSCountCommand"/>
+      <direct-parameter type="specifier"/>
+      <parameter name="each" code="kocl" type="type" optional="yes" hidden="yes"><cocoa key="ObjectClass"/></parameter>
+      <result type="integer"/>
+    </command>
+    <command name="exists" code="coredoex" description="Test whether an object exists.">
+      <cocoa class="NSExistsCommand"/>
+      <direct-parameter type="specifier"/>
+      <result type="boolean"/>
+    </command>
+    <class name="application" code="capp" description="The loomtty application.">
+      <cocoa class="NSApplication"/>
+      <property name="name" code="pnam" type="text" access="r"/>
+      <property name="version" code="vers" type="text" access="r"/>
+      <property name="frontmost" code="pisf" type="boolean" access="r"/>
+      <property name="front window" code="pfrw" type="window" access="r"><cocoa key="loomFrontWindow"/></property>
+      <element type="window" access="r"><cocoa key="loomWindows"/></element>
+      <element type="tab" access="r"><cocoa key="loomTabs"/></element>
+      <element type="terminal" access="r"><cocoa key="loomTerminals"/></element>
+    </class>
+    <class name="window" code="cwin" description="A native window containing one or more tabs. Quick Terminal is excluded.">
+      <cocoa class="LoomScriptWindow"/>
+      <property name="id" code="ID  " type="text" access="r"><cocoa key="uniqueID"/></property>
+      <property name="name" code="pnam" type="text" access="r"/>
+      <property name="selected tab" code="stAb" type="tab" access="r"><cocoa key="selectedTab"/></property>
+      <property name="focused terminal" code="fTrm" type="terminal" access="r"><cocoa key="focusedTerminal"/></property>
+      <element type="tab" access="r"/>
+      <element type="terminal" access="r"/>
+      <responds-to command="focus"><cocoa method="handleLoomScriptCommand:"/></responds-to>
+      <responds-to command="close window"><cocoa method="handleLoomScriptCommand:"/></responds-to>
+    </class>
+    <class name="tab" code="Ltab" description="A native tab attached to a loom session.">
+      <cocoa class="LoomScriptTab"/>
+      <property name="id" code="ID  " type="text" access="r"><cocoa key="uniqueID"/></property>
+      <property name="name" code="pnam" type="text" access="r"/>
+      <property name="session name" code="sNam" type="text" access="r"><cocoa key="sessionName"/></property>
+      <property name="ready" code="rEdy" type="boolean" access="r"/>
+      <property name="focused terminal" code="fTrm" type="terminal" access="r"><cocoa key="focusedTerminal"/></property>
+      <element type="terminal" access="r"/>
+      <responds-to command="focus"><cocoa method="handleLoomScriptCommand:"/></responds-to>
+      <responds-to command="close tab"><cocoa method="handleLoomScriptCommand:"/></responds-to>
+    </class>
+    <class name="terminal" code="Ltrm" description="One live pane. Its ID expires on disconnection or session change.">
+      <cocoa class="LoomScriptTerminal"/>
+      <property name="id" code="ID  " type="text" access="r"><cocoa key="uniqueID"/></property>
+      <property name="name" code="pnam" type="text" access="r"/>
+      <property name="working directory" code="wDir" type="text" access="r"><cocoa key="workingDirectory"/></property>
+      <property name="session name" code="sNam" type="text" access="r"><cocoa key="sessionName"/></property>
+      <responds-to command="split terminal"><cocoa method="handleLoomScriptCommand:"/></responds-to>
+      <responds-to command="focus"><cocoa method="handleLoomScriptCommand:"/></responds-to>
+      <responds-to command="close terminal"><cocoa method="handleLoomScriptCommand:"/></responds-to>
+    </class>
+    <command name="new window" code="Loomnwin" description="Create a normal window and wait for its terminal connection (up to 30 seconds).">
+      <cocoa class="LoomScriptCommand"/>
+      <parameter name="working directory" code="wDir" type="text" optional="yes"><cocoa key="directory"/></parameter>
+      <result type="window"/>
+    </command>
+    <command name="new tab" code="Loomntab" description="Create a native tab in the target window (or the active window) and wait for its terminal connection.">
+      <cocoa class="LoomScriptCommand"/>
+      <parameter name="in window" code="targ" type="window" optional="yes"><cocoa key="target"/></parameter>
+      <parameter name="working directory" code="wDir" type="text" optional="yes"><cocoa key="directory"/></parameter>
+      <result type="tab"/>
+    </command>
+    <command name="split terminal" code="Loomsplt" description="Create a column to the right or a stacked tile below the target and return that exact terminal. Requires the matching loomtty-server build.">
+      <cocoa class="LoomScriptCommand"/>
+      <direct-parameter type="terminal"/>
+      <parameter name="direction" code="dire" type="text" optional="yes" description="right (default) or down"/>
+      <result type="terminal"/>
+    </command>
+    <command name="focus" code="Loomfocs" description="Activate a window, select a tab, or focus a terminal.">
+      <cocoa class="LoomScriptCommand"/>
+      <direct-parameter type="specifier"/>
+    </command>
+    <command name="close terminal" code="Loomctrm" description="Close a pane and its PTY.">
+      <cocoa class="LoomScriptCommand"/>
+      <direct-parameter type="terminal"/>
+    </command>
+    <command name="close tab" code="Loomctab" description="Detach a native tab, preserving its server session.">
+      <cocoa class="LoomScriptCommand"/>
+      <direct-parameter type="tab"/>
+    </command>
+    <command name="close window" code="Loomcwin" description="Detach every native tab in a window, preserving server sessions.">
+      <cocoa class="LoomScriptCommand"/>
+      <direct-parameter type="window"/>
+    </command>
+    <command name="input text" code="Loominpt" description="Send exact UTF-8 text to one terminal. No newline or bracketed-paste wrapper is added. Completion means queued for delivery, not that the shell finished processing it.">
+      <cocoa class="LoomScriptCommand"/>
+      <direct-parameter type="text"/>
+      <parameter name="to" code="targ" type="terminal"><cocoa key="target"/></parameter>
+    </command>
+  </suite>
+</dictionary>

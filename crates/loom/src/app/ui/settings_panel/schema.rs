@@ -1184,6 +1184,38 @@ pub fn display_value(field: SettingsField, c: &LoomConfig) -> String {
 
 // ── Mutation ────────────────────────────────────────────────────────
 
+/// Absolute input from a native number field / stepper. Reject invalid values
+/// before writing, using the same bounds as the cross-platform settings UI.
+pub fn set_number(field: SettingsField, c: &mut LoomConfig, value: f64) -> Result<bool, String> {
+    if !value.is_finite() {
+        return Err("Enter a finite number.".into());
+    }
+    match meta(field).kind {
+        FieldKind::Float { min, max, .. } => {
+            if value < min as f64 - 1e-6 || value > max as f64 + 1e-6 {
+                return Err(format!("Enter a value between {min} and {max}."));
+            }
+            let next = (value as f32).clamp(min, max);
+            let changed = read_float(field, c) != next;
+            if changed {
+                write_float(field, c, next);
+            }
+            Ok(changed)
+        }
+        FieldKind::Int { min, max, .. } => {
+            if value.fract() != 0.0 || value < min as f64 || value > max as f64 {
+                return Err(format!("Enter a whole number between {min} and {max}."));
+            }
+            let changed = read_int(field, c) != value as usize;
+            if changed {
+                write_int(field, c, value as usize);
+            }
+            Ok(changed)
+        }
+        _ => Err("This setting is not numeric.".into()),
+    }
+}
+
 /// Apply a stepper press. Clamps to the field's `[min, max]`.
 /// Returns `true` if the value actually changed (callers use this to
 /// gate redraws / writes).

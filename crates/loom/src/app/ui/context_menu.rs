@@ -16,10 +16,10 @@ use loom_ui::{
     AnchorCorner, Div, ElevationIndex, IntoElement, Render, RenderCtx, Styled, anchored, div, text,
 };
 
-const HIT_MENU: u64 = 1;
-const HIT_SCROLLBAR_THUMB: u64 = 2;
-const HIT_SCROLLBAR_TRACK: u64 = 3;
-const HIT_ENTRY_BASE: u64 = 1_000_000;
+pub(super) const HIT_MENU: u64 = 1;
+pub(super) const HIT_SCROLLBAR_THUMB: u64 = 2;
+pub(super) const HIT_SCROLLBAR_TRACK: u64 = 3;
+pub(super) const HIT_ENTRY_BASE: u64 = 1_000_000;
 
 fn entry_hit_id(index: usize) -> u64 {
     HIT_ENTRY_BASE + index as u64
@@ -252,6 +252,12 @@ impl ContextMenuComponent {
             viewport: [cx.viewport_w, cx.viewport_h],
             scale: 1.0,
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn accessibility_layout(&self, cx: &UiContext<'_>) -> loom_ui::LayoutSnapshot {
+        let root = self.build_tree(&Self::render_cx(cx));
+        super::types::with_hit_layout(&root, cx, Clone::clone)
     }
 
     pub(super) fn hit_test(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> UiContextMenuHit {

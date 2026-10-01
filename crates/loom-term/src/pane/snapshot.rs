@@ -119,16 +119,36 @@ impl Pane {
             return None;
         }
 
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        // Internal change-detection fingerprint, never a wire value or map
+        // key. Hash the packed POD in one write per cell rather than hashing
+        // each tiny field (including array lengths) separately with SipHash.
+        let mut hasher = twox_hash::XxHash64::with_seed(0);
         for col in 0..cols {
             let point = Point::new(Line(line as i32), Column(col));
-            let cell = pack_cell(&grid[point]);
-            cell.ch_bytes.hash(&mut hasher);
-            [cell.fg.tag, cell.fg.b1, cell.fg.b2, cell.fg.b3].hash(&mut hasher);
-            [cell.bg.tag, cell.bg.b1, cell.bg.b2, cell.bg.b3].hash(&mut hasher);
-            cell.flags.hash(&mut hasher);
+            let source = &grid[point];
+            let cell = pack_cell(source);
+            hasher.write(bytemuck::bytes_of(&cell));
+            // PackedCell holds only the leading scalar. A combining mark or
+            // ZWJ arriving in a later PTY chunk must still invalidate the row.
+            source.zerowidth().unwrap_or_default().hash(&mut hasher);
         }
         Some(hasher.finish())
+    }
+
+    /// CellDelta carries packed cells only. Send a full snapshot when any
+    /// changed cell needs the separate grapheme overflow table.
+    pub fn damage_requires_grapheme_sync(&self, ranges: &[(u16, u16, u16)]) -> bool {
+        let grid = self.term.grid();
+        ranges.iter().any(|&(line, left, right)| {
+            (line as usize) < grid.screen_lines()
+                && (left as usize..=usize::from(right).min(grid.columns().saturating_sub(1))).any(
+                    |col| {
+                        grid[Point::new(Line(line as i32), Column(col))]
+                            .zerowidth()
+                            .is_some_and(|marks| !marks.is_empty())
+                    },
+                )
+        })
     }
 
     pub fn write_cells_into_sm(

@@ -20,7 +20,7 @@ pub struct LoomConfig {
     pub keys: KeybindConfig,
     #[garde(skip)]
     pub theme: ThemeConfig,
-    #[garde(skip)]
+    #[garde(dive)]
     pub window: WindowConfig,
     #[garde(dive)]
     pub terminal: TerminalConfig,
@@ -195,7 +195,11 @@ impl Default for FontConfig {
     fn default() -> Self {
         FontConfig {
             family: default_font_family().to_string(),
-            size: 10.0,
+            size: if cfg!(target_os = "macos") {
+                13.0
+            } else {
+                10.0
+            },
             ui: None,
             features: Vec::new(),
             disable_ligatures: DisableLigatures::Never,
@@ -387,17 +391,126 @@ impl Default for AnimationConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// macOS Option-key behavior. Invalid values fail config parsing.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MacosOptionAsAlt {
+    None,
+    #[default]
+    Left,
+    Right,
+    Both,
+}
+
+/// Screen edge used by the macOS Quick Terminal.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum QuickTerminalPosition {
+    #[default]
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum QuickTerminalScreen {
+    #[default]
+    Mouse,
+    Main,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, PartialEq)]
+#[serde(default)]
+pub struct MacosQuickTerminalConfig {
+    /// Empty disables the global hotkey; View → Quick Terminal still works.
+    #[garde(skip)]
+    pub shortcut: String,
+    #[garde(skip)]
+    pub position: QuickTerminalPosition,
+    #[garde(skip)]
+    pub screen: QuickTerminalScreen,
+    /// Fractions of the usable screen (excluding menu bar, notch and Dock).
+    #[garde(custom(validate_screen_fraction))]
+    pub width: f64,
+    #[garde(custom(validate_screen_fraction))]
+    pub height: f64,
+    #[garde(range(max = 1000))]
+    pub animation_ms: u64,
+    #[garde(skip)]
+    pub autohide: bool,
+}
+
+fn validate_screen_fraction(value: &f64, _context: &()) -> garde::Result {
+    if (0.1..=1.0).contains(value) {
+        Ok(())
+    } else {
+        Err(garde::Error::new(
+            "must be a finite screen fraction between 0.1 and 1.0",
+        ))
+    }
+}
+
+impl Default for MacosQuickTerminalConfig {
+    fn default() -> Self {
+        Self {
+            shortcut: String::new(),
+            position: QuickTerminalPosition::Top,
+            screen: QuickTerminalScreen::Mouse,
+            width: 1.0,
+            height: 0.4,
+            animation_ms: 180,
+            autohide: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(default)]
 pub struct WindowConfig {
+    /// Which Option key sends terminal Alt; the other retains macOS text input.
+    #[garde(skip)]
+    pub macos_option_as_alt: MacosOptionAsAlt,
+    /// Enable Secure Event Input while a focused terminal reads a password.
+    #[garde(skip)]
+    pub macos_secure_input: bool,
+    /// By default keep the application in the Dock after closing its last window.
+    #[garde(skip)]
+    pub macos_quit_after_last_window_closed: bool,
+    /// Set false for a menu/Dock app that creates windows only on demand.
+    #[garde(skip)]
+    pub macos_initial_window: bool,
+    /// Restore normal window frames, sessions and native tab groups on default launch.
+    #[garde(skip)]
+    pub macos_restore_windows: bool,
+    /// Allow AppleScript to query and control native windows and terminals.
+    #[garde(skip)]
+    pub macos_applescript: bool,
+    /// Allow Shortcuts App Intents to query and control terminals (bundled builds).
+    #[garde(skip)]
+    pub macos_app_intents: bool,
+    #[garde(dive)]
+    pub macos_quick_terminal: MacosQuickTerminalConfig,
+    #[garde(skip)]
     pub width: f64,
+    #[garde(skip)]
     pub height: f64,
+    #[garde(skip)]
     pub title: String,
 }
 
 impl Default for WindowConfig {
     fn default() -> Self {
         WindowConfig {
+            macos_option_as_alt: MacosOptionAsAlt::Left,
+            macos_secure_input: true,
+            macos_quit_after_last_window_closed: false,
+            macos_initial_window: true,
+            macos_restore_windows: true,
+            macos_applescript: true,
+            macos_app_intents: true,
+            macos_quick_terminal: MacosQuickTerminalConfig::default(),
             width: 1024.0,
             height: 768.0,
             title: "loomtty".to_string(),
@@ -1565,5 +1678,55 @@ mod font_feature_tests {
         assert_eq!(cfg.adjust_underline_position, 0.0);
         assert_eq!(cfg.adjust_strikethrough_position, 0.0);
         assert_eq!(cfg.weight, None);
+    }
+}
+
+#[cfg(test)]
+mod macos_window_tests {
+    use super::*;
+
+    #[test]
+    fn quick_terminal_rejects_invalid_sizes_and_unbounded_animations() {
+        for setting in [
+            "width = 0.0",
+            "height = 1.1",
+            "width = nan",
+            "animation_ms = 1001",
+        ] {
+            let text = format!("[window.macos_quick_terminal]\n{setting}");
+            let config: LoomConfig = toml::from_str(&text).unwrap();
+            assert!(config.validate().is_err(), "accepted {setting}");
+        }
+        let config: LoomConfig = toml::from_str("[window.macos_quick_terminal]\nposition = 'left'\nscreen = 'mouse'\nwidth = 0.5\nheight = 1.0\nanimation_ms = 0").unwrap();
+        assert!(config.validate().is_ok());
+        assert_eq!(
+            config.window.macos_quick_terminal.position,
+            QuickTerminalPosition::Left
+        );
+    }
+
+    #[test]
+    fn old_window_config_keeps_native_defaults() {
+        let config: WindowConfig = toml::from_str("width = 1280.0").unwrap();
+        assert_eq!(config.macos_option_as_alt, MacosOptionAsAlt::Left);
+        assert!(config.macos_secure_input);
+        assert!(!config.macos_quit_after_last_window_closed);
+        assert!(config.macos_applescript);
+        assert!(config.macos_app_intents);
+    }
+
+    #[test]
+    fn option_key_policy_is_validated() {
+        for (value, expected) in [
+            ("none", MacosOptionAsAlt::None),
+            ("left", MacosOptionAsAlt::Left),
+            ("right", MacosOptionAsAlt::Right),
+            ("both", MacosOptionAsAlt::Both),
+        ] {
+            let config: WindowConfig =
+                toml::from_str(&format!("macos_option_as_alt = {value:?}")).unwrap();
+            assert_eq!(config.macos_option_as_alt, expected);
+        }
+        assert!(toml::from_str::<WindowConfig>("macos_option_as_alt = 'typo'").is_err());
     }
 }

@@ -1,6 +1,6 @@
 use loom_protocol::message::PackedCell;
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::PREDICTION_TIMEOUT_SECS;
 use super::utf8::Utf8Accum;
@@ -15,6 +15,7 @@ pub(super) struct OverlayCell {
     pub min_echo_ack: u64,
     pub original_ch: char,
     pub unknown: bool,
+    pub typed: bool,
 }
 
 impl OverlayCell {
@@ -27,12 +28,14 @@ impl OverlayCell {
             min_echo_ack: 0,
             original_ch: '\0',
             unknown: false,
+            typed: false,
         }
     }
 
     pub fn reset(&mut self) {
         self.active = false;
         self.unknown = false;
+        self.typed = false;
     }
 }
 
@@ -62,10 +65,16 @@ pub struct PredictedCursor {
 }
 
 pub struct PaneOverlay {
+    pub(super) expires_at: Option<Instant>,
+    pub(super) context_flags: u16,
+    pub(super) last_server_cursor: Option<(i16, u16)>,
+    /// App-owned screens need evidence that printable keys actually edit text.
+    /// A normal-mode Vim command is not an editable-input anchor.
+    pub(super) needs_echo_evidence: bool,
+    pub(super) local_edit_confirmed: bool,
     pub(super) rows: HashMap<u16, OverlayRow>,
     /// Predicted cursor history, sorted by epoch ascending. The back is the
-    /// "current" predicted position. Mirrors mosh's `std::list<ConditionalCursorMove> cursors`
-    /// (terminaloverlay.cc) — keeping a per-epoch trail lets validation drop
+    /// "current" predicted position. Keeping a per-epoch trail lets validation drop
     /// older mispredictions without resetting the whole overlay, and only
     /// reset when the newest cursor itself is wrong.
     pub cursors: Vec<PredictedCursor>,
@@ -91,6 +100,11 @@ pub struct PaneOverlay {
 impl PaneOverlay {
     pub fn new(cols: u16) -> Self {
         Self {
+            expires_at: None,
+            context_flags: 0,
+            last_server_cursor: None,
+            needs_echo_evidence: false,
+            local_edit_confirmed: false,
             rows: HashMap::new(),
             cursors: Vec::new(),
             local_edit_start: None,
@@ -104,6 +118,21 @@ impl PaneOverlay {
 
     pub fn increment_epoch(&mut self) {
         self.prediction_epoch += 1;
+    }
+
+    pub(super) fn refresh_expiry(&mut self) {
+        self.expires_at = self
+            .rows
+            .values()
+            .flat_map(|row| {
+                row.cells
+                    .iter()
+                    .filter(|cell| cell.active)
+                    .map(|cell| cell.created_at)
+            })
+            .chain(self.cursors.iter().map(|cursor| cursor.created_at))
+            .min()
+            .map(|created| created + Duration::from_secs(PREDICTION_TIMEOUT_SECS));
     }
 
     pub(super) fn get_or_make_row(&mut self, row: u16) -> &mut OverlayRow {

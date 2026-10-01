@@ -22,6 +22,8 @@ pub use types::{LinkMatch, ScrollbackRow};
 /// `scroll_offset = 0` means showing the live viewport (bottom of buffer).
 /// `scroll_offset > 0` means viewing history (scrolled up N lines from bottom).
 pub struct ClientPaneGrid {
+    /// Server-content revision, independent of renderer dirty-flag lifetime.
+    content_revision: u64,
     pub cols: u16,
     pub rows: u16,
     /// History rows (oldest first), each with a wrap flag for reflow.
@@ -66,6 +68,7 @@ pub struct ClientPaneGrid {
 impl ClientPaneGrid {
     pub fn new(cols: u16, rows: u16, max_scrollback: usize) -> Self {
         ClientPaneGrid {
+            content_revision: 0,
             cols,
             rows,
             scrollback: VecDeque::with_capacity(max_scrollback),
@@ -108,6 +111,20 @@ impl ClientPaneGrid {
                 &[]
             }
         }
+    }
+
+    /// Read one absolute buffer row for native text/accessibility adapters.
+    /// Out-of-range indices return an empty slice.
+    pub fn buffer_row(&self, buf_row: usize) -> &[PackedCell] {
+        if buf_row >= self.buffer_len() {
+            return &[];
+        }
+        self.row(buf_row)
+    }
+
+    /// Native text adapters can cache a snapshot without consuming render damage.
+    pub fn content_revision(&self) -> u64 {
+        self.content_revision
     }
 
     /// Total number of lines in the buffer (scrollback + viewport).

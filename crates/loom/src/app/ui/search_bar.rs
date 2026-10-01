@@ -32,12 +32,17 @@ impl SearchBarComponent {
         paint_element_tree(&root, cx, scene);
     }
 
-    fn build_tree(&self, cx: &RenderCtx<'_>) -> Div {
+    pub(super) fn bounds(&self) -> [f32; 4] {
         let bar_height = self.cell_h + 4.0;
         let bar_y = self.pane_rect.y + self.pane_rect.h - self.border_w - bar_height;
         let bar_x = self.pane_rect.x + self.border_w;
         let bar_w = self.pane_rect.w - self.border_w * 2.0;
 
+        [bar_x, bar_y, bar_w, bar_height]
+    }
+
+    fn build_tree(&self, cx: &RenderCtx<'_>) -> Div {
+        let [bar_x, bar_y, bar_w, bar_height] = self.bounds();
         let match_info = if self.matches_len == 0 {
             if self.query.is_empty() {
                 String::new()

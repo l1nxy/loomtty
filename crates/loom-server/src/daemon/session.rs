@@ -640,12 +640,9 @@ impl Session {
                 self.last_tick_had_pty_data = true;
                 // Promote any pending received-but-unacked input seqs for
                 // this pane. PTY output flowing back is strong evidence the
-                // application has reacted to recent inputs; with the event-
-                // driven tick loop throttled at ~16ms (`tick.rs`) and sub-ms
-                // typical PTY echo latency, the very common case is "all
-                // inputs from the prior interval have been echoed and are
-                // included in this drain", so the framebuffer state below
-                // genuinely reflects them.
+                // application has reacted to recent inputs. This remains a
+                // heuristic: the event-driven loop can drain a prefix of a
+                // burst before all of its echoes have arrived.
                 //
                 // Residual coalescing race: if a burst of inputs is written
                 // to the PTY and only a prefix of their echoes is present in
@@ -776,10 +773,15 @@ impl Session {
                 let g = self.generation.entry(pane_id).or_insert(0);
                 *g += 1;
 
+                let needs_graphemes = pane.damage_requires_grapheme_sync(&content_ranges);
                 for client in clients.values_mut() {
                     if client.session_name == self.session_name {
                         let acc = client.damage.entry(pane_id).or_default();
-                        acc.merge_ranges(&content_ranges);
+                        if needs_graphemes {
+                            acc.mark_full();
+                        } else {
+                            acc.merge_ranges(&content_ranges);
+                        }
                         acc.cursor_dirty = true;
                     }
                 }
@@ -911,6 +913,38 @@ mod tests {
             session_name: session_name.to_string(),
             last_sent_cursor: HashMap::new(),
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn grapheme_output_uses_full_sync_for_connected_clients() {
+        let mut session = Session::new("unicode", test_shell(), 8.0, TerminalColors::default());
+        let pane = Pane::new_with_opts(
+            1,
+            16,
+            3,
+            test_shell(),
+            Some("printf 'e\\314\\201'; sleep 5"),
+            None,
+        )
+        .expect("pane");
+        session.panes.insert(1, pane);
+        let mut clients =
+            HashMap::from([(1, test_client(1, "unicode")), (2, test_client(2, "other"))]);
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            session.process_pty_and_damage(&mut clients);
+            if !session.panes[&1].snapshot(0).grapheme_extras.0.is_empty() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "PTY produced no combining mark"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(clients[&1].damage[&1].full);
+        assert!(!clients[&2].damage.contains_key(&1));
     }
 
     #[test]

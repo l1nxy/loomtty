@@ -37,6 +37,7 @@ export const HELLO_FIXTURES: HelloFixture[] = [
 ];
 
 export const CLIENT_FIXTURES: Fixture<ClientMessage>[] = [
+  { name: "Targeted pane creation", hex: "81ac43726561746550616e654174932ac3cd2329", value: { tag: "CreatePaneAt", paneId: 42n, below: true, requestId: 9001n } },
   { name: "Input bytes", hex: "81a5496e707574932a9361626307", value: { tag: "Input", paneId: 42n, data: new Uint8Array([0x61, 0x62, 0x63]), inputSeq: 7n } },
   { name: "Ack u64", hex: "81a341636b91cd3039", value: { tag: "Ack", generation: 12345n } },
   { name: "Attach (unit)", hex: "a6417474616368", value: { tag: "Attach" } },
@@ -49,6 +50,7 @@ export const CLIENT_FIXTURES: Fixture<ClientMessage>[] = [
 ];
 
 export const SERVER_FIXTURES: Fixture<ServerMessage>[] = [
+  { name: "Correlated pane creation result", hex: "81b250616e654372656174696f6e526573756c7493cd23292bc0", value: { tag: "PaneCreationResult", requestId: 9001n, paneId: 43n, error: null } },
   { name: "Bell", hex: "81a442656c6c9109", value: { tag: "Bell", paneId: 9n } },
   { name: "ServerShutdown (unit)", hex: "ae53657276657253687574646f776e", value: { tag: "ServerShutdown" } },
   { name: "Error (string)", hex: "81a54572726f7291a4626f6f6d", value: { tag: "Error", message: "boom" } },

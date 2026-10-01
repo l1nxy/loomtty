@@ -1,0 +1,545 @@
+#!/usr/bin/env python3
+"""Benchmark loomtty, Alacritty, Kitty and Ghostty in real macOS GUI windows.
+
+Usage: python3 bench/macos_bench.py --rounds 3 --output /tmp/terminal-bench
+Requires a logged-in graphical session. See bench/README.md for methodology.
+"""
+
+import argparse
+import ctypes
+import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import platform
+import random
+import re
+import shlex
+import signal
+import statistics
+import subprocess
+import sys
+import time
+import traceback
+
+from terminal_workload import BULK, save_json
+
+ROOT = Path(__file__).resolve().parents[1]
+APPS = {
+    "loomtty": ROOT / "target/release/loomtty",
+    "alacritty": Path("/Applications/Alacritty.app/Contents/MacOS/alacritty"),
+    "kitty": Path("/Applications/kitty.app/Contents/MacOS/kitty"),
+    "ghostty": Path("/Applications/Ghostty.app/Contents/MacOS/ghostty"),
+}
+MIB = 1048576
+
+
+def capture(args, **kwargs):
+    return subprocess.check_output(list(map(str, args)), text=True, timeout=30, **kwargs).strip()
+
+
+class RUsage(ctypes.Structure):
+    # sys/resource.h, rusage_info_v0. Times are Mach ticks; memory is bytes.
+    _fields_ = [("uuid", ctypes.c_uint8 * 16)] + [
+        (field, ctypes.c_uint64) for field in (
+            "user_time", "system_time", "pkg_idle_wkups", "interrupt_wkups", "pageins",
+            "wired_size", "resident_size", "phys_footprint", "proc_start_abstime", "proc_exit_abstime")]
+
+
+class Process:
+    """Sample and signal only a process whose birth identity we have captured."""
+    def __init__(self, pid, label):
+        self.pid, self.label = pid, label
+        self.lib = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        self.lib.proc_pid_rusage.argtypes = (ctypes.c_int, ctypes.c_int, ctypes.c_void_p)
+        self.lib.proc_pid_rusage.restype = ctypes.c_int
+        class Timebase(ctypes.Structure):
+            _fields_ = [("numer", ctypes.c_uint32), ("denom", ctypes.c_uint32)]
+        base = Timebase()
+        system = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+        if system.mach_timebase_info(ctypes.byref(base)) or not base.denom:
+            raise RuntimeError("cannot determine Mach timebase")
+        self.seconds_per_tick = base.numer / base.denom / 1e9
+        self.identity = self.read()["identity"]
+
+    def read(self):
+        data = RUsage()
+        if self.lib.proc_pid_rusage(self.pid, 0, ctypes.byref(data)):
+            raise ProcessLookupError(self.pid)
+        if data.proc_exit_abstime:
+            raise ProcessLookupError(f"PID {self.pid} exited")
+        identity = data.proc_start_abstime
+        if hasattr(self, "identity") and identity != self.identity:
+            raise ProcessLookupError(f"PID {self.pid} was reused")
+        return dict(identity=identity, cpu_seconds=(data.user_time + data.system_time) * self.seconds_per_tick,
+                    rss_mib=data.resident_size / MIB, footprint_mib=data.phys_footprint / MIB,
+                    wakeups=data.pkg_idle_wkups + data.interrupt_wkups)
+
+    def stop(self):
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                self.read()
+                os.kill(self.pid, sig)
+            except ProcessLookupError:
+                return
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                try:
+                    self.read()
+                except ProcessLookupError:
+                    return
+                time.sleep(.05)
+
+
+def process_table():
+    result = {}
+    for line in capture(["ps", "-axo", "pid=,ppid=,command="]).splitlines():
+        fields = line.strip().split(None, 2)
+        if len(fields) == 3:
+            result[int(fields[0])] = (int(fields[1]), fields[2])
+    return result
+
+
+def check_build_interference():
+    """Fail a measurement rather than treating concurrent compilation as noise."""
+    builds = []
+    for line in capture(["ps", "-axo", "pid=,comm="]).splitlines():
+        fields = line.strip().split(None, 1)
+        if len(fields) == 2 and Path(fields[1]).name in ("cargo", "rustc"):
+            builds.append(fields[0])
+    if builds:
+        raise RuntimeError(f"concurrent Rust build/test processes detected: {', '.join(builds)}; retry when idle")
+
+
+def terminal_ancestor(worker_pid, binary):
+    table = process_table()
+    pid = worker_pid
+    while pid in table:
+        parent, command = table[pid]
+        if command.startswith(str(binary)):
+            return pid
+        if parent == pid:
+            break
+        pid = parent
+    raise RuntimeError(f"cannot identify benchmark terminal ancestor for worker {worker_pid}")
+
+
+def snapshot(processes):
+    components = {p.label: p.read() for p in processes}
+    return {**{key: sum(p[key] for p in components.values())
+               for key in ("cpu_seconds", "rss_mib", "footprint_mib", "wakeups")},
+            "components": components}
+
+
+def wait_file(path, timeout=40):
+    start = time.monotonic()
+    while time.monotonic() - start < timeout:
+        error = path.parent / "error.json"
+        if error.exists():
+            raise RuntimeError(json.loads(error.read_text())["error"])
+        if path.exists():
+            return json.loads(path.read_text())
+        time.sleep(.01)
+    raise TimeoutError(f"timed out waiting for {path}")
+
+
+def audit_terminal_log(app, terminal_log):
+    """A completed workload alone does not prove a valid performance run."""
+    result = {}
+    if "panicked at" in terminal_log:
+        result["error"] = "terminal process/thread panicked; see terminal.log"
+    if app == "loomtty":
+        match = re.search(r"cell: ([\d.]+)x([\d.]+).*dpi_scale=([\d.]+)", terminal_log)
+        if match:
+            result["display"] = dict(cell_width=float(match[1]), cell_height=float(match[2]),
+                                     dpi_scale=float(match[3]))
+        if "DPI changed:" in terminal_log or "config reloaded" in terminal_log:
+            result.setdefault("error", "DPI/config changed during benchmark; rerun on a stable display")
+    return result
+
+
+def write_config(app, directory, args, wrapper):
+    cols, rows = args.columns, args.rows
+    if app == "loomtty":
+        config = f'''[font]
+family = "Menlo"
+size = 10.0
+disable_ligatures = "always"
+[window]
+width = {args.loom_width or cols * 8.0}
+height = {args.loom_height or (rows + 2) * 15.5}
+title = "loom benchmark"
+[appearance]
+padding = 0.0
+border_width = 0.0
+column_gap = 0.0
+[statusbar]
+padding_ratio = 0.0
+[terminal]
+shell = {json.dumps(str(wrapper))}
+default_cols = {cols}
+default_rows = {rows}
+cursor_blink = false
+scrollback_lines = 10000
+[render]
+backend = "blade"
+'''
+        suffix = "toml"
+    elif app == "alacritty":
+        config = f'''[general]
+live_config_reload = false
+[window]
+dimensions = {{ columns = {cols}, lines = {rows} }}
+padding = {{ x = 0, y = 0 }}
+dynamic_padding = false
+opacity = 1.0
+[font]
+normal = {{ family = "Menlo", style = "Regular" }}
+size = 10.0
+[scrolling]
+history = 10000
+[cursor]
+style = {{ shape = "Block", blinking = "Never" }}
+'''
+        suffix = "toml"
+    elif app == "kitty":
+        config = f'''font_family Menlo
+font_size 10.0
+disable_ligatures always
+remember_window_size no
+initial_window_width {cols}c
+initial_window_height {rows}c
+window_padding_width 0
+window_margin_width 0
+cursor_blink_interval 0
+scrollback_lines 10000
+shell_integration disabled
+confirm_os_window_close 0
+macos_quit_when_last_window_closed yes
+background_opacity 1.0
+'''
+        suffix = "conf"
+    else:
+        config = f'''font-family = Menlo
+font-size = 10
+font-feature = -liga
+font-feature = -calt
+window-width = {cols}
+window-height = {rows}
+window-padding-x = 0
+window-padding-y = 0
+window-save-state = never
+window-inherit-working-directory = false
+window-inherit-font-size = false
+cursor-style-blink = false
+scrollback-limit = 10000000
+shell-integration = none
+quit-after-last-window-closed = true
+background-opacity = 1
+macos-titlebar-style = native
+'''
+        suffix = "conf"
+    # Config watchers must never observe the high-churn result/handshake files.
+    # In particular, notify's macOS kqueue backend can panic on that churn.
+    config_dir = directory / "settings"
+    config_dir.mkdir(exist_ok=True)
+    path = config_dir / f"{app}.{suffix}"
+    path.write_text(config)
+    return path
+
+
+def measure_phase(directory, processes, sequence, command, timeout):
+    check_build_interference()
+    before = snapshot(processes)
+    start = time.monotonic()
+    save_json(directory / "command.json", {"id": sequence, **command})
+    path = directory / f"phase-{sequence}.json"
+    samples = [before]
+    while not path.exists():
+        if (directory / "error.json").exists():
+            raise RuntimeError(json.loads((directory / "error.json").read_text())["error"])
+        if time.monotonic() - start > timeout:
+            raise TimeoutError(f"{command['name']} exceeded {timeout}s")
+        time.sleep(.02)
+        samples.append(snapshot(processes))
+    elapsed = time.monotonic() - start
+    after = snapshot(processes)
+    samples.append(after)
+    check_build_interference()
+    result = json.loads(path.read_text())
+    cpu = after["cpu_seconds"] - before["cpu_seconds"]
+    result["resources"] = dict(
+        sample_seconds=elapsed, cpu_seconds=cpu, cpu_percent_one_core=100 * cpu / elapsed,
+        peak_rss_mib=max(s["rss_mib"] for s in samples),
+        peak_footprint_mib=max(s["footprint_mib"] for s in samples),
+        end_rss_mib=after["rss_mib"], end_footprint_mib=after["footprint_mib"],
+        wakeups=after["wakeups"] - before["wakeups"],
+        components={p.label: {
+            "cpu_seconds": after["components"][p.label]["cpu_seconds"] - before["components"][p.label]["cpu_seconds"],
+            "end_rss_mib": after["components"][p.label]["rss_mib"],
+            "end_footprint_mib": after["components"][p.label]["footprint_mib"],
+        } for p in processes},
+    )
+    return result
+
+
+def run_one(app, round_index, directory, args):
+    directory.mkdir(parents=True)
+    wrapper = directory / "worker.sh"
+    wrapper.write_text("#!/bin/sh\nexec " + shlex.join([
+        sys.executable, str(ROOT / "bench/terminal_workload.py"), str(directory)]) + "\n")
+    wrapper.chmod(0o700)
+    spec = dict(columns=args.columns, rows=args.rows, bytes=int(args.mib * MIB), worker_timeout=1800)
+    save_json(directory / "spec.json", spec)
+    config = write_config(app, directory, args, wrapper)
+    env = dict(os.environ, LANG="en_US.UTF-8", LC_ALL="en_US.UTF-8")
+    # Isolate app-specific caches/config; never replace HOME or user files.
+    env.update(XDG_CONFIG_HOME=str(directory / "config"), XDG_CACHE_HOME=str(directory / "cache"))
+    children, processes, phase_results = [], [], []
+    result = dict(app=app, round=round_index, phases=phase_results, config=config.read_text())
+    log = (directory / "terminal.log").open("w")
+    try:
+        start = time.monotonic_ns()
+        if app == "loomtty":
+            runtime = directory / "tmp"
+            runtime.mkdir()
+            env.update(TMPDIR=str(runtime), LOOM_CONFIG_FILE=str(config),
+                       LOOM_STATE_DIR=str(directory / "state"), RUST_LOG="info")
+            server = subprocess.Popen([str(args.loom_server), "--headless"], env=env, stdout=log, stderr=log)
+            children.append(server)
+            processes.append(Process(server.pid, "server"))
+            deadline = time.monotonic() + 20
+            while not (runtime / "loom/loom.sock").exists():
+                if server.poll() is not None or time.monotonic() > deadline:
+                    raise RuntimeError("private loomtty server did not start; see terminal.log")
+                time.sleep(.01)
+            command = [str(args.loom), f"bench-{os.getpid()}-{round_index}"]
+        elif app == "ghostty":
+            # Launch the native app executable as an owned new process. On
+            # macOS, `open -n` can activate an already-running instance instead,
+            # leaving the new instance waiting to create its initial window.
+            # Direct launch also captures the actual application's stderr.
+            command = [str(APPS[app]),
+                       "--config-default-files=false", f"--config-file={config}", "-e", str(wrapper)]
+        elif app == "kitty":
+            command = [str(APPS[app]), "--config", str(config), str(wrapper)]
+        else:
+            command = [str(APPS[app]), "--config-file", str(config), "-e", str(wrapper)]
+        child = subprocess.Popen(command, env=env, stdout=log, stderr=log)
+        children.append(child)
+        if app != "ghostty":
+            processes.append(Process(child.pid, "client" if app == "loomtty" else app))
+        ready = wait_file(directory / "ready.json")
+        worker_process = Process(ready["pid"], "worker")
+        if app == "ghostty":
+            processes.append(Process(terminal_ancestor(ready["pid"], APPS[app]), app))
+        result.update(ready=ready, startup_ms=(ready["ready_ns"] - start) / 1e6,
+                      processes={p.label: p.pid for p in processes})
+        if (ready["columns"], ready["rows"]) != (args.columns, args.rows):
+            raise RuntimeError(f"{app} grid is {ready['columns']}x{ready['rows']}; expected {args.columns}x{args.rows}")
+        wait_file(directory / "prepared.json")
+        time.sleep(1)
+        if args.probe:
+            result["probe"] = snapshot(processes)
+            return result
+        commands = [{"name": "idle", "seconds": args.idle_seconds}]
+        # Warm each code path/atlas before measurement; cold memory is kept above.
+        commands += [{"name": name, "warmup": True} for name in BULK]
+        commands += [{"name": "idle", "seconds": args.idle_seconds, "label": "warm_idle"}]
+        commands += [{"name": name} for name in BULK]
+        commands += [{"name": name, "samples": args.latency_samples} for name in ("latency", "loaded_latency")]
+        commands += [{"name": name, "frames": args.frames, "hz": 60} for name in ("tui_full", "tui_partial")]
+        commands += [{"name": "scrollback"}, {"name": "idle", "seconds": args.idle_seconds, "label": "post_idle"}]
+        for sequence, command in enumerate(commands):
+            phase = measure_phase(directory, processes, sequence, command, args.timeout)
+            phase["name"] = command.get("label", command["name"])
+            phase["warmup"] = command.get("warmup", False)
+            phase_results.append(phase)
+            save_json(directory / "result.json", result)
+            if not phase["warmup"]:
+                print(f"  {app}: {phase['name']} {phase['seconds']:.3f}s", flush=True)
+        return result
+    except Exception as error:
+        result["error"] = str(error)
+        result["traceback"] = traceback.format_exc()
+        return result
+    finally:
+        save_json(directory / "command.json", {"id": 1000000, "name": "exit"})
+        time.sleep(.2)
+        if "worker_process" in locals():
+            worker_process.stop()
+        # Recover ownership on startup failure using this unique config path.
+        if app == "ghostty" and not processes:
+            for pid, (_, command_line) in process_table().items():
+                if command_line.startswith(str(APPS[app])) and str(config) in command_line:
+                    processes.append(Process(pid, app))
+        for process in reversed(processes):
+            process.stop()
+        for child in children:
+            try:
+                child.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                child.terminate()
+                child.wait(timeout=3)
+        log.close()
+        terminal_log = (directory / "terminal.log").read_text(errors="replace")
+        for key, value in audit_terminal_log(app, terminal_log).items():
+            result.setdefault(key, value)
+        save_json(directory / "result.json", result)
+
+
+def phase(run, name):
+    return next(p for p in run["phases"] if p["name"] == name and not p["warmup"])
+
+
+def report(data, output):
+    apps = data["settings"]["apps"]
+    runs = {app: [r for r in data["runs"] if r["app"] == app and "error" not in r and not data["settings"]["probe"]]
+            for app in apps}
+    lines = ["# macOS terminal benchmark", "", f"Generated: {data['created_at']}", "",
+             f"{data['machine']['chip']}; macOS {data['machine']['macos']}; "
+             f"{data['settings']['columns']}×{data['settings']['rows']} cells; Menlo 10 pt.", "",
+             "Cells below are medians across fresh launches. Ranges are min–max, not confidence intervals.", "",
+             "| Metric | " + " | ".join(apps) + " |", "|---|" + "---:|" * len(apps)]
+
+    def row(label, value, digits=2, ranges=False):
+        cells = []
+        for app in apps:
+            values = [value(run) for run in runs[app]]
+            if not values:
+                cells.append("—")
+                continue
+            cell = f"{statistics.median(values):.{digits}f}"
+            if ranges:
+                cell += f" ({min(values):.{digits}f}–{max(values):.{digits}f})"
+            cells.append(cell)
+        lines.append(f"| {label} | " + " | ".join(cells) + " |")
+
+    row("Successful launches", lambda r: len(runs[r["app"]]), 0)
+    row("Launch → first DSR response (ms) ↓", lambda r: r["startup_ms"], 1, True)
+    for name, label in (("idle", "Cold idle"), ("warm_idle", "Warm idle"), ("post_idle", "After history")):
+        row(f"{label} RSS (MiB) ↓", lambda r, n=name: phase(r, n)["resources"]["end_rss_mib"], 1)
+        row(f"{label} physical footprint (MiB) ↓", lambda r, n=name: phase(r, n)["resources"]["end_footprint_mib"], 1)
+        row(f"{label} CPU (% of one core) ↓", lambda r, n=name: phase(r, n)["resources"]["cpu_percent_one_core"], 2)
+    for name in BULK:
+        row(f"{name} parser throughput (MiB/s) ↑", lambda r, n=name: phase(r, n)["mib_per_second"], 1, True)
+        row(f"{name} terminal CPU (s) ↓", lambda r, n=name: phase(r, n)["resources"]["cpu_seconds"], 3)
+    for name in ("latency", "loaded_latency", "tui_full", "tui_partial"):
+        row(f"{name} DSR p50 (ms) ↓", lambda r, n=name: phase(r, n)["p50_ms"], 3)
+        row(f"{name} DSR p95 (ms) ↓", lambda r, n=name: phase(r, n)["p95_ms"], 3)
+        row(f"{name} DSR p99 (ms) ↓", lambda r, n=name: phase(r, n)["p99_ms"], 3)
+        if name.startswith("tui_"):
+            row(f"{name} terminal CPU (%) ↓", lambda r, n=name: phase(r, n)["resources"]["cpu_percent_one_core"], 1)
+            row(f"{name} parser deadline misses ↓", lambda r, n=name: phase(r, n)["missed_deadlines"], 0)
+    row("Peak sampled RSS (MiB) ↓", lambda r: max(p["resources"]["peak_rss_mib"] for p in r["phases"]), 1)
+    row("Peak sampled physical footprint (MiB) ↓", lambda r: max(p["resources"]["peak_footprint_mib"] for p in r["phases"]), 1)
+    lines += ["", "## Scope and limitations", "",
+              "- loomtty includes both its GUI client and private server; other terminals include their GUI process. Workload Python/shell processes and WindowServer are excluded.",
+              "- DSR measures PTY delivery and terminal parsing. In loomtty the server answers it; it does not fence client rendering. These numbers are **not FPS or input-to-photon latency**.",
+              "- TUI workloads issue and acknowledge updates at 60 Hz. CPU includes a 250 ms settling tail. Deadline misses refer to parser acknowledgements, not displayed frames.",
+              "- Bulk tests run in the alternate screen so differing history storage cannot determine their result. The separate 10,000-line history test uses native limits: 10,000 lines vs Ghostty's 10 MB cap.",
+              "- Menlo and grid size match; rasterizer metrics, fallback fonts, chrome and renderer internals differ. A larger RSS is not necessarily a larger physical footprint; shared pages may be counted twice when summing loomtty processes.",
+              "- Fresh processes, warm OS/file caches; not a cold-boot startup benchmark. "
+              + ("Before/after order alternates each round. " if apps == ["before", "after"]
+                 else "App order is deterministically shuffled per round. ")
+              + "No disk cache flushing or system-wide tuning.",
+              "- Keep windows visible, connected to power and the machine otherwise idle. Window occlusion, background workloads, thermal state and macOS scheduling can affect results.",
+              "", "## Versions", ""]
+    for app in apps:
+        lines.append(f"- {app}: `{data['versions'][app]['text'].splitlines()[0]}`; binary SHA-256 `{data['versions'][app]['sha256']}`")
+        if "server_sha256" in data["versions"][app]:
+            lines.append(f"  - loomtty-server SHA-256 `{data['versions'][app]['server_sha256']}`")
+    errors = [r for r in data["runs"] if "error" in r]
+    if data.get("source_batches"):
+        lines += ["", "## Supplemental runs", "",
+                  "Failed initial launches were retried in separate batches. These are not three uninterrupted shuffled rounds. Each run's source_batch and source_directory, and source_batches metadata, preserve provenance; all failed attempts remain excluded from medians."]
+    if errors:
+        lines += ["", "## Failed runs (not included in medians)", ""]
+        lines += [f"- {r['app']} round {r['round']}: {r['error']}" for r in errors]
+    (output / "report.md").write_text("\n".join(lines) + "\n")
+
+
+def argument_parser():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--apps", nargs="+", choices=APPS, default=list(APPS))
+    parser.add_argument("--rounds", type=int, default=3)
+    parser.add_argument("--mib", type=float, default=8, help="Minimum bytes per bulk workload in MiB")
+    parser.add_argument("--columns", type=int, default=100)
+    parser.add_argument("--rows", type=int, default=30)
+    parser.add_argument("--frames", type=int, default=300)
+    parser.add_argument("--latency-samples", type=int, default=200)
+    parser.add_argument("--idle-seconds", type=float, default=5)
+    parser.add_argument("--seed", type=int, default=5306)
+    parser.add_argument("--timeout", type=float, default=120, help="Per-phase timeout")
+    parser.add_argument("--output", type=Path, default=Path("/tmp") / datetime.datetime.now().strftime("loom-bench-%Y%m%d-%H%M%S"))
+    parser.add_argument("--loom", type=Path, default=APPS["loomtty"])
+    parser.add_argument("--loom-server", type=Path, default=ROOT / "target/release/loomtty-server")
+    parser.add_argument("--loom-width", type=float, help="Logical pixels for grid calibration on a different display")
+    parser.add_argument("--loom-height", type=float, help="Logical pixels for grid calibration on a different display")
+    parser.add_argument("--probe", action="store_true", help="Only verify startup, grid and process ownership")
+    return parser
+
+
+def main():
+    parser = argument_parser()
+    args = parser.parse_args()
+    if platform.system() != "Darwin":
+        parser.error("this runner requires macOS; the workload module uses portable POSIX APIs")
+    if min(args.rounds, args.frames, args.latency_samples, args.mib, args.idle_seconds, args.timeout) <= 0:
+        parser.error("counts and durations must be positive")
+    if not 20 <= args.columns <= 250 or not 5 <= args.rows <= 100:
+        parser.error("grid must be within 20..250 columns and 5..100 rows")
+    args.output = args.output.expanduser().resolve()
+    args.loom, args.loom_server = args.loom.resolve(), args.loom_server.resolve()
+    if args.output.exists() and any(args.output.iterdir()):
+        parser.error("output directory must be new or empty (results are never overwritten)")
+    args.output.mkdir(parents=True, exist_ok=True)
+    APPS["loomtty"] = args.loom
+    for app in args.apps:
+        if not APPS[app].is_file():
+            parser.error(f"missing {APPS[app]}; see bench/README.md")
+    versions = {app: {"text": capture([APPS[app], "+version" if app == "ghostty" else "--version"]),
+                      "sha256": hashlib.sha256(APPS[app].read_bytes()).hexdigest()}
+                for app in args.apps}
+    if "loomtty" in args.apps:
+        if not args.loom_server.is_file():
+            parser.error(f"missing {args.loom_server}")
+        versions["loomtty"]["server_sha256"] = hashlib.sha256(args.loom_server.read_bytes()).hexdigest()
+    data = dict(schema_version=1, created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                machine=dict(chip=capture(["sysctl", "-n", "machdep.cpu.brand_string"]),
+                             macos=capture(["sw_vers", "-productVersion"]),
+                             memory_bytes=int(capture(["sysctl", "-n", "hw.memsize"])),
+                             architecture=platform.machine(), python=sys.version,
+                             power=capture(["pmset", "-g", "batt"]), thermal=capture(["pmset", "-g", "therm"])),
+                settings={k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
+                versions=versions, git_head=capture(["git", "-C", ROOT, "rev-parse", "HEAD"]),
+                git_status=capture(["git", "-C", ROOT, "status", "--short"]),
+                benchmark_sha256={name: hashlib.sha256((ROOT / "bench" / name).read_bytes()).hexdigest()
+                                  for name in ("macos_bench.py", "terminal_workload.py")}, runs=[])
+    save_json(args.output / "results.json", data)
+    rng = random.Random(args.seed)
+    try:
+        for round_index in range(args.rounds):
+            order = args.apps.copy()
+            rng.shuffle(order)
+            for app in order:
+                print(f"Round {round_index + 1}/{args.rounds}: {app}", flush=True)
+                run = run_one(app, round_index, args.output / f"r{round_index}-{app}", args)
+                data["runs"].append(run)
+                save_json(args.output / "results.json", data)
+                report(data, args.output)
+                if "error" in run:
+                    print(f"  FAILED: {run['error']}", flush=True)
+                else:
+                    print(f"  ready {run['startup_ms']:.1f}ms, grid {run['ready']['columns']}x{run['ready']['rows']}", flush=True)
+                time.sleep(1)
+    finally:
+        save_json(args.output / "results.json", data)
+        report(data, args.output)
+    print(f"Report: {args.output / 'report.md'}", flush=True)
+    return 1 if any("error" in r for r in data["runs"]) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

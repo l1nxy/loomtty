@@ -22,6 +22,24 @@ pub struct CmapResolver {
 }
 
 impl CmapResolver {
+    /// Read coverage through fontdb's short-lived file mappings. CoreText owns
+    /// the fonts on macOS, so retaining a second copy of their full bitmap and
+    /// outline data just to answer cmap queries would waste hundreds of MB.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn from_database(
+        db: &fontdb::Database,
+        primary: fontdb::ID,
+        cjk: Option<fontdb::ID>,
+        emoji: Option<fontdb::ID>,
+    ) -> Self {
+        let coverage = |id| db.with_face_data(id, extract_cmap);
+        Self {
+            primary_cmap: coverage(primary).unwrap_or_default(),
+            cjk_cmap: cjk.and_then(coverage),
+            emoji_cmap: emoji.and_then(coverage),
+        }
+    }
+
     /// Build a resolver from raw font data.
     ///
     /// Each font is specified as `Option<(data, face_index)>`. The cmap

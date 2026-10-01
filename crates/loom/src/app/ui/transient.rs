@@ -74,7 +74,10 @@ impl App {
         );
     }
 
-    fn search_bar_component(&self, tiles: &[(u64, GeoRect, bool)]) -> Option<SearchBarComponent> {
+    pub(in crate::app) fn search_bar_component(
+        &self,
+        tiles: &[(u64, GeoRect, bool)],
+    ) -> Option<SearchBarComponent> {
         let Some(search) = &self.core.search_state else {
             return None;
         };
@@ -172,13 +175,29 @@ impl App {
 
         let active_pid = self.core.workspaces.active().active_pane_id()?;
         let (_, tile_rect, _) = tiles.iter().find(|(id, _, _)| *id == active_pid)?;
-        let view = self.cached_views.get(&active_pid)?;
-        let cursor = view.cursor_rects.first()?;
+        let grid = self.core.pane_grids.get(&active_pid)?;
+        let (mut col, mut row) = grid.cursor_in_viewport()?;
+        if let Some((pred_row, pred_col)) = self.core.prediction.get_overlay_cursor(active_pid) {
+            row = pred_row;
+            col = pred_col;
+        }
+        if row < 0 || row as u16 >= grid.rows || col >= grid.cols {
+            return None;
+        }
+        // Anchor to the text cell, not a painted cursor rectangle: underline
+        // cursors sit at its bottom, and hidden cursors have no rectangle.
+        if col > 0
+            && grid.viewport[row as usize * grid.cols as usize + col as usize].flags_u16()
+                & loom_protocol::message::FLAG_WIDE_CHAR_SPACER
+                != 0
+        {
+            col -= 1;
+        }
         let padding = self.core.config.appearance.padding;
         let border_w = self.core.config.appearance.border_width;
         Some((
-            tile_rect.x + border_w + padding + cursor.x,
-            tile_rect.y + border_w + padding + cursor.y,
+            tile_rect.x + border_w + padding + col as f32 * cell_w,
+            tile_rect.y + border_w + padding + row as f32 * cell_h,
         ))
     }
 
@@ -216,7 +235,10 @@ impl App {
         cw: f32,
         ch: f32,
     ) -> Option<ImePreeditComponent> {
-        if !self.core.ime.preedit_active || self.core.ime.preedit_text.is_empty() {
+        if !self.core.ime.preedit_active
+            || self.core.ime.preedit_text.is_empty()
+            || !self.ime_target_is_current()
+        {
             return None;
         }
         let (base_x, base_y) = self.ime_input_anchor(tiles, cw, ch)?;
@@ -331,6 +353,36 @@ pub(in crate::app) fn preedit_cursor_display_cols(text: &str, cursor_byte: usize
 #[cfg(test)]
 mod tests {
     use super::preedit_cursor_display_cols;
+
+    #[test]
+    fn ime_uses_text_cell_for_hidden_and_underline_cursors() {
+        use crate::app::App;
+        use loom_app::grid::ClientPaneGrid;
+        use loom_config::config::LoomConfig;
+        use loom_layout::{column::ColumnWidth, geometry::Rect};
+        use loom_protocol::message::{CURSOR_BLOCK, CURSOR_HIDDEN, CURSOR_UNDERLINE};
+
+        let mut app = App::new(LoomConfig::default(), "ime-test");
+        app.core
+            .workspaces
+            .active_mut()
+            .add_column_right(42, ColumnWidth::Proportion(1.0));
+        let mut grid = ClientPaneGrid::new(80, 24, 100);
+        grid.cursor_col = 3;
+        grid.cursor_line = 2;
+        app.core.pane_grids.insert(42, grid);
+        let tiles = [(42, Rect::new(100.0, 40.0, 640.0, 480.0), true)];
+        let inset = app.core.config.appearance.border_width + app.core.config.appearance.padding;
+        for shape in [CURSOR_BLOCK, CURSOR_UNDERLINE, CURSOR_HIDDEN] {
+            app.core.pane_grids.get_mut(&42).unwrap().cursor_shape = shape;
+            assert_eq!(
+                app.ime_input_anchor(&tiles, 8.0, 16.0),
+                Some((124.0 + inset, 72.0 + inset))
+            );
+        }
+        app.core.pane_grids.get_mut(&42).unwrap().scroll_offset = 10;
+        assert_eq!(app.ime_input_anchor(&tiles, 8.0, 16.0), None);
+    }
 
     #[test]
     fn preedit_cursor_display_cols_handles_utf8_offsets_and_wide_chars() {

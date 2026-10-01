@@ -61,6 +61,10 @@ focus_transition_speed = 15.0
 width = 1024.0
 height = 768.0
 title = "loomtty"
+# macOS only: keep one Option key for native character/IME input.
+macos_option_as_alt = "left" # none | left | right | both
+macos_secure_input = true
+macos_quit_after_last_window_closed = false
 
 [terminal]
 default_cols = 80
@@ -128,6 +132,7 @@ r = "enter_mode:resize"
 s = "enter_mode:scroll"
 m = "enter_mode:move"
 f = "column_width_full"
+"=" = "equalize_adjacent_columns"
 b = "toggle_broadcast"
 c = "consume_into_column"
 e = "expel_from_column"

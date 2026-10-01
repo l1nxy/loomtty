@@ -32,6 +32,7 @@ pub enum ChromeOp {
     Dialog,
     Close,
     OpenToml,
+    Scroll,
 }
 
 impl ChromeOp {
@@ -40,6 +41,7 @@ impl ChromeOp {
             Self::Dialog => 0,
             Self::Close => 1,
             Self::OpenToml => 2,
+            Self::Scroll => 3,
         }
     }
     fn from_code(c: u64) -> Option<Self> {
@@ -47,6 +49,7 @@ impl ChromeOp {
             0 => Self::Dialog,
             1 => Self::Close,
             2 => Self::OpenToml,
+            3 => Self::Scroll,
             _ => return None,
         })
     }
@@ -140,7 +143,12 @@ mod tests {
 
     #[test]
     fn chrome_round_trip() {
-        for op in [ChromeOp::Dialog, ChromeOp::Close, ChromeOp::OpenToml] {
+        for op in [
+            ChromeOp::Dialog,
+            ChromeOp::Close,
+            ChromeOp::OpenToml,
+            ChromeOp::Scroll,
+        ] {
             assert_eq!(decode(encode_chrome(op)), Some(SettingsHit::Chrome(op)));
         }
     }
@@ -181,10 +189,15 @@ mod tests {
     /// Hit-ids from different tags must not collide.
     #[test]
     fn tag_namespaces_are_disjoint() {
-        let chrome_ids: Vec<_> = [ChromeOp::Dialog, ChromeOp::Close, ChromeOp::OpenToml]
-            .iter()
-            .map(|o| encode_chrome(*o))
-            .collect();
+        let chrome_ids: Vec<_> = [
+            ChromeOp::Dialog,
+            ChromeOp::Close,
+            ChromeOp::OpenToml,
+            ChromeOp::Scroll,
+        ]
+        .iter()
+        .map(|o| encode_chrome(*o))
+        .collect();
         let sidebar_ids: Vec<_> = SettingsCategory::ALL
             .iter()
             .map(|c| encode_sidebar(*c))

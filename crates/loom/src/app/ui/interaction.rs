@@ -49,6 +49,8 @@ impl App {
 
     pub(crate) fn apply_ui_action(&mut self, action: UiAction) {
         match action {
+            #[cfg(target_os = "macos")]
+            UiAction::CloseSearch => self.handle_action(loom_input::action::Action::CloseSearch),
             UiAction::OpenSessionPalette => self.open_session_palette(),
             UiAction::ToggleOverview => {
                 self.handle_action(loom_input::action::Action::ToggleOverview);

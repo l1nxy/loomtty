@@ -198,10 +198,16 @@ fn hidden_text_tracking_feeds_force_visible_backspace_in_alt_screen() {
     assert!(engine.has_overlay(1));
     assert_eq!(engine.get_overlay_cell(1, 0, 0), None);
 
+    // Only an actual text echo establishes that this is an editable field,
+    // rather than e.g. Vim normal-mode commands AB followed by Backspace.
+    grid.viewport[0].set_ch('A');
+    grid.viewport[1].set_ch('B');
+    grid.cursor_col = 2;
+    engine.on_server_sync(1, &grid, 1, 1);
     engine.new_user_input_force_visible(1, &[0x7F], &grid, 2);
 
     assert_eq!(engine.get_overlay_cursor(1), Some((0, 1)));
-    assert_eq!(engine.get_overlay_cell(1, 0, 0).unwrap().ch(), 'A');
+    assert_eq!(grid.viewport[0].ch(), 'A');
     assert_eq!(engine.get_overlay_cell(1, 0, 1).unwrap().ch(), ' ');
 }
 
@@ -856,7 +862,7 @@ fn wide_char_spacer_flag_set() {
 }
 
 #[test]
-fn wide_char_insert_shift_clears_wide_flags() {
+fn wide_char_insert_shift_preserves_wide_flags() {
     let mut engine = PredictionEngine::new(PredictionMode::Always, 0, false);
     let mut grid = make_grid_at(10, 1, 0, 0);
     // Put a wide char at col 2-3.
@@ -868,15 +874,14 @@ fn wide_char_insert_shift_clears_wide_flags() {
     // Type 'A' at col 0 — shift everything right by 1.
     engine.new_user_input(1, b"A", &grid);
 
-    // Shifted cells should NOT have wide-char flags (they were cleared).
-    let c3 = engine.get_overlay_cell(1, 0, 3);
-    if let Some(c) = c3 {
-        assert_eq!(
-            c.flags_u16() & (FLAG_WIDE_CHAR | FLAG_WIDE_CHAR_SPACER),
-            0,
-            "shifted cell should have wide-char flags cleared"
-        );
-    }
+    assert_eq!(
+        engine.get_overlay_cell(1, 0, 3).unwrap().flags_u16() & FLAG_WIDE_CHAR,
+        FLAG_WIDE_CHAR
+    );
+    assert_eq!(
+        engine.get_overlay_cell(1, 0, 4).unwrap().flags_u16() & FLAG_WIDE_CHAR_SPACER,
+        FLAG_WIDE_CHAR_SPACER
+    );
 }
 
 #[test]
@@ -1532,61 +1537,23 @@ fn adaptive_cursor_shown_when_confirmed() {
 // ---- mosh-alignment regression tests ----
 
 #[test]
-fn dual_ack_caps_backspace_walk_past_server_cursor() {
-    // The "infinite delete" bug: at a shell prompt, holding Backspace makes
-    // the predicted cursor walk past column 0 and across rows visually
-    // eating the prompt. The shell silently drops Backspaces at the prompt
-    // boundary so `echo_ack` never advances, and the old single-ack design
-    // had no way to nail the misprediction.
-    //
-    // With dual-ack: the server bumps `received_ack` synchronously on input
-    // receipt (decoupled from PTY drain) and reports its true cursor
-    // position. The client sees `received_ack` catch up and notices the
-    // predicted cursor is "past" the server cursor — that's the
-    // shell-rejected-the-Backspace signal. We cap by killing the bad epoch
-    // instead of resetting the whole overlay.
+fn received_only_backspace_expires_without_another_server_frame() {
     let mut engine = PredictionEngine::new(PredictionMode::Always, 0, false);
-
-    // Setup: server says cursor is at (0, 10) — typical prompt-end position.
-    let mut grid = make_grid_at(80, 24, 10, 0);
-    for (i, ch) in "hello".chars().enumerate() {
-        grid.viewport[5 + i].set_ch(ch);
-    }
-
-    // User hammers Backspace 6 times. Predicted cursor will walk to col 4,
-    // and the overlay marks cells col 5-9 as deleted (blanks).
-    let mut last_seq = 0;
-    for _ in 0..6 {
-        last_seq = engine.next_input_seq();
-        engine.new_user_input_with_min_ack(1, &[0x7F], &grid, last_seq);
-    }
-    let predicted = engine.get_overlay_cursor(1);
-    assert_eq!(
-        predicted,
-        Some((0, 4)),
-        "predictions walk past the prompt before sync"
+    let grid = make_grid_at(80, 24, 10, 0);
+    engine.new_user_input(1, b"\x7f", &grid);
+    engine.on_server_sync(1, &grid, 1, 0);
+    assert_eq!(engine.get_overlay_cursor(1), Some((0, 9)));
+    let deadline = engine.next_expiry().unwrap();
+    assert!(
+        engine
+            .expire_predictions(deadline - std::time::Duration::from_nanos(1))
+            .is_empty()
     );
-
-    // Server sync: received_ack advances to the latest input_seq (server
-    // received all 6 Backspaces). echo_ack stays at 0 (PTY never produced
-    // output — shell silently dropped them). grid.cursor still (0, 10).
-    engine.on_server_sync(1, &grid, last_seq, 0);
-
-    // The bad cursor + the bogus "deleted" cells must be gone. Backspace
-    // overlay no longer eats the prompt visually.
-    assert_eq!(
-        engine.get_overlay_cursor(1),
-        None,
-        "predicted cursor past server cursor must be capped after received_ack"
-    );
-    // The shell didn't honour any Backspace, so all "deleted" predictions
-    // for cols 5-9 should be cleared.
-    for col in 5..10 {
-        assert!(
-            engine.get_overlay_cell(1, 0, col).is_none(),
-            "bogus deleted cell at col {col} must be cleared"
-        );
-    }
+    let serial = engine.visual_serial();
+    assert_eq!(engine.expire_predictions(deadline), vec![1]);
+    assert!(engine.visual_serial() != serial);
+    assert!(!engine.has_overlay(1));
+    assert!(engine.next_expiry().is_none());
 }
 
 #[test]
@@ -1602,14 +1569,14 @@ fn cap_floor_suppresses_rubber_banding_under_held_backspace() {
         grid.viewport[5 + i].set_ch(ch);
     }
 
-    // First Backspace — predicts (0, 9), nothing's stopping it yet.
+    // Left predicts (0, 9), nothing stops it yet.
     let seq1 = engine.next_input_seq();
-    engine.new_user_input_with_min_ack(1, &[0x7F], &grid, seq1);
+    engine.new_user_input_with_min_ack(1, b"\x1b[D", &grid, seq1);
     assert_eq!(engine.get_overlay_cursor(1), Some((0, 9)));
 
-    // Server says it received the input but its cursor is still at (0, 10)
-    // — shell rejected the Backspace. Cap fires, sets cap_floor.
-    engine.on_server_sync(1, &grid, seq1, 0);
+    // PTY output has echoed the input but its cursor is still at (0, 10).
+    // The mature cursor mismatch sets cap_floor.
+    engine.on_server_sync(1, &grid, seq1, seq1);
     assert!(
         engine.overlays.get(&1).and_then(|o| o.cap_floor).is_some(),
         "cap_floor must be set after the first cap"
@@ -1645,8 +1612,8 @@ fn cap_floor_clears_when_server_cursor_actually_moves() {
 
     // Trigger a cap to set the floor.
     let seq1 = engine.next_input_seq();
-    engine.new_user_input_with_min_ack(1, &[0x7F], &grid, seq1);
-    engine.on_server_sync(1, &grid, seq1, 0);
+    engine.new_user_input_with_min_ack(1, b"\x1b[D", &grid, seq1);
+    engine.on_server_sync(1, &grid, seq1, seq1);
     assert!(engine.overlays.get(&1).and_then(|o| o.cap_floor).is_some());
 
     // Now the server actually moves its cursor (shell honoured a deletion).
@@ -1953,4 +1920,170 @@ fn older_epoch_cursor_mismatch_does_not_reset_back_cursor() {
     // cursor (last position after typing X) is still Pending and survives.
     let back_cursor = overlay.cursors.last().expect("back cursor must survive");
     assert_eq!(back_cursor.epoch, 2);
+}
+
+#[test]
+fn delete_shift_preserves_wide_pair_for_followup_backspace() {
+    let mut engine = PredictionEngine::new(PredictionMode::Always, 0, false);
+    let mut grid = make_grid_at(10, 1, 1, 0);
+    grid.viewport[0].set_ch('x');
+    grid.viewport[1].set_ch('中');
+    grid.viewport[1].flags = FLAG_WIDE_CHAR.to_le_bytes();
+    grid.viewport[2].flags = FLAG_WIDE_CHAR_SPACER.to_le_bytes();
+    engine.new_user_input(1, b"\x7f", &grid);
+    assert_eq!(
+        engine.get_overlay_cell(1, 0, 0).unwrap().flags_u16() & FLAG_WIDE_CHAR,
+        FLAG_WIDE_CHAR
+    );
+    assert_eq!(
+        engine.get_overlay_cell(1, 0, 1).unwrap().flags_u16() & FLAG_WIDE_CHAR_SPACER,
+        FLAG_WIDE_CHAR_SPACER
+    );
+    // Put the working cursor after the shifted glyph, without a server echo.
+    engine.new_user_input(1, b"\x1b[C", &grid);
+    engine.new_user_input(1, b"\x1b[C", &grid);
+    engine.new_user_input(1, b"\x7f", &grid);
+    assert_eq!(engine.get_overlay_cursor(1), Some((0, 0)));
+    assert_eq!(engine.get_overlay_cell(1, 0, 0).unwrap().ch(), ' ');
+}
+
+#[test]
+fn overlay_compositor_matches_cell_lookup_and_borrows_when_hidden() {
+    use std::borrow::Cow;
+    let grid = make_grid_at(80, 24, 3, 5);
+    for mode in [
+        PredictionMode::Never,
+        PredictionMode::Adaptive,
+        PredictionMode::Always,
+    ] {
+        let mut engine = PredictionEngine::new(mode, 30, false);
+        engine.srtt_us = 100_000;
+        engine.new_user_input_track_hidden(1, b"abc", &grid, 1);
+        let rendered = engine.apply_overlay(1, Cow::Borrowed(&grid.viewport), grid.cols, 0);
+        for (i, &actual) in rendered.iter().enumerate() {
+            let expected = engine
+                .get_overlay_cell(1, (i / 80) as u16, (i % 80) as u16)
+                .unwrap_or(grid.viewport[i]);
+            assert_eq!(actual, expected);
+        }
+        if mode != PredictionMode::Always {
+            assert!(matches!(rendered, Cow::Borrowed(_)));
+        }
+        assert!(matches!(
+            engine.apply_overlay(1, Cow::Borrowed(&grid.viewport), grid.cols, 1),
+            Cow::Borrowed(_)
+        ));
+        engine.new_user_input_force_visible(1, b"\x7f", &grid, 2);
+        assert!(matches!(
+            engine.apply_overlay(1, Cow::Borrowed(&grid.viewport), grid.cols, 0),
+            Cow::Owned(_)
+        ));
+    }
+}
+
+#[test]
+fn confirming_old_input_reschedules_expiry_for_pending_suffix() {
+    let mut engine = PredictionEngine::new(PredictionMode::Always, 0, false);
+    let mut grid = make_grid(80, 24);
+    engine.new_user_input(1, b"a", &grid);
+    engine.new_user_input(1, b"b", &grid);
+    let old = Instant::now() - std::time::Duration::from_secs(4);
+    engine
+        .overlays
+        .get_mut(&1)
+        .unwrap()
+        .rows
+        .get_mut(&0)
+        .unwrap()
+        .cells[0]
+        .created_at = old;
+    grid.viewport[0].set_ch('a');
+    grid.cursor_col = 1;
+    engine.on_server_sync(1, &grid, 1, 1);
+    assert!(
+        engine.next_expiry().unwrap()
+            > old + std::time::Duration::from_secs(PREDICTION_TIMEOUT_SECS)
+    );
+    engine.on_server_sync(1, &grid, 2, 0); // Receipt alone still leaves b pending.
+    assert_eq!(engine.get_overlay_cell(1, 0, 1).unwrap().ch(), 'b');
+}
+
+#[test]
+fn tui_command_tracking_does_not_grant_backspace_visibility() {
+    for mode in [
+        PredictionMode::Never,
+        PredictionMode::Always,
+        PredictionMode::Adaptive,
+    ] {
+        let mut engine = PredictionEngine::new(mode, 30, false);
+        engine.srtt_us = 200_000;
+        let mut grid = make_grid_at(80, 24, 5, 3);
+        grid.mode_flags = MODE_ALT_SCREEN;
+        engine.new_user_input_track_hidden(1, b"j", &grid, 1);
+        engine.new_user_input_force_visible(1, b"\x7f", &grid, 2);
+        assert_eq!(engine.get_overlay_cursor(1), None);
+        assert_eq!(engine.get_overlay_cell(1, 3, 5), None);
+        grid.cursor_line = 4;
+        engine.on_server_sync(1, &grid, 1, 1);
+        assert!(!engine.has_overlay(1));
+        assert_eq!(engine.get_overlay_cursor(1), None);
+    }
+}
+
+#[test]
+fn tui_echo_evidence_survives_confirmation_but_not_navigation_or_redraw() {
+    let mut engine = PredictionEngine::new(PredictionMode::Adaptive, 30, false);
+    engine.srtt_us = 200_000;
+    let mut grid = make_grid_at(80, 24, 2, 3);
+    grid.mode_flags = MODE_BRACKETED_PASTE | MODE_KITTY_KEYBOARD;
+    grid.kitty_flags = MODE_KITTY_KEYBOARD;
+    engine.new_user_input_track_hidden(1, b"a", &grid, 1);
+    assert_eq!(engine.get_overlay_cell(1, 3, 2), None);
+    grid.viewport[3 * 80 + 2].set_ch('a');
+    grid.cursor_col = 3;
+    engine.on_server_sync(1, &grid, 1, 1);
+    engine.new_user_input_track_hidden(1, b"b", &grid, 2);
+    assert_eq!(engine.get_overlay_cell(1, 3, 3).unwrap().ch(), 'b');
+    let serial = engine.visual_serial();
+    engine.new_user_input_with_min_ack(1, b"\x1b[D", &grid, 3);
+    assert!(engine.visual_serial() != serial);
+    assert!(!engine.has_overlay(1));
+    engine.new_user_input_track_hidden(1, b"c", &grid, 4);
+    assert_eq!(engine.get_overlay_cell(1, 3, 3), None);
+    grid.viewport[3 * 80 + 3].set_ch('c');
+    grid.cursor_col = 4;
+    engine.on_server_sync(1, &grid, 4, 4);
+    // A streamed response relocates the prompt with no new input ack.
+    grid.cursor_line = 5;
+    engine.on_server_sync(1, &grid, 4, 4);
+    engine.new_user_input_force_visible(1, b"\x7f", &grid, 5);
+    assert_eq!(engine.get_overlay_cursor(1), None);
+}
+
+#[test]
+fn screen_mode_switch_discards_unacknowledged_shell_prediction() {
+    let mut engine = PredictionEngine::new(PredictionMode::Always, 0, false);
+    let mut grid = make_grid_at(80, 24, 2, 3);
+    engine.new_user_input_track_hidden(1, b"a", &grid, 1);
+    assert!(engine.has_overlay(1));
+    grid.mode_flags = MODE_ALT_SCREEN;
+    engine.on_server_sync(1, &grid, 0, 0);
+    assert!(!engine.has_overlay(1));
+    assert_eq!(engine.get_overlay_cursor(1), None);
+}
+
+#[test]
+fn shifted_tui_chrome_does_not_establish_text_echo_evidence() {
+    let mut engine = PredictionEngine::new(PredictionMode::Always, 30, false);
+    let mut grid = make_grid_at(80, 24, 0, 0);
+    grid.mode_flags = MODE_ALT_SCREEN;
+    grid.viewport[1].set_ch('z');
+    engine.new_user_input_track_hidden(1, b" ", &grid, 1);
+    grid.viewport[1].set_ch(' ');
+    grid.viewport[2].set_ch('z');
+    grid.cursor_col = 1;
+    engine.on_server_sync(1, &grid, 1, 1);
+    engine.new_user_input_track_hidden(1, b"a", &grid, 2);
+    assert_eq!(engine.get_overlay_cell(1, 0, 1), None);
+    assert_eq!(engine.get_overlay_cursor(1), None);
 }

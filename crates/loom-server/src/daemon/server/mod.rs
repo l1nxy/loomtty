@@ -491,6 +491,7 @@ impl Server {
 
             // Pane/layout management
             ClientMessage::CreatePane
+            | ClientMessage::CreatePaneAt { .. }
             | ClientMessage::SplitDown
             | ClientMessage::NewTileBelow
             | ClientMessage::ClosePane { .. }

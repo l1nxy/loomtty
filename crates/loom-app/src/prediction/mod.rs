@@ -7,6 +7,7 @@ pub use overlay::{PaneOverlay, PredictedCursor};
 
 use loom_config::config::PredictionMode;
 use loom_protocol::message::*;
+use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -48,6 +49,16 @@ pub struct PredictionEngine {
 }
 
 impl PredictionEngine {
+    pub(super) fn context_flags(grid: &crate::grid::ClientPaneGrid) -> u16 {
+        grid.mode_flags
+            & (MODE_ALT_SCREEN
+                | MODE_MOUSE_REPORT
+                | MODE_BRACKETED_PASTE
+                | MODE_KITTY_ALL
+                | MODE_PASSWORD_INPUT)
+            | (grid.kitty_flags & MODE_KITTY_ALL)
+    }
+
     pub fn new(mode: PredictionMode, threshold_ms: u64, show_underline: bool) -> Self {
         Self {
             overlays: HashMap::new(),
@@ -199,12 +210,16 @@ impl PredictionEngine {
             return None;
         }
         let overlay = self.overlays.get(&pane_id)?;
+        if overlay.needs_echo_evidence && !overlay.local_edit_confirmed {
+            return None;
+        }
         let cell = overlay.get_cell(row, col)?;
         if cell.unknown {
             return None;
         }
         if force_visible
             || self.mode == PredictionMode::Always
+            || (overlay.needs_echo_evidence && overlay.local_edit_confirmed)
             || cell.epoch <= overlay.confirmed_epoch
         {
             Some(cell.replacement)
@@ -219,9 +234,13 @@ impl PredictionEngine {
             return None;
         }
         let overlay = self.overlays.get(&pane_id)?;
+        if overlay.needs_echo_evidence && !overlay.local_edit_confirmed {
+            return None;
+        }
         let cur = overlay.latest_cursor()?;
         if force_visible
             || self.mode == PredictionMode::Always
+            || (overlay.needs_echo_evidence && overlay.local_edit_confirmed)
             || cur.epoch <= overlay.confirmed_epoch
         {
             Some((cur.row, cur.col))
@@ -232,6 +251,67 @@ impl PredictionEngine {
 
     pub fn has_overlay(&self, pane_id: u64) -> bool {
         self.overlays.get(&pane_id).is_some_and(|o| !o.is_empty())
+    }
+
+    /// Composite only predicted rows, copying the viewport only when at least
+    /// one cell is visible. Hidden/tentative and cursor-only overlays are free
+    /// of viewport allocations. Predictions address the live viewport only.
+    pub fn apply_overlay<'a>(
+        &self,
+        pane_id: u64,
+        mut cells: Cow<'a, [PackedCell]>,
+        cols: u16,
+        scroll_offset: usize,
+    ) -> Cow<'a, [PackedCell]> {
+        if scroll_offset != 0 || cols == 0 {
+            return cells;
+        }
+        let Some(overlay) = self.overlays.get(&pane_id) else {
+            return cells;
+        };
+        if overlay.needs_echo_evidence && !overlay.local_edit_confirmed {
+            return cells;
+        }
+        let force_visible = self.force_visible_panes.contains(&pane_id);
+        if !force_visible && !self.should_display() {
+            return cells;
+        }
+        let all_epochs = force_visible
+            || self.mode == PredictionMode::Always
+            || (overlay.needs_echo_evidence && overlay.local_edit_confirmed);
+        for (&row_num, row) in &overlay.rows {
+            let start = row_num as usize * cols as usize;
+            for (col, cell) in row.cells.iter().take(cols as usize).enumerate() {
+                if cell.active
+                    && !cell.unknown
+                    && (all_epochs || cell.epoch <= overlay.confirmed_epoch)
+                    && start + col < cells.len()
+                {
+                    cells.to_mut()[start + col] = cell.replacement;
+                }
+            }
+        }
+        cells
+    }
+
+    /// Wake even when the peer sends no more frames and cursor blink is off.
+    pub fn next_expiry(&self) -> Option<Instant> {
+        self.overlays.values().filter_map(|o| o.expires_at).min()
+    }
+
+    /// Return panes needing repaint. Newer edits depend on the expired state,
+    /// so discard the entire pane overlay rather than leaving partial ghosts.
+    pub fn expire_predictions(&mut self, now: Instant) -> Vec<u64> {
+        let expired: Vec<_> = self
+            .overlays
+            .iter()
+            .filter(|(_, o)| o.expires_at.is_some_and(|deadline| deadline <= now))
+            .map(|(&pane_id, _)| pane_id)
+            .collect();
+        for &pane_id in &expired {
+            self.clear_pane(pane_id);
+        }
+        expired
     }
 
     pub fn dirty_rows(&self, pane_id: u64) -> Vec<u16> {
@@ -255,6 +335,7 @@ impl PredictionEngine {
         }
         self.force_visible_panes.remove(&pane_id);
         self.pane_visual_serials.remove(&pane_id);
+        self.last_dims.remove(&pane_id);
     }
 
     /// Whether any overlay holds *active* prediction state (cells or cursors).

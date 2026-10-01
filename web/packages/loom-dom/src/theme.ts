@@ -108,6 +108,38 @@ export const DEFAULT_THEME: Theme = {
   named: DEFAULT_NAMED,
 };
 
+/// Light counterpart of `DEFAULT_THEME`, for pages that follow the
+/// OS `prefers-color-scheme`. Tango hues darkened where the stock value
+/// washes out on white (yellow, bright green / cyan / white), so
+/// prompts, diffs, and TUI accents stay legible in daylight.
+const LIGHT_NAMED: (ColorString | null)[] = new Array(29).fill(null);
+LIGHT_NAMED[NAMED_BLACK] = "#2e3436";
+LIGHT_NAMED[NAMED_RED] = "#c01c28";
+LIGHT_NAMED[NAMED_GREEN] = "#26802a";
+LIGHT_NAMED[NAMED_YELLOW] = "#946b00";
+LIGHT_NAMED[NAMED_BLUE] = "#1c5fb4";
+LIGHT_NAMED[NAMED_MAGENTA] = "#8a3f95";
+LIGHT_NAMED[NAMED_CYAN] = "#0a7a7c";
+LIGHT_NAMED[NAMED_WHITE] = "#9a9996";
+LIGHT_NAMED[NAMED_BRIGHT_BLACK] = "#5e5c64";
+LIGHT_NAMED[NAMED_BRIGHT_RED] = "#e01b24";
+LIGHT_NAMED[NAMED_BRIGHT_GREEN] = "#2e9a32";
+LIGHT_NAMED[NAMED_BRIGHT_YELLOW] = "#a87f00";
+LIGHT_NAMED[NAMED_BRIGHT_BLUE] = "#3584e4";
+LIGHT_NAMED[NAMED_BRIGHT_MAGENTA] = "#a347ba";
+LIGHT_NAMED[NAMED_BRIGHT_CYAN] = "#13959a";
+LIGHT_NAMED[NAMED_BRIGHT_WHITE] = "#77767b";
+LIGHT_NAMED[NAMED_FOREGROUND] = "#1e2124";
+LIGHT_NAMED[NAMED_BACKGROUND] = "#fbfbfa";
+LIGHT_NAMED[NAMED_CURSOR] = "#1e2124";
+
+export const LIGHT_THEME: Theme = {
+  background: "#fbfbfa",
+  foreground: "#1e2124",
+  named: LIGHT_NAMED,
+  selectionBackground: "rgba(53, 132, 228, 0.28)",
+};
+
 // 6×6×6 cube step values per xterm convention. 0 → 0, 1..5 → 95 +
 // 40*(n-1). Inlined so the resolver does no math at lookup time.
 const CUBE_STEPS = [0, 95, 135, 175, 215, 255];

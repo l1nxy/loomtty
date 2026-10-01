@@ -81,9 +81,59 @@
         color: var(--fg);
         font-family: var(--font-mono);
       }
+      html {
+        overflow: hidden;
+        /* No font inflation when an iPhone rotates to landscape. */
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+      }
       body {
         display: flex;
         flex-direction: column;
+        /* Pin the page to the *visual* viewport. LoomApp publishes
+           `--loom-vvh` / `--loom-vvt` from `window.visualViewport`, so
+           when the on-screen keyboard opens the whole UI (chrome,
+           terminal, extra keys) shrinks to the region above it instead
+           of sliding under it — and on iOS, which pans the visual
+           viewport rather than resizing the layout one, follows the
+           pan. Without the variables (desktop, first paint) this is
+           just a full-window box. */
+        position: fixed;
+        left: 0;
+        right: 0;
+        top: var(--loom-vvt, 0px);
+        height: var(--loom-vvh, 100%);
+        overflow: hidden;
+        overscroll-behavior: none;
+        /* Kill double-tap-to-zoom; pinch on the terminal is handled by
+           the app (font size), not the browser. */
+        touch-action: manipulation;
+      }
+
+      /* ── Light scheme ────────────────────────────────────────────
+         LoomApp sets `data-loom-scheme` on <html> when the page opts
+         into `colorScheme: "light" | "auto"`; only the primitives are
+         rebound, every component follows through the semantic layer. */
+      :root[data-loom-scheme="light"] {
+        color-scheme: light;
+        --c-neutral-0: #fbfbfa;
+        --c-neutral-50: #f2f2f0;
+        --c-neutral-100: #ebebe8;
+        --c-neutral-200: #e4e4e0;
+        --c-neutral-300: #d8d8d3;
+        --c-neutral-400: #c6c6c0;
+        --c-neutral-500: #a9a9a3;
+        --c-neutral-700: #5e5c64;
+        --c-neutral-800: #3d3d40;
+        --c-neutral-900: #1e2124;
+        --c-neutral-950: #000;
+        --c-accent-bg: #d5e4f8;
+        --c-accent-border: #3584e4;
+        --c-scrollbar-thumb: #b4b4ae;
+        --c-scrollbar-thumb-hover: #8e8e88;
+        --c-status-ok: #26802a;
+        --c-status-warn: #a87f00;
+        --c-status-err: #c01c28;
       }
 
       /* ── Connection status strip ─────────────────────────────── */
@@ -782,3 +832,413 @@
         }
       }
     
+      /* ── Phone / touch layout (`.loom-mobile` on the mount root) ──
+         LoomApp toggles `.loom-mobile` from a media query (touch-first
+         or ≤640px wide). The desktop chrome rows collapse into one
+         compact header; the terminal shows one pane full width; an
+         extra-keys bar sits above the soft keyboard. All phone-only
+         nodes are mounted always and hidden here outside that mode. */
+      .loom-m-header,
+      .loom-m-keys,
+      .loom-m-sheet-backdrop,
+      .loom-m-hint {
+        display: none;
+      }
+      #app.loom-mobile,
+      .loom-mobile {
+        --loom-key-h: 40px;
+        --loom-header-h: 44px;
+        --loom-safe-bottom: env(safe-area-inset-bottom, 0px);
+        display: flex;
+        flex-direction: column;
+        /* Text selection / callouts belong to the app's long-press
+           selection, not the browser's (which would select chrome). */
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .loom-mobile.loom-kb-open {
+        /* Keyboard up: the home indicator is underneath it. */
+        --loom-safe-bottom: 0px;
+      }
+      @media (max-height: 520px) {
+        /* Landscape phone: every row of terminal counts. */
+        .loom-mobile {
+          --loom-key-h: 34px;
+          --loom-header-h: 36px;
+        }
+      }
+      /* The page's own status strip is redundant with the header dot. */
+      body:has(> #app.loom-mobile) > #status {
+        display: none;
+      }
+      .loom-mobile > .loom-app {
+        flex: 1 1 auto;
+        min-height: 0;
+        height: auto;
+      }
+      .loom-mobile .loom-topbar,
+      .loom-mobile .loom-panes,
+      .loom-mobile .loom-keyboard-toggle {
+        display: none;
+      }
+
+      /* Header: [●] [title / sub ▾] [A−] [A+] [⌨] */
+      .loom-mobile > .loom-m-header {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: var(--space-1);
+        min-height: var(--loom-header-h);
+        padding: env(safe-area-inset-top, 0px)
+          calc(env(safe-area-inset-right, 0px) + var(--space-1)) 0
+          calc(env(safe-area-inset-left, 0px) + var(--space-2));
+        background: var(--bg-chrome-strong);
+        border-bottom: 1px solid var(--border);
+        touch-action: manipulation;
+      }
+      .loom-m-dot {
+        flex: 0 0 auto;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--c-status-warn);
+      }
+      .loom-m-dot.is-ok {
+        background: var(--c-status-ok);
+      }
+      .loom-m-switch {
+        flex: 1 1 auto;
+        min-width: 0;
+        min-height: var(--loom-header-h);
+        display: flex;
+        align-items: center;
+        gap: var(--space-1);
+        padding: 0 var(--space-1);
+        background: transparent;
+        color: var(--fg);
+        border: 0;
+        font-family: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .loom-m-labels {
+        flex: 1 1 auto;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        line-height: 1.2;
+      }
+      .loom-m-title,
+      .loom-m-sub {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .loom-m-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--fg-strong);
+      }
+      .loom-m-sub {
+        font-size: 11px;
+        color: var(--fg-muted);
+      }
+      .loom-m-sub:empty {
+        display: none;
+      }
+      .loom-m-caret {
+        flex: 0 0 auto;
+        color: var(--fg-muted);
+        font-size: 12px;
+      }
+      .loom-m-icon {
+        flex: 0 0 auto;
+        min-width: var(--hit-touch);
+        min-height: calc(var(--loom-header-h) - 4px);
+        padding: 0 var(--space-1);
+        background: transparent;
+        color: var(--fg);
+        border: 1px solid transparent;
+        border-radius: 8px;
+        font-family: inherit;
+        font-size: 15px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .loom-m-icon:active,
+      .loom-m-key:active {
+        background: var(--bg-chip-hover);
+      }
+      .loom-m-font {
+        min-width: 36px;
+        font-size: 13px;
+        color: var(--fg-muted);
+      }
+      .loom-m-kb {
+        font-size: 20px;
+      }
+      .loom-m-kb.is-on {
+        background: var(--bg-chip-current);
+        border-color: var(--border-accent);
+      }
+
+      /* Extra-keys bar: a fixed row (fits 320px) + a scrolling row. */
+      .loom-mobile > .loom-m-keys {
+        flex: 0 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 4px calc(env(safe-area-inset-right, 0px) + 4px)
+          calc(var(--loom-safe-bottom) + 4px)
+          calc(env(safe-area-inset-left, 0px) + 4px);
+        background: var(--bg-chrome-strong);
+        border-top: 1px solid var(--border);
+        touch-action: manipulation;
+      }
+      .loom-m-row {
+        display: flex;
+        gap: 4px;
+        min-width: 0;
+      }
+      .loom-m-row-scroll {
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
+        overscroll-behavior-x: contain;
+        touch-action: pan-x;
+      }
+      .loom-m-row-scroll::-webkit-scrollbar {
+        display: none;
+      }
+      .loom-m-key {
+        flex: 1 1 0;
+        min-width: 0;
+        height: var(--loom-key-h);
+        padding: 0 2px;
+        background: var(--bg-chip);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        font-family: inherit;
+        font-size: 14px;
+        line-height: 1;
+        white-space: nowrap;
+        cursor: pointer;
+        /* Repeatable keys capture the pointer; never let the browser
+           turn a held arrow into a scroll / callout. */
+        touch-action: none;
+      }
+      .loom-m-row-scroll .loom-m-key {
+        flex: 0 0 auto;
+        min-width: 44px;
+        padding: 0 8px;
+        touch-action: pan-x;
+      }
+      .loom-m-mod.is-latched {
+        background: var(--bg-chip-current);
+        border-color: var(--border-accent);
+        color: var(--fg-strong);
+      }
+      .loom-m-mod.is-locked {
+        background: var(--border-accent);
+        border-color: var(--border-accent);
+        color: var(--bg-app);
+        font-weight: 700;
+      }
+
+      /* Switcher sheet: drops from under the header (top-anchored so it
+         stays visible with the keyboard up). */
+      .loom-mobile > .loom-m-sheet-backdrop:not([hidden]) {
+        display: block;
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: calc(env(safe-area-inset-top, 0px) + var(--loom-header-h));
+        bottom: 0;
+        z-index: 50;
+        background: rgba(0, 0, 0, 0.45);
+      }
+      .loom-m-sheet {
+        max-height: 100%;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: var(--space-1) calc(env(safe-area-inset-right, 0px) + var(--space-3))
+          var(--space-3) calc(env(safe-area-inset-left, 0px) + var(--space-3));
+        background: var(--bg-chrome-strong);
+        border-bottom: 1px solid var(--border-strong);
+        border-radius: 0 0 14px 14px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      .loom-m-sheet-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .loom-m-sheet-title {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--fg-strong);
+      }
+      .loom-m-section {
+        margin: var(--space-3) 0 var(--space-1);
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--fg-muted);
+      }
+      .loom-m-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .loom-m-pane {
+        display: flex;
+        gap: 4px;
+      }
+      .loom-m-pane-pick,
+      .loom-m-add {
+        flex: 1 1 auto;
+        min-width: 0;
+        min-height: var(--hit-touch);
+        padding: 0 var(--space-3);
+        background: var(--bg-chip);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        font-family: inherit;
+        font-size: 14px;
+        text-align: left;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        cursor: pointer;
+      }
+      .loom-m-pane.is-active .loom-m-pane-pick {
+        background: var(--bg-chip-current);
+        border-color: var(--border-accent);
+        color: var(--fg-strong);
+      }
+      .loom-m-add {
+        color: var(--fg-muted);
+        border-style: dashed;
+      }
+      .loom-m-pane-close {
+        flex: 0 0 auto;
+        min-width: var(--hit-touch);
+        min-height: var(--hit-touch);
+        padding: 0 var(--space-2);
+        background: var(--bg-chip);
+        color: var(--fg-muted);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        font-family: inherit;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .loom-m-pane-close.is-armed {
+        background: var(--c-status-err);
+        border-color: var(--c-status-err);
+        color: #fff;
+        font-weight: 600;
+      }
+      .loom-m-chips {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+      }
+      .loom-m-chip {
+        min-width: var(--hit-touch);
+        min-height: 40px;
+        padding: 0 var(--space-3);
+        background: var(--bg-chip);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-pill);
+        font-family: inherit;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .loom-m-chip[aria-current="true"] {
+        background: var(--bg-chip-current);
+        border-color: var(--border-accent);
+        color: var(--fg-strong);
+      }
+      .loom-m-chip-add {
+        color: var(--fg-muted);
+        border-style: dashed;
+      }
+      .loom-m-font-size {
+        min-width: 4ch;
+        text-align: center;
+        font-size: 13px;
+        color: var(--fg-muted);
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* Swipe pane-switch hint. */
+      .loom-mobile > .loom-m-hint:not([hidden]) {
+        display: block;
+        position: absolute;
+        left: 50%;
+        top: 38%;
+        transform: translateX(-50%);
+        z-index: 45;
+        max-width: 80%;
+        padding: 8px 16px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        background: var(--bg-chip);
+        color: var(--fg-strong);
+        border: 1px solid var(--border-strong);
+        border-radius: var(--radius-pill);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+        font-size: 14px;
+        pointer-events: none;
+      }
+
+      /* Existing overlays, re-seated for the phone layout. Absolute
+         (inside the root) rather than fixed so they ride the visual
+         viewport with the rest of the UI. */
+      .loom-mobile > .loom-scroll-bottom {
+        position: absolute;
+        right: calc(env(safe-area-inset-right, 0px) + 12px);
+        bottom: calc(2 * var(--loom-key-h) + 12px + var(--loom-safe-bottom) + 12px);
+        width: 44px;
+        height: 44px;
+      }
+      .loom-mobile > .loom-search {
+        top: calc(env(safe-area-inset-top, 0px) + var(--loom-header-h) + 6px);
+        left: calc(env(safe-area-inset-left, 0px) + 8px);
+        right: calc(env(safe-area-inset-right, 0px) + 8px);
+      }
+      .loom-mobile .loom-search-input {
+        flex: 1 1 auto;
+        min-width: 0;
+        min-height: 40px;
+        /* ≥16px or iOS zooms the page on focus. */
+        font-size: 16px;
+      }
+      .loom-mobile .loom-search-btn {
+        min-width: 40px;
+        min-height: 40px;
+      }
+      .loom-mobile > .loom-toast-stack {
+        position: absolute;
+        top: calc(env(safe-area-inset-top, 0px) + var(--loom-header-h) + 8px);
+      }
+      @media (pointer: coarse) {
+        .loom-contextmenu {
+          min-width: 16ch;
+        }
+        .loom-contextmenu-item {
+          min-height: var(--hit-touch);
+          padding: var(--space-2) var(--space-3);
+          font-size: 15px;
+        }
+      }

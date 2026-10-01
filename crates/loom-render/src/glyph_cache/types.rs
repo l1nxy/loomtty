@@ -99,6 +99,12 @@ pub(crate) enum FontClass {
 pub(crate) struct GlyphIdKey(u64);
 
 impl GlyphIdKey {
+    /// Mix the glyph ID and face/style bits for the small direct-mapped cache.
+    /// The complete key is still compared before using an entry.
+    pub(super) fn recent_index(self) -> usize {
+        ((self.0 >> 5) ^ (self.0 & 31).wrapping_mul(37)) as usize & 255
+    }
+
     pub(crate) fn new(glyph: u32, font: FontClass, style: FontStyle, wide: bool) -> Self {
         let font_bits = match font {
             FontClass::Primary => 0,

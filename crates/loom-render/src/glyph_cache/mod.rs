@@ -12,6 +12,7 @@ mod atlas;
 mod cjk;
 #[cfg(target_os = "macos")]
 mod cjk_coretext;
+mod id_cache;
 #[cfg(target_os = "linux")]
 mod metrics;
 #[cfg(target_os = "macos")]
@@ -33,6 +34,7 @@ pub use types::{FontStyle, GlyphEntry, GlyphInstance, PaneGlyphRange};
 use cjk::compute_cjk_pixel_size;
 #[cfg(target_os = "macos")]
 use cjk_coretext::compute_cjk_pixel_size_ct;
+use id_cache::GlyphIdCache;
 #[cfg(target_os = "linux")]
 use metrics::compute_ft_metrics;
 #[cfg(target_os = "macos")]
@@ -160,7 +162,7 @@ pub struct GlyphCache {
     pub max_instances: usize,
     // Caching
     cache: HashMap<(char, FontStyle), GlyphEntry>,
-    glyph_id_cache: HashMap<GlyphIdKey, GlyphEntry>,
+    glyph_id_cache: GlyphIdCache,
 
     // ── Platform-specific rasterizer state ──
 
@@ -574,7 +576,7 @@ impl GlyphCache {
             atlas_size,
             max_instances,
             cache: HashMap::new(),
-            glyph_id_cache: HashMap::new(),
+            glyph_id_cache: GlyphIdCache::new(),
 
             #[cfg(target_os = "linux")]
             rasterizer,

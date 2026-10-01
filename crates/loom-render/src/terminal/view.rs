@@ -8,6 +8,7 @@ use loom_protocol::message::PackedCell;
 use std::hash::Hasher;
 
 use crate::glyph_cache::GlyphCache;
+use crate::glyph_cache::GlyphInstance;
 use crate::rect::Rect;
 use crate::shaper::TextShaper;
 
@@ -19,6 +20,7 @@ use super::glyph::{
     RelativeGlyph, color_glyph_cell_span, constrain_color_glyph_to_cells,
     constrain_wide_text_glyph, emit_glyph, make_relative_glyph,
 };
+use super::instances::{GlyphTransform, RowInstances};
 use super::shaping::{RowLigatureData, precompute_row_shaping, precompute_row_shaping_into};
 
 // ─── Per-row cached data ─────────────────────────────────────────────
@@ -29,6 +31,7 @@ pub struct RowRenderData {
     glyphs: Vec<RelativeGlyph>,
     color_glyphs: Vec<RelativeGlyph>,
     bg_rects: Vec<Rect>,
+    instances: RowInstances,
 }
 
 impl RowRenderData {
@@ -37,6 +40,7 @@ impl RowRenderData {
             glyphs: Vec::with_capacity(cols),
             color_glyphs: Vec::with_capacity((cols / 8).max(2)),
             bg_rects: Vec::with_capacity((cols / 4).max(4)),
+            instances: RowInstances::default(),
         }
     }
 }
@@ -159,6 +163,17 @@ impl<'a> PackedGridContext<'a> {
 }
 
 impl TerminalView {
+    /// Reuse screen-space instances until this row is rebuilt or its placement,
+    /// zoom, dimming, or background changes. The cache follows the row on scroll.
+    pub fn row_instances(
+        &mut self,
+        row: usize,
+        transform: GlyphTransform,
+    ) -> (&[GlyphInstance], &[GlyphInstance]) {
+        let row = &mut self.row_data[row];
+        row.instances.get(&row.glyphs, &row.color_glyphs, transform)
+    }
+
     pub fn row_count(&self) -> usize {
         self.row_data.len()
     }
@@ -477,6 +492,7 @@ fn rebuild_row_render_data(
     row_data.glyphs.clear();
     row_data.color_glyphs.clear();
     row_data.bg_rects.clear();
+    row_data.instances.invalidate();
 
     let glyphs = &mut row_data.glyphs;
     let color_glyphs = &mut row_data.color_glyphs;

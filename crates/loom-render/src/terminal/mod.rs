@@ -13,12 +13,14 @@ pub mod color;
 mod cursor;
 mod decoration;
 mod glyph;
+mod instances;
 pub mod scrollbar;
 mod shaping;
 mod view;
 
 pub use color::ColorTable;
 pub use glyph::RelativeGlyph;
+pub use instances::GlyphTransform;
 pub use scrollbar::{SCROLLBAR_MARGIN, SCROLLBAR_WIDTH, ScrollbarState, build_scrollbar};
 pub use view::{
     PackedViewInputs, TerminalView, build_terminal_view, build_view_from_grid,

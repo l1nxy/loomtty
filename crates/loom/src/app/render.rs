@@ -1191,7 +1191,7 @@ impl App {
 
     #[allow(clippy::too_many_arguments)]
     fn emit_tile_glyphs(
-        view: &terminal::TerminalView,
+        view: &mut terminal::TerminalView,
         inner_x: f32,
         inner_y: f32,
         zoom: f32,
@@ -1202,52 +1202,23 @@ impl App {
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
-        let make_instance =
-            |g: &terminal::RelativeGlyph, color: [f32; 4]| -> Option<GlyphInstance> {
-                let sx = (inner_x + g.px * zoom).round();
-                let sy = (inner_y + g.py * zoom).round();
-                let gw = (g.glyph_w * zoom).round();
-                let gh = (g.glyph_h * zoom).round();
-
-                if gw <= 0.0 || gh <= 0.0 {
-                    return None;
-                }
-
-                Some(GlyphInstance {
-                    pos: [sx, sy],
-                    size: [gw, gh],
-                    uv_pos: [g.u0, g.v0],
-                    uv_size: [g.u1 - g.u0, g.v1 - g.v0],
-                    color,
-                    bg_color,
-                })
-            };
-
+        let transform = terminal::GlyphTransform {
+            origin: [inner_x, inner_y],
+            zoom,
+            dim,
+            background: bg_color,
+        };
         for row in 0..view.row_count() {
+            let (text, color) = view.row_instances(row, transform);
             let glyph_start = glyphs.len();
-            glyphs.extend(view.row_glyphs(row).iter().filter_map(|g| {
-                let color = [
-                    g.color[0] * dim,
-                    g.color[1] * dim,
-                    g.color[2] * dim,
-                    g.color[3],
-                ];
-                make_instance(g, color)
-            }));
-            let glyph_end = glyphs.len();
-            if glyph_start < glyph_end {
-                dirty_glyph_ranges.push((glyph_start, glyph_end));
+            glyphs.extend_from_slice(text);
+            if glyph_start < glyphs.len() {
+                dirty_glyph_ranges.push((glyph_start, glyphs.len()));
             }
             let color_start = color_glyphs.len();
-            let emoji_color = [dim, dim, dim, 1.0];
-            color_glyphs.extend(
-                view.row_color_glyphs(row)
-                    .iter()
-                    .filter_map(|g| make_instance(g, emoji_color)),
-            );
-            let color_end = color_glyphs.len();
-            if color_start < color_end {
-                dirty_color_ranges.push((color_start, color_end));
+            color_glyphs.extend_from_slice(color);
+            if color_start < color_glyphs.len() {
+                dirty_color_ranges.push((color_start, color_glyphs.len()));
             }
         }
     }
@@ -1326,7 +1297,7 @@ impl App {
         self.emit_overview_hover(pane_id, &tr, zoom, &paint, bg_rects);
 
         // Cell backgrounds from view
-        let Some(view) = self.cached_views.remove(&pane_id) else {
+        let Some(mut view) = self.cached_views.remove(&pane_id) else {
             if let Some(range) = self.pane_rect_range(range_start, bg_rects.len(), &tr) {
                 bg_rect_ranges.push(range);
             }
@@ -1396,7 +1367,7 @@ impl App {
         let glyph_start = glyphs.len();
         let color_start = color_glyphs.len();
         Self::emit_tile_glyphs(
-            &view,
+            &mut view,
             inner_x,
             inner_y,
             zoom,

@@ -55,6 +55,63 @@ fn flattened_color_glyphs(view: &TerminalView) -> Vec<RelativeGlyph> {
     glyphs
 }
 
+// Compare the cached screen-space rows to the original uncached conversion.
+fn assert_screen_instances_match(view: &mut TerminalView) {
+    let transform = GlyphTransform {
+        origin: [5.25, 10.75],
+        zoom: 1.25,
+        dim: 0.7,
+        background: [0.1, 0.2, 0.3, 1.0],
+    };
+    for row in 0..view.row_count() {
+        let text = view.row_glyphs(row).to_vec();
+        let color = view.row_color_glyphs(row).to_vec();
+        let (cached_text, cached_color) = view.row_instances(row, transform);
+        for (source, cached, emoji) in [(&text, cached_text, false), (&color, cached_color, true)] {
+            let expected: Vec<_> = source
+                .iter()
+                .filter(|g| {
+                    (g.glyph_w * transform.zoom).round() > 0.0
+                        && (g.glyph_h * transform.zoom).round() > 0.0
+                })
+                .collect();
+            assert_eq!(expected.len(), cached.len());
+            for (g, instance) in expected.into_iter().zip(cached) {
+                assert_eq!(
+                    instance.pos,
+                    [
+                        (transform.origin[0] + g.px * transform.zoom).round(),
+                        (transform.origin[1] + g.py * transform.zoom).round()
+                    ]
+                );
+                assert_eq!(
+                    instance.size,
+                    [
+                        (g.glyph_w * transform.zoom).round(),
+                        (g.glyph_h * transform.zoom).round()
+                    ]
+                );
+                assert_eq!(instance.uv_pos, [g.u0, g.v0]);
+                assert_eq!(instance.uv_size, [g.u1 - g.u0, g.v1 - g.v0]);
+                assert_eq!(
+                    instance.color,
+                    if emoji {
+                        [transform.dim, transform.dim, transform.dim, 1.0]
+                    } else {
+                        [
+                            g.color[0] * transform.dim,
+                            g.color[1] * transform.dim,
+                            g.color[2] * transform.dim,
+                            g.color[3],
+                        ]
+                    }
+                );
+                assert_eq!(instance.bg_color, transform.background);
+            }
+        }
+    }
+}
+
 fn test_config() -> LoomConfig {
     LoomConfig::default()
 }
@@ -526,6 +583,7 @@ fn incremental_update_matches_full_rebuild_for_same_final_grid() {
         &graphemes,
     );
     let mut incremental = build_view_from_grid(&mut atlas_for_incremental, &initial_params);
+    assert_screen_instances_match(&mut incremental);
     let updated_params = test_view_inputs(
         TestFrame {
             cells: &full_cells,
@@ -565,6 +623,7 @@ fn incremental_update_matches_full_rebuild_for_same_final_grid() {
     );
     let rebuilt = build_view_from_grid(&mut atlas_for_full, &rebuilt_params);
 
+    assert_screen_instances_match(&mut incremental);
     let incremental_bg = flattened_bg_rects(&incremental);
     let rebuilt_bg = flattened_bg_rects(&rebuilt);
     let incremental_glyphs = flattened_glyphs(&incremental);
@@ -692,6 +751,7 @@ fn scroll_shift_rotates_row_cache_and_rebuilds_only_exposed_rows() {
     );
     let mut atlas = test_atlas(&config, &shaper);
     let mut view = build_view_from_grid(&mut atlas, &initial_params);
+    assert_screen_instances_match(&mut view);
     let original_epochs = view.row_epochs.clone();
     let original_hashes = view.row_hashes.clone();
 
@@ -729,6 +789,7 @@ fn scroll_shift_rotates_row_cache_and_rebuilds_only_exposed_rows() {
         &mut atlas,
     );
 
+    assert_screen_instances_match(&mut view);
     assert_eq!(view.last_scroll_shift, -1);
     assert_eq!(view.row_hash(0), original_hashes[1]);
     assert_eq!(view.row_hash(1), original_hashes[2]);

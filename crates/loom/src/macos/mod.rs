@@ -1091,13 +1091,15 @@ impl MacApplication {
             );
             // Share the terminal's resolved map (including a sticky Meta
             // leader); Settings uses only its ordinary direct edit bindings.
-            let fallback =
-                loom_input::keybind::KeybindMap::from_config_only(&config.keys.direct_bindings);
-            let bindings = if settings_key {
-                &fallback.bindings
-            } else {
-                app.map(|app| &app.core.input.direct_keybinds.bindings)
-                    .unwrap_or(&fallback.bindings)
+            let fallback;
+            let bindings = match app.filter(|_| !settings_key) {
+                Some(app) => &app.core.input.direct_keybinds.bindings,
+                None => {
+                    fallback = loom_input::keybind::KeybindMap::from_config_only(
+                        &config.keys.direct_bindings,
+                    );
+                    &fallback.bindings
+                }
             };
             menu.update(
                 bindings,
@@ -1259,7 +1261,12 @@ impl ApplicationHandler for MacApplication {
         for app in &mut self.windows {
             app.user_event(event_loop, event);
         }
-        self.update_native_state();
+        // PTY notifications need only the end-of-cycle native sync below in
+        // about_to_wait. Commands still see fresh native state before dispatch.
+        let has_commands = !self.commands.is_empty();
+        if has_commands {
+            self.update_native_state();
+        }
         while let Ok(command) = self.commands.try_recv() {
             self.dispatch(command, event_loop);
             if event_loop.exiting() {
@@ -1267,10 +1274,13 @@ impl ApplicationHandler for MacApplication {
             }
         }
         self.prune_closed(event_loop);
-        self.update_native_state();
+        if has_commands {
+            self.update_native_state();
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        let redraw = matches!(event, WindowEvent::RedrawRequested);
         let is_quick = self
             .quick_terminal
             .as_ref()
@@ -1339,7 +1349,12 @@ impl ApplicationHandler for MacApplication {
                 self.hide_quick_terminal(false);
             }
         }
-        self.update_native_state();
+        // Drawing does not change native controls. about_to_wait publishes the
+        // final state once per cycle; focus/input/window events remain immediate
+        // (in particular, releasing Secure Input must not wait for another tick).
+        if !redraw {
+            self.update_native_state();
+        }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {

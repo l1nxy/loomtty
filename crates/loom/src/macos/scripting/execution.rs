@@ -92,10 +92,6 @@ impl MacApplication {
             Source::AppIntents => &mut self.intents,
         };
         let snapshot = bridge.capture(&self.windows, self.active, enabled, source);
-        match source {
-            Source::AppleScript => cocoa::publish(snapshot.clone()),
-            Source::AppIntents => intents::publish(snapshot.clone()),
-        }
         let now = Instant::now();
         let mut completions = Vec::new();
         bridge.waiting.retain_mut(|wait| {
@@ -170,6 +166,13 @@ impl MacApplication {
                 true
             }
         });
+        // Transfer the snapshot after resolving waits rather than cloning its
+        // entire object graph each event-loop cycle. Publish before resuming
+        // script commands, whose callbacks may immediately query the new IDs.
+        match source {
+            Source::AppleScript => cocoa::publish(snapshot),
+            Source::AppIntents => intents::publish(snapshot),
+        }
         for (token, result) in completions {
             RESULTS.with(|results| {
                 results.borrow_mut().remove(&token);

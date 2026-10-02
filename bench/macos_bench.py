@@ -365,7 +365,8 @@ def run_one(app, round_index, directory, args):
             result["vtebench_manifest"] = manifest
             commands += [dict(name="vtebench/" + benchmark["name"], benchmark=benchmark,
                               directory=str(directory), binary=str(args.vtebench / "target/release/vtebench"),
-                              min_bytes=16 * MIB, max_secs=args.vtebench_seconds)
+                              min_bytes=16 * MIB, max_secs=args.vtebench_seconds,
+                              output_mode=args.vtebench_output_mode)
                          for benchmark in manifest]
         for sequence, command in enumerate(commands):
             phase = measure_phase(directory, processes, sequence, command, args.timeout)
@@ -474,6 +475,11 @@ def report(data, output):
                   "- vtebench is unmodified; BSD ps tty padding is trimmed only while generating payloads. All payload/setup bytes are hashed and frozen before measurement.",
                   "- Official timing measures blocked PTY writes with millisecond truncation, not parser completion or displayed FPS. It uses 16 MiB minimum samples, one warmup, and the configured time limit.",
                   "- CPU ms/MiB includes setup, warmup and drain/settling; its denominator counts payload bytes including warmup, excluding small setup/reset/status bytes."]
+        modes = sorted({(p.get("output_mode", {}).get("mode", "raw"),
+                         p.get("output_mode", {}).get("flags", 0))
+                        for run in data["runs"] for p in run.get("phases", [])
+                        if p["name"].startswith("vtebench/")})
+        lines.append(f"- PTY output modes (mode, flags): {modes}. Missing legacy metadata means raw output. Payload byte counts precede kernel output processing.")
     for app in apps:
         lines.append(f"- {app}: `{data['versions'][app]['text'].splitlines()[0]}`; binary SHA-256 `{data['versions'][app]['sha256']}`")
         if "server_sha256" in data["versions"][app]:
@@ -507,6 +513,8 @@ def argument_parser():
     parser.add_argument("--loom-height", type=float, help="Logical pixels for grid calibration on a different display")
     parser.add_argument("--vtebench", type=Path, help="Built upstream alacritty/vtebench checkout; add all default workloads")
     parser.add_argument("--vtebench-seconds", type=int, default=3, help="Official per-workload sampling duration")
+    parser.add_argument("--vtebench-output-mode", choices=("original", "raw"), default="original",
+                        help="Preserve upstream inherited PTY output flags (default); raw reproduces earlier controlled runs")
     parser.add_argument("--confirm-visible", action="store_true", help="Wait for visible.json after each launch; see README")
     parser.add_argument("--probe", action="store_true", help="Only verify startup, grid and process ownership")
     return parser
@@ -570,10 +578,13 @@ def main():
                 print(f"Round {round_index + 1}/{args.rounds}: {app}", flush=True)
                 run = run_one(app, round_index, args.output / f"r{round_index}-{app}", args)
                 if args.vtebench and not args.probe and "error" not in run:
+                    fingerprint = dict(payloads=run["vtebench_manifest"],
+                                       output_modes={p["name"]: p["output_mode"] for p in run["phases"]
+                                                     if p["name"].startswith("vtebench/")})
                     if expected_manifest is None:
-                        expected_manifest = run["vtebench_manifest"]
-                    elif run["vtebench_manifest"] != expected_manifest:
-                        run["error"] = "upstream payload bytes/hashes differ between terminals"
+                        expected_manifest = fingerprint
+                    elif fingerprint != expected_manifest:
+                        run["error"] = "upstream payload bytes/hashes or PTY output flags differ between terminals"
                 data["runs"].append(run)
                 save_json(args.output / "results.json", data)
                 report(data, args.output)

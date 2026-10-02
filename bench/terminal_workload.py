@@ -6,6 +6,7 @@ Only the Python standard library is needed. No user's shell/profile is loaded.
 """
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import math
@@ -77,6 +78,23 @@ class Terminal:
         finally:
             termios.tcsetattr(self.fd, termios.TCSANOW, self.original)
             os.close(self.fd)
+
+    @contextmanager
+    def output_mode(self, mode):
+        """Match upstream's inherited output processing without changing DSR input."""
+        if mode not in ("original", "raw"):
+            raise ValueError(f"unknown PTY output mode: {mode}")
+        saved = termios.tcgetattr(self.fd)
+        selected = list(saved)
+        selected[1] = self.original[1] if mode == "original" else 0
+        try:
+            termios.tcsetattr(self.fd, termios.TCSANOW, selected)
+            flags = termios.tcgetattr(self.fd)[1]
+            yield dict(mode=mode, flags=flags,
+                       opost=bool(flags & termios.OPOST),
+                       onlcr=bool(flags & termios.ONLCR))
+        finally:
+            termios.tcsetattr(self.fd, termios.TCSANOW, saved)
 
     def write(self, data):
         view = memoryview(data)

@@ -52,3 +52,19 @@ input-to-photon latency. A terminal can coalesce most of this flood. Keep its
 results separate from DSR latency and fixed-rate TUI CPU. Native scrolling limits
 and render policies also differ. See the upstream [README](https://github.com/alacritty/vtebench)
 and [timing implementation](https://github.com/alacritty/vtebench/blob/master/src/bench.rs).
+
+## PTY output mode
+
+The DSR/TUI driver uses raw mode, but upstream vtebench does not change termios.
+Official phases now restore the output flags captured before entering raw mode;
+raw input remains enabled for DSR responses outside the timed subprocess. Each
+phase records the actual output flags, OPOST and ONLCR. The raw settings are
+restored even when the upstream process fails. This matters for workloads such
+as scrolling (`y\n`): ONLCR can turn LF into CRLF in the kernel and change which
+columns the emulator writes and clears.
+
+`--vtebench-output-mode raw` reproduces the earlier raw-PTY variant. Reports
+without an `output_mode` field were raw and must not be mixed with the new
+default for throughput comparisons. Their fixed-rate TUI and memory phases
+are unchanged. Byte denominators are upstream payload bytes before PTY output
+processing, matching the upstream harness, not bytes after kernel translation.

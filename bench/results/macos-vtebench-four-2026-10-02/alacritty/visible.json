@@ -1,0 +1,9 @@
+{
+  "app": "alacritty",
+  "processes": {
+    "alacritty": 75291
+  },
+  "method": "User confirmed exact titled benchmark window is foreground and visible",
+  "window": "loom benchmark [r0-alacritty]",
+  "confirmed_at": "2026-10-02T05:52:15.662909+00:00"
+}

@@ -92,9 +92,10 @@ def execute(terminal, command):
     terminal.fence()
     start = time.monotonic_ns()
     # Give the upstream harness the actual PTY, not a pipe or captured stdout.
-    with error.open('wb') as stderr:
-        subprocess.run(argv, stdin=terminal.fd, stdout=terminal.fd, stderr=stderr,
-                       timeout=command['max_secs'] + 90, check=True)
+    with terminal.output_mode(command.get('output_mode', 'original')) as output_mode:
+        with error.open('wb') as stderr:
+            subprocess.run(argv, stdin=terminal.fd, stdout=terminal.fd, stderr=stderr,
+                           timeout=command['max_secs'] + 90, check=True)
     terminal.fence()
     elapsed = (time.monotonic_ns() - start) / 1e9
     if error.stat().st_size:
@@ -102,6 +103,7 @@ def execute(terminal, command):
     samples = parse_dat(output, name)
     time.sleep(.25)
     return dict(name=command['name'], benchmark=name, seconds=elapsed, argv=argv,
+                output_mode=output_mode,
                 samples_ms=samples, sample_bytes=sample_bytes, warmup_samples=1,
                 payload=command['benchmark'], median_ms=statistics.median(samples),
                 mib_per_second=sample_bytes / 1048576 / (statistics.median(samples) / 1000),

@@ -62,6 +62,37 @@ class WorkloadTests(unittest.TestCase):
             os.close(slave)
 
 
+class UpstreamOutputModeTests(unittest.TestCase):
+    def test_restores_raw_dsr_mode_even_when_upstream_fails(self):
+        import termios
+        master, slave = pty.openpty()
+        terminal = Terminal()
+        terminal.fd = slave
+        terminal.original = termios.tcgetattr(slave)
+        terminal.original[1] |= termios.OPOST | termios.ONLCR
+        tty.setraw(slave)
+        saved = termios.tcgetattr(slave)
+        try:
+            with self.assertRaisesRegex(RuntimeError, "upstream failed"):
+                with terminal.output_mode("original") as flags:
+                    self.assertTrue(flags["opost"] and flags["onlcr"])
+                    # Observe actual PTY bytes, not just the requested attributes.
+                    os.write(slave, b"y\n")
+                    self.assertEqual(os.read(master, 32), b"y\r\n")
+                    raise RuntimeError("upstream failed")
+            self.assertEqual(termios.tcgetattr(slave), saved)
+            os.write(slave, b"y\n")
+            self.assertEqual(os.read(master, 32), b"y\n")
+            with terminal.output_mode("raw") as flags:
+                self.assertFalse(flags["opost"])
+                os.write(slave, b"y\n")
+                self.assertEqual(os.read(master, 32), b"y\n")
+            self.assertEqual(termios.tcgetattr(slave), saved)
+        finally:
+            os.close(master)
+            os.close(slave)
+
+
 @unittest.skipUnless(platform.system() == "Darwin", "libproc requires macOS")
 class ResourceTests(unittest.TestCase):
     def test_cpu_time_agrees_with_python_process_clock(self):

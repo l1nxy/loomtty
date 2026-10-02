@@ -1,0 +1,9 @@
+{
+  "app": "kitty",
+  "processes": {
+    "kitty": 74086
+  },
+  "method": "User confirmed exact titled benchmark window is foreground and visible",
+  "window": "loom benchmark [r0-kitty]",
+  "confirmed_at": "2026-10-02T05:45:51.354049+00:00"
+}

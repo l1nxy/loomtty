@@ -1,0 +1,9 @@
+{
+  "app": "ghostty",
+  "processes": {
+    "ghostty": 76576
+  },
+  "method": "User confirmed exact titled benchmark window is foreground and visible",
+  "window": "loom benchmark [r0-ghostty]",
+  "confirmed_at": "2026-10-02T05:57:45.851131+00:00"
+}

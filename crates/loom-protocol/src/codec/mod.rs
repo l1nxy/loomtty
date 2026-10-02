@@ -31,17 +31,19 @@ pub use frame::{
     read_frame_reuse,
 };
 pub use full_sync::{
-    decode_full_pane_sync, decode_full_pane_sync_borrowed, encode_full_pane_sync_framed,
-    encode_full_pane_sync_payload, full_pane_sync_to_borrowed,
+    PreparedPaneSync, decode_full_pane_sync, decode_full_pane_sync_borrowed,
+    encode_full_pane_sync_framed, encode_full_pane_sync_payload, encode_prepared_pane_sync_framed,
+    frame_prepared_pane_sync, full_pane_sync_to_borrowed,
 };
 pub use handshake::{
     ClientHello, SERVER_HELLO_LEN, VersionCompat, WIRE_PROTOCOL_VERSION, build_client_hello,
     read_client_hello, read_server_hello, write_client_hello, write_server_hello,
 };
 pub use state_machine::{
-    OP_ASCII, OP_ASCII_REPEAT, OP_CHAR1, OP_CHARS, OP_CHARS_LONG, OP_END, OP_REPEAT, OP_RESET,
-    OP_SET_BG, OP_SET_BG_INDEXED, OP_SET_BG_NAMED, OP_SET_FG, OP_SET_FG_BG, OP_SET_FG_INDEXED,
-    OP_SET_FG_NAMED, OP_SET_FLAGS, StateEncoder, decode_sm_cells, decode_sm_rows,
+    EncodedCells, OP_ASCII, OP_ASCII_REPEAT, OP_CHAR1, OP_CHARS, OP_CHARS_LONG, OP_END, OP_REPEAT,
+    OP_RESET, OP_SET_BG, OP_SET_BG_INDEXED, OP_SET_BG_NAMED, OP_SET_FG, OP_SET_FG_BG,
+    OP_SET_FG_INDEXED, OP_SET_FG_NAMED, OP_SET_FLAGS, StateEncoder, decode_sm_cells,
+    decode_sm_rows,
 };
 
 #[cfg(test)]

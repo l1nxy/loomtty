@@ -1,11 +1,12 @@
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point};
+use loom_protocol::codec::{PreparedPaneSync, StateEncoder};
 use loom_protocol::message::*;
 use std::hash::{Hash, Hasher};
 
 use super::cell::{
     collect_scrollback_cells, collect_viewport_cells, full_damage_rows, pack_cell,
-    partial_damage_rows,
+    partial_damage_rows, visit_scrollback_cells,
 };
 use super::{Pane, SnapshotScrollback, cursor_shape_to_u8};
 
@@ -15,7 +16,7 @@ impl Pane {
             SnapshotScrollback::incremental(self.term.grid().history_size(), history_sent);
         // Tick layer owns the incremental `scrollback_replace` decision (it
         // knows the watermark delta vs history_size) and overwrites this.
-        self.build_snapshot(generation, scrollback, false)
+        self.build_snapshot(generation, scrollback, false, collect_scrollback_cells)
     }
 
     pub fn snapshot(&self, generation: u64) -> FullPaneSync {
@@ -29,15 +30,44 @@ impl Pane {
         // permanently drop that history, because `history_sent` is then
         // advanced to `scrollback_total` and the rows are never resent.
         let replace = !self.is_alt_screen();
-        self.build_snapshot(generation, scrollback, replace)
+        self.build_snapshot(generation, scrollback, replace, collect_scrollback_cells)
     }
 
-    fn build_snapshot(
+    /// Snapshot history directly into its wire representation instead of first
+    /// allocating a second packed copy of the entire terminal history.
+    pub fn snapshot_prepared(&self, generation: u64) -> PreparedPaneSync {
+        self.build_snapshot(
+            generation,
+            SnapshotScrollback::full(self.term.grid().history_size()),
+            !self.is_alt_screen(),
+            encode_scrollback,
+        )
+    }
+
+    pub fn snapshot_incremental_prepared(
+        &self,
+        generation: u64,
+        history_sent: usize,
+    ) -> PreparedPaneSync {
+        self.build_snapshot(
+            generation,
+            SnapshotScrollback::incremental(self.term.grid().history_size(), history_sent),
+            false,
+            encode_scrollback,
+        )
+    }
+
+    fn build_snapshot<S>(
         &self,
         generation: u64,
         scrollback: SnapshotScrollback,
         scrollback_replace: bool,
-    ) -> FullPaneSync {
+        collect_history: impl FnOnce(
+            &alacritty_terminal::grid::Grid<alacritty_terminal::term::cell::Cell>,
+            usize,
+            usize,
+        ) -> (S, GraphemeExtras),
+    ) -> FullPaneSync<S> {
         let term = &self.term;
         let grid = term.grid();
         let cols = grid.columns();
@@ -46,9 +76,8 @@ impl Pane {
 
         let (cells, mut grapheme_extras, hyperlink_extras) =
             collect_viewport_cells(grid, rows, cols);
-        let (sb_cells, mut sb_grapheme_extras) =
-            collect_scrollback_cells(grid, cols, scrollback.rows);
-        let scrollback_cell_count = sb_cells.len() as u32;
+        let (sb_cells, mut sb_grapheme_extras) = collect_history(grid, cols, scrollback.rows);
+        let scrollback_cell_count = (scrollback.rows * cols) as u32;
         for (idx, extra) in grapheme_extras.0.drain(..) {
             sb_grapheme_extras
                 .0
@@ -184,4 +213,14 @@ impl Pane {
             encoder.push_cell(&pack_cell(&grid[point]));
         }
     }
+}
+
+fn encode_scrollback(
+    grid: &alacritty_terminal::grid::Grid<alacritty_terminal::term::cell::Cell>,
+    cols: usize,
+    rows: usize,
+) -> (loom_protocol::codec::EncodedCells, GraphemeExtras) {
+    let mut encoder = StateEncoder::new();
+    let extras = visit_scrollback_cells(grid, cols, rows, |cell| encoder.push_cell(&cell));
+    (encoder.into_encoded_cells(), extras)
 }

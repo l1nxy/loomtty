@@ -897,8 +897,11 @@ pub struct PaneFrameMeta {
 }
 
 /// Full pane snapshot (tag 0x21).
+///
+/// Defaults to owned cells. Server snapshots can instead hold an encoded history
+/// stream, avoiding an intermediate packed copy of every scrollback cell.
 #[derive(Debug, Clone, PartialEq)]
-pub struct FullPaneSync {
+pub struct FullPaneSync<Scrollback = Vec<PackedCell>> {
     pub meta: PaneFrameMeta,
     pub cols: u16,
     pub rows: u16,
@@ -906,7 +909,7 @@ pub struct FullPaneSync {
     /// New scrollback lines (oldest first).
     /// When `scrollback_replace` is false, the client appends these to its buffer.
     /// When `scrollback_replace` is true, the client clears its buffer first.
-    pub scrollback: Vec<PackedCell>, // row-major, scrollback_rows * cols
+    pub scrollback: Scrollback, // row-major, scrollback_rows * cols
     pub scrollback_rows: u32,
     /// When true, the client should replace its entire scrollback buffer
     /// with these rows instead of appending. Used when the server's ring buffer

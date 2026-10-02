@@ -1105,3 +1105,53 @@ fn viewport_fingerprint_distinguishes_grapheme_overflow_positions() {
     );
     assert_ne!(first, pane.viewport_row_fingerprint(0));
 }
+
+#[test]
+fn prepared_snapshot_preserves_wire_bytes_across_history_and_screen_changes() {
+    use loom_protocol::codec::{frame_full_pane_sync, frame_prepared_pane_sync};
+
+    let mut pane = Pane::new_with_opts(88, 37, 5, shell_path(), None, None).unwrap();
+    let compare = |pane: &Pane| {
+        assert_eq!(
+            frame_full_pane_sync(&pane.snapshot(123)).unwrap(),
+            frame_prepared_pane_sync(&pane.snapshot_prepared(123)).unwrap(),
+        );
+        for sent in [
+            0,
+            1,
+            pane.history_size() / 2,
+            pane.history_size(),
+            usize::MAX,
+        ] {
+            assert_eq!(
+                frame_full_pane_sync(&pane.snapshot_incremental(124, sent)).unwrap(),
+                frame_prepared_pane_sync(&pane.snapshot_incremental_prepared(124, sent)).unwrap(),
+                "history watermark {sent}"
+            );
+        }
+    };
+    compare(&pane);
+    // Cover ASCII runs, Unicode/grapheme overflow in both history and viewport,
+    // wrapped wide cells, attributes, title/cwd and viewport hyperlinks.
+    let mut output = String::from("\x1b]0;wire check\x07\x1b]7;file://localhost/tmp\x07");
+    for row in 0..10050 {
+        use std::fmt::Write;
+        write!(
+            output,
+            "\x1b[38;5;{}m{row:05} e\u{301}中 🦀abcdefghijklmnopqrstuvwxy\r\n",
+            row % 256
+        )
+        .unwrap();
+    }
+    output.push_str("\x1b]8;;https://example.com\x1b\\e\u{302}\x1b]8;;\x1b\\");
+    pane.process_chunks(&[output.into_bytes()]);
+    assert_eq!(pane.history_size(), 10000);
+    compare(&pane);
+    pane.resize(53, 8);
+    compare(&pane);
+    pane.process_chunks(&[b"\x1b[?1049hALT".to_vec()]);
+    assert!(pane.is_alt_screen());
+    compare(&pane);
+    pane.process_chunks(&[b"\x1b[?1049l".to_vec()]);
+    compare(&pane);
+}

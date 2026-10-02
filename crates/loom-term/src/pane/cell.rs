@@ -179,26 +179,32 @@ pub(super) fn collect_scrollback_cells(
     cols: usize,
     scrollback_rows: usize,
 ) -> (Vec<PackedCell>, GraphemeExtras) {
-    if scrollback_rows == 0 {
-        return (Vec::new(), GraphemeExtras::new());
-    }
     let mut cells = Vec::with_capacity(scrollback_rows * cols);
+    let extras = visit_scrollback_cells(grid, cols, scrollback_rows, |cell| cells.push(cell));
+    (cells, extras)
+}
+
+pub(super) fn visit_scrollback_cells(
+    grid: &alacritty_terminal::grid::Grid<alacritty_terminal::term::cell::Cell>,
+    cols: usize,
+    scrollback_rows: usize,
+    mut visit: impl FnMut(PackedCell),
+) -> GraphemeExtras {
     let mut grapheme_extras = GraphemeExtras::new();
-    for row_offset in (1..=scrollback_rows).rev() {
+    for (row, row_offset) in (1..=scrollback_rows).rev().enumerate() {
         for col in 0..cols {
             let point = Point::new(Line(-(row_offset as i32)), Column(col));
             let cell = &grid[point];
-            let cell_idx = cells.len() as u32;
-            cells.push(pack_cell(cell));
+            visit(pack_cell(cell));
             if let Some(zw) = cell.zerowidth()
                 && !zw.is_empty()
             {
                 let extra: String = zw.iter().collect();
-                grapheme_extras.push(cell_idx, &extra);
+                grapheme_extras.push((row * cols + col) as u32, &extra);
             }
         }
     }
-    (cells, grapheme_extras)
+    grapheme_extras
 }
 
 pub(super) fn round_cell_size(value: f32) -> Option<u16> {

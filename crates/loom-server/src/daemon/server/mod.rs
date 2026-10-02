@@ -1,3 +1,4 @@
+use loom_protocol::codec::PreparedPaneSync;
 mod input;
 mod ipc;
 mod layout;
@@ -54,7 +55,7 @@ const CONTROL_SESSION: &str = "__control__";
 pub(crate) enum ServerResponse {
     BroadcastToSession(String, ServerMessage),
     SendToClient(u64, ServerMessage),
-    SendFullPaneSync(u64, FullPaneSync),
+    SendFullPaneSync(u64, PreparedPaneSync),
     RemoveClient(u64),
     ShutdownServer,
 }
@@ -119,7 +120,7 @@ impl Server {
                 ServerResponse::SendFullPaneSync(cid, sync) => {
                     if let (Some(client), Some(frame)) = (
                         self.clients.get(&cid),
-                        loom_protocol::codec::frame_full_pane_sync(&sync),
+                        loom_protocol::codec::frame_prepared_pane_sync(&sync),
                     ) && let Err(e) = client.tx.try_send(bytes::Bytes::from(frame))
                     {
                         log::warn!("failed to send full pane sync to client {cid}: {e}");
@@ -646,7 +647,7 @@ impl Server {
                 ServerResponse::SendFullPaneSync(cid, sync) => {
                     if let (Some(client), Some(frame)) = (
                         self.clients.get(&cid),
-                        loom_protocol::codec::frame_full_pane_sync(&sync),
+                        loom_protocol::codec::frame_prepared_pane_sync(&sync),
                     ) {
                         let _ = client.tx.try_send(bytes::Bytes::from(frame));
                     }

@@ -1,0 +1,17 @@
+{
+  "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "binary": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/release/examples/history_snapshot_bench",
+  "binary_sha256": "ef802d4498e675e9c123547b010aae19552c287dca1937f6dd137bfe1a2128bf",
+  "rounds": 3,
+  "grid": [
+    100,
+    30
+  ],
+  "history_rows": 10000,
+  "iterations": 31,
+  "timing": "first sample cold; other 30 warm; excludes checkpoint waits and drop",
+  "resources": "physical footprint / RSS of headless diagnostic only, not GUI or daemon",
+  "metadata_recorded_after_measurements": true,
+  "base_commit": "d60c18a",
+  "candidate": "stream history directly to StateEncoder; not merged or installed pending latency/GUI validation"
+}

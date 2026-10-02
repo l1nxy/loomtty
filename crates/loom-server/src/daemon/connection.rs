@@ -216,7 +216,7 @@ pub(crate) async fn handle_client<R, W>(
                 frames.push(frame);
             }
             for sync in &pane_syncs {
-                if let Some(frame) = codec::frame_full_pane_sync(sync) {
+                if let Some(frame) = codec::frame_prepared_pane_sync(sync) {
                     frames.push(frame);
                 }
             }
@@ -314,7 +314,7 @@ pub(crate) async fn handle_client<R, W>(
                             }
                             ServerResponse::SendFullPaneSync(cid, sync) => {
                                 if let (Some(client), Some(frame)) =
-                                    (s.clients.get(&cid), codec::frame_full_pane_sync(&sync))
+                                    (s.clients.get(&cid), codec::frame_prepared_pane_sync(&sync))
                                     && let Err(e) = client.tx.try_send(Bytes::from(frame))
                                 {
                                     log::warn!(

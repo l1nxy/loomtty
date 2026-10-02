@@ -4,7 +4,7 @@ use crate::message::*;
 use std::io;
 
 use super::frame::{TAG_FULL_PANE_SYNC, TAG_FULL_PANE_SYNC_LZ4, finalize_frame_compression};
-use super::state_machine::{StateEncoder, sm_decode_cells_vec, sm_encode_cells};
+use super::state_machine::{EncodedCells, StateEncoder, sm_decode_cells_vec, sm_encode_cells};
 use super::util::SliceCursor;
 
 // ─── Encoding helpers (unchanged) ───────────────────────────────────
@@ -49,9 +49,9 @@ fn validate_cwd(cwd: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn write_full_pane_sync_header(
+fn write_full_pane_sync_header<S>(
     buf: &mut Vec<u8>,
-    sync: &FullPaneSync,
+    sync: &FullPaneSync<S>,
     title_bytes: &[u8],
 ) -> io::Result<()> {
     validate_full_pane_sync_title(title_bytes)?;
@@ -70,7 +70,10 @@ fn write_full_pane_sync_header(
     Ok(())
 }
 
-fn write_full_pane_sync_grapheme_extras(buf: &mut Vec<u8>, sync: &FullPaneSync) -> io::Result<()> {
+fn write_full_pane_sync_grapheme_extras<S>(
+    buf: &mut Vec<u8>,
+    sync: &FullPaneSync<S>,
+) -> io::Result<()> {
     let extras = &sync.grapheme_extras.0;
     let count = u16::try_from(extras.len())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "too many grapheme extras"))?;
@@ -85,7 +88,10 @@ fn write_full_pane_sync_grapheme_extras(buf: &mut Vec<u8>, sync: &FullPaneSync) 
     Ok(())
 }
 
-fn write_full_pane_sync_hyperlink_extras(buf: &mut Vec<u8>, sync: &FullPaneSync) -> io::Result<()> {
+fn write_full_pane_sync_hyperlink_extras<S>(
+    buf: &mut Vec<u8>,
+    sync: &FullPaneSync<S>,
+) -> io::Result<()> {
     let extras = &sync.hyperlink_extras;
     let cell_link_count = u16::try_from(extras.cell_links.len())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "too many hyperlink cell-links"))?;
@@ -107,7 +113,7 @@ fn write_full_pane_sync_hyperlink_extras(buf: &mut Vec<u8>, sync: &FullPaneSync)
     Ok(())
 }
 
-fn write_full_pane_sync_cwd(buf: &mut Vec<u8>, sync: &FullPaneSync) -> io::Result<()> {
+fn write_full_pane_sync_cwd<S>(buf: &mut Vec<u8>, sync: &FullPaneSync<S>) -> io::Result<()> {
     match &sync.cwd {
         Some(cwd) => {
             validate_cwd(cwd)?;
@@ -217,7 +223,36 @@ pub fn encode_full_pane_sync_payload(sync: &FullPaneSync) -> io::Result<Vec<u8>>
     Ok(buf)
 }
 
+/// A server snapshot whose history has already been encoded while visiting the
+/// terminal grid. The viewport and all metadata retain their usual representation.
+pub type PreparedPaneSync = FullPaneSync<EncodedCells>;
+
+pub fn frame_prepared_pane_sync(sync: &PreparedPaneSync) -> Option<Vec<u8>> {
+    let mut buf = Vec::new();
+    encode_prepared_pane_sync_framed(&mut buf, sync).ok()?;
+    Some(buf)
+}
+
+pub fn encode_prepared_pane_sync_framed(
+    buf: &mut Vec<u8>,
+    sync: &PreparedPaneSync,
+) -> io::Result<()> {
+    encode_full_pane_sync_with_history(buf, sync, sync.scrollback.as_bytes())
+}
+
 pub fn encode_full_pane_sync_framed(buf: &mut Vec<u8>, sync: &FullPaneSync) -> io::Result<()> {
+    let mut encoder = StateEncoder::new();
+    for cell in &sync.scrollback {
+        encoder.push_cell(cell);
+    }
+    encode_full_pane_sync_with_history(buf, sync, encoder.finish())
+}
+
+fn encode_full_pane_sync_with_history<S>(
+    buf: &mut Vec<u8>,
+    sync: &FullPaneSync<S>,
+    history: &[u8],
+) -> io::Result<()> {
     buf.clear();
     let title_bytes = sync.title.as_bytes();
     validate_full_pane_sync_title(title_bytes)?;
@@ -227,14 +262,9 @@ pub fn encode_full_pane_sync_framed(buf: &mut Vec<u8>, sync: &FullPaneSync) -> i
     write_full_pane_sync_header(buf, sync, title_bytes)?;
     buf.extend_from_slice(&sync.scrollback_rows.to_le_bytes());
     buf.push(sync.scrollback_replace as u8);
+    buf.extend_from_slice(&(history.len() as u32).to_le_bytes());
+    buf.extend_from_slice(history);
     let mut encoder = StateEncoder::new();
-    for cell in &sync.scrollback {
-        encoder.push_cell(cell);
-    }
-    let sb_data = encoder.finish();
-    buf.extend_from_slice(&(sb_data.len() as u32).to_le_bytes());
-    buf.extend_from_slice(sb_data);
-    encoder.reset();
     for cell in &sync.cells {
         encoder.push_cell(cell);
     }

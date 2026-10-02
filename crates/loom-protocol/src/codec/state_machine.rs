@@ -30,6 +30,16 @@ pub const OP_END: u8 = 0xFF;
 
 // ─── Encoder ─────────────────────────────────────────────────────────
 
+/// A complete state-machine cell stream, constructed only by `StateEncoder`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EncodedCells(Vec<u8>);
+
+impl EncodedCells {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 /// Encodes a stream of `PackedCell`s into a compact opcode stream.
 ///
 /// Lifecycle: `new()` → `push_cell(...)` * N → `finish()` → reference
@@ -296,6 +306,12 @@ impl StateEncoder {
             self.finished = true;
         }
         &self.out
+    }
+
+    /// Finish the stream and transfer its allocation without copying it.
+    pub fn into_encoded_cells(mut self) -> EncodedCells {
+        self.finish();
+        EncodedCells(self.out)
     }
 
     pub fn reset(&mut self) {

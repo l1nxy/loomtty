@@ -3,6 +3,7 @@ use loom_config::schema::{ColumnSizing, PresetWidth};
 use loom_layout::column::ColumnWidth;
 use loom_layout::geometry::ViewSize;
 use loom_layout::workspace_set::WorkspaceSet;
+use loom_protocol::codec::PreparedPaneSync;
 use loom_protocol::message::*;
 use loom_protocol::transport;
 use loom_session::agent::SavedAgent;
@@ -825,15 +826,15 @@ impl Session {
     /// Build initial StateSync for a new client, including FullPaneSync for each pane.
     pub(crate) fn build_state_sync(
         &self,
-    ) -> (ServerMessage, Vec<FullPaneSync>, Vec<ServerMessage>) {
+    ) -> (ServerMessage, Vec<PreparedPaneSync>, Vec<ServerMessage>) {
         let pane_ids: Vec<u64> = self.workspaces.all_pane_ids();
 
-        let syncs: Vec<FullPaneSync> = pane_ids
+        let syncs: Vec<PreparedPaneSync> = pane_ids
             .iter()
             .filter_map(|&id| {
                 let pane = self.panes.get(&id)?;
                 let pgen = self.generation.get(&id).copied().unwrap_or(0);
-                Some(pane.snapshot(pgen))
+                Some(pane.snapshot_prepared(pgen))
             })
             .collect();
 

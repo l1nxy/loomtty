@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use loom_protocol::codec;
+use loom_protocol::codec::PreparedPaneSync;
 use loom_protocol::message::*;
 use loom_protocol::transport;
 use std::sync::Arc;
@@ -48,7 +49,7 @@ pub(crate) async fn run_tick_loop(
     #[allow(clippy::large_enum_variant)] // Clippy 1.94: snapshot enum avoids boxing in hot tick/send path.
     enum Snapshot {
         FullSync {
-            sync: FullPaneSync,
+            sync: PreparedPaneSync,
             current_history: usize,
             pane_id: u64,
             force_scrollback_replace: bool,
@@ -328,7 +329,7 @@ pub(crate) async fn run_tick_loop(
                                 let current_total =
                                     Server::visible_scrollback_total(pane, last_sent);
                                 let mut sync = if force_scrollback_replace {
-                                    let mut sync = pane.snapshot_incremental(pgen, 0);
+                                    let mut sync = pane.snapshot_incremental_prepared(pgen, 0);
                                     sync.scrollback_replace = true;
                                     sync
                                 } else {
@@ -594,7 +595,7 @@ pub(crate) async fn run_tick_loop(
                         force_scrollback_replace,
                     } => {
                         let mut buf = frame_pool.pop().unwrap_or_default();
-                        if codec::encode_full_pane_sync_framed(&mut buf, &sync).is_ok() {
+                        if codec::encode_prepared_pane_sync_framed(&mut buf, &sync).is_ok() {
                             encoded.push(EncodedFrame {
                                 client_id,
                                 session_name,
@@ -713,14 +714,14 @@ fn build_scrollback_only_sync(
     generation: u64,
     last_sent: usize,
     current_total: usize,
-) -> FullPaneSync {
+) -> PreparedPaneSync {
     let mut sync = build_scrollback_sync(pane, generation, last_sent, current_total);
     // Zero out viewport — client will skip viewport update when rows==0.
     sync.rows = 0;
     sync.cells.clear();
-    sync.grapheme_extras
-        .0
-        .retain(|(index, _)| (*index as usize) < sync.scrollback.len());
+    sync.grapheme_extras.0.retain(|(index, _)| {
+        (*index as usize) < sync.scrollback_rows as usize * sync.cols as usize
+    });
     sync.hyperlink_extras = Default::default();
     sync
 }
@@ -744,13 +745,13 @@ fn build_scrollback_sync(
     generation: u64,
     last_sent: usize,
     current_total: usize,
-) -> FullPaneSync {
+) -> PreparedPaneSync {
     let hs = pane.history_size();
     let (adjusted_sent, replace) = scrollback_sync_plan(hs, last_sent, current_total);
 
     // Compute the `history_sent` value that snapshot_incremental expects:
     // it will send `history_size - adjusted_sent` rows from the end.
-    let mut sync = pane.snapshot_incremental(generation, adjusted_sent);
+    let mut sync = pane.snapshot_incremental_prepared(generation, adjusted_sent);
     sync.scrollback_replace = replace;
     sync
 }

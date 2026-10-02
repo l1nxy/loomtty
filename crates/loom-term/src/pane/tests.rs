@@ -1035,3 +1035,73 @@ fn multi_chunk_drain_stamps_marks_after_intervening_output() {
         "C and D in the same chunk share that chunk's pre-advance row"
     );
 }
+
+// Packed row reuse must not change the wire stream, including when a slow
+// client sends accumulated damage after later PTY output or a screen switch.
+#[test]
+fn packed_row_encoding_matches_live_grid_across_terminal_mutations() {
+    use loom_protocol::codec::StateEncoder;
+
+    fn assert_encoding(pane: &Pane) {
+        let snapshot = pane.snapshot(1);
+        let cols = usize::from(snapshot.cols);
+        for row in 0..snapshot.rows {
+            for (left, right) in [(0, snapshot.cols - 1), (1, snapshot.cols - 2)] {
+                let mut expected = StateEncoder::new();
+                let start = usize::from(row) * cols + usize::from(left);
+                let end = usize::from(row) * cols + usize::from(right) + 1;
+                for cell in &snapshot.cells[start..end] {
+                    expected.push_cell(cell);
+                }
+                let mut actual = StateEncoder::new();
+                pane.write_cells_into_sm(row, left, right, &mut actual);
+                assert_eq!(actual.finish(), expected.finish());
+            }
+        }
+    }
+
+    let mut pane = new_test_pane();
+    pane.resize(12, 4);
+    for output in [
+        "\x1b[2J\x1b[Habc中文🙂",
+        "\x1b[2;1H\x1b[1;3;4;38;2;12;34;56;48;5;99mstyled\x1b[0m",
+        "\x1b[3;1He\u{301} 👩\u{200d}💻",
+        "\x1b[4;1Hlast\r\nscroll\r\nagain",
+        "\x1b[?1049h\x1b[2J\x1b[Halternate",
+        "\x1b[?2026h\x1b[2;1Hheld",
+        "\x1b[?2026l\x1b[?1049l",
+        "\x1b[H\x1b[2K\x1b[3P\x1b[2@insert",
+    ] {
+        pane.process_chunks(&[output.as_bytes().to_vec()]);
+        // No fingerprint since the latest output: stale cache must miss.
+        assert_encoding(&pane);
+        for row in 0..pane.grid_rows() {
+            assert!(pane.viewport_row_fingerprint(row).is_some());
+        }
+        assert_encoding(&pane);
+        assert_encoding(&pane); // A second client reuses the same packed rows.
+    }
+    // Resizing invalidates row width and screen ordering, including reflow.
+    for (cols, rows) in [(6, 6), (20, 3)] {
+        pane.resize(cols, rows);
+        assert_encoding(&pane);
+        for row in 0..pane.grid_rows() {
+            pane.viewport_row_fingerprint(row);
+        }
+        assert_encoding(&pane);
+    }
+}
+
+#[test]
+fn viewport_fingerprint_distinguishes_grapheme_overflow_positions() {
+    let mut pane = new_test_pane();
+    pane.process_chunks(&["\x1b[2J\x1b[He\u{301}e".as_bytes().to_vec()]);
+    let first = pane.viewport_row_fingerprint(0);
+    let cells = pane.snapshot(1).cells;
+    pane.process_chunks(&["\x1b[2J\x1b[Hee\u{301}".as_bytes().to_vec()]);
+    assert_eq!(
+        bytemuck::cast_slice::<_, u8>(&cells),
+        bytemuck::cast_slice::<_, u8>(&pane.snapshot(2).cells)
+    );
+    assert_ne!(first, pane.viewport_row_fingerprint(0));
+}

@@ -109,6 +109,9 @@ pub struct Pane {
     pub prompt_marks: PromptMarkRing,
 
     term: Term<PtyEventListener>,
+    // Rows packed during fingerprinting, reused by every client encoder.
+    // Empty rows are invalid; capacities survive PTY batches.
+    packed_rows: Vec<Vec<PackedCell>>,
     processor: Processor,
     event_rx: mpsc::Receiver<Event>,
     pty: Pty,
@@ -200,6 +203,7 @@ impl Pane {
             },
             prompt_marks: PromptMarkRing::new(),
             term,
+            packed_rows: Vec::new(),
             processor: Processor::new(),
             event_rx,
             pty,
@@ -270,6 +274,13 @@ impl Pane {
     /// the batch sees the pre-batch cursor and `list-prompts` reports
     /// identical rows for events that actually straddled new output.
     pub(super) fn process_chunks(&mut self, chunks: &[Vec<u8>]) {
+        if !chunks.is_empty() {
+            // Output may scroll, erase, or switch screens, not just append.
+            // Invalidate before any terminal mutation, even during DEC 2026.
+            for row in &mut self.packed_rows {
+                row.clear();
+            }
+        }
         for chunk in chunks {
             let abs_line_at_chunk_start = self.current_abs_line();
             let osc133_events = self.parsers.scan_control(chunk);
@@ -528,6 +539,7 @@ impl Pane {
         self.cols = cols;
         self.rows = rows;
         self.pty.resize(cols, rows);
+        self.packed_rows.clear();
         self.term.resize(TermSize {
             cols: cols as usize,
             rows: rows as usize,

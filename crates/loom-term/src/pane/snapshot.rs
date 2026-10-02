@@ -110,7 +110,7 @@ impl Pane {
         }
     }
 
-    pub fn viewport_row_fingerprint(&self, line: u16) -> Option<u64> {
+    pub fn viewport_row_fingerprint(&mut self, line: u16) -> Option<u64> {
         let grid = self.term.grid();
         let rows = grid.screen_lines();
         let cols = grid.columns();
@@ -119,19 +119,28 @@ impl Pane {
             return None;
         }
 
-        // Internal change-detection fingerprint, never a wire value or map
-        // key. Hash the packed POD in one write per cell rather than hashing
-        // each tiny field (including array lengths) separately with SipHash.
+        self.packed_rows.resize_with(rows, Vec::new);
+        let packed = &mut self.packed_rows[line];
+        packed.clear();
+        packed.reserve(cols);
+
+        // Pack once for both damage detection and all subsequent client
+        // encoders. Hash the contiguous POD in bulk instead of streaming
+        // a small packed cell and an empty grapheme slice for every column.
+        // This fingerprint is internal; it is never part of the protocol.
         let mut hasher = twox_hash::XxHash64::with_seed(0);
         for col in 0..cols {
-            let point = Point::new(Line(line as i32), Column(col));
-            let source = &grid[point];
-            let cell = pack_cell(source);
-            hasher.write(bytemuck::bytes_of(&cell));
-            // PackedCell holds only the leading scalar. A combining mark or
-            // ZWJ arriving in a later PTY chunk must still invalidate the row.
-            source.zerowidth().unwrap_or_default().hash(&mut hasher);
+            let source = &grid[Point::new(Line(line as i32), Column(col))];
+            packed.push(pack_cell(source));
+            // PackedCell contains only the leading scalar. Include the
+            // position and length of each nonempty overflow to distinguish
+            // combining marks/ZWJ moved between otherwise identical cells.
+            if let Some(marks) = source.zerowidth().filter(|marks| !marks.is_empty()) {
+                col.hash(&mut hasher);
+                marks.hash(&mut hasher);
+            }
         }
+        hasher.write(bytemuck::cast_slice(packed));
         Some(hasher.finish())
     }
 
@@ -158,6 +167,17 @@ impl Pane {
         right: u16,
         encoder: &mut loom_protocol::codec::StateEncoder,
     ) {
+        if let Some(row) = self.packed_rows.get(line as usize)
+            && row.len() == self.term.grid().columns()
+            && let Some(cells) = row.get(left as usize..=right as usize)
+        {
+            for cell in cells {
+                encoder.push_cell(cell);
+            }
+            return;
+        }
+        // A client may encode accumulated damage without fingerprinting
+        // this row in the latest PTY batch. Read the live grid in that case.
         let grid = self.term.grid();
         for col in left..=right {
             let point = Point::new(Line(line as i32), Column(col as usize));

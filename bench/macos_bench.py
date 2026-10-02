@@ -323,12 +323,14 @@ def run_one(app, round_index, directory, args):
             # leaving the new instance waiting to create its initial window.
             # Direct launch also captures the actual application's stderr.
             command = [str(APPS[app]),
-                       "--config-default-files=false", f"--config-file={config}", "-e", str(wrapper)]
+                       "--config-default-files=false", f"--config-file={config}",
+                       f"--title=loom benchmark [{directory.name}]", "-e", str(wrapper)]
         elif app == "kitty":
             command = [str(APPS[app]), "--title", f"loom benchmark [{directory.name}]",
                        "--config", str(config), str(wrapper)]
         else:
-            command = [str(APPS[app]), "--config-file", str(config), "-e", str(wrapper)]
+            command = [str(APPS[app]), "--title", f"loom benchmark [{directory.name}]",
+                       "--config-file", str(config), "-e", str(wrapper)]
         child = subprocess.Popen(command, env=env, stdout=log, stderr=log)
         children.append(child)
         if app != "ghostty":

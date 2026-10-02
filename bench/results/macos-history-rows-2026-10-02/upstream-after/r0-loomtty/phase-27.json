@@ -1,0 +1,63 @@
+{
+  "name": "vtebench/scrolling_fullscreen",
+  "benchmark": "scrolling_fullscreen",
+  "seconds": 3.811935625,
+  "argv": [
+    "/private/tmp/vtebench/target/release/vtebench",
+    "--benchmarks",
+    "/private/tmp/loom-vtebench-loom-after-unlocked/r0-loomtty/vtebench/scrolling_fullscreen",
+    "--min-bytes",
+    "16777216",
+    "--warmup",
+    "1",
+    "--max-secs",
+    "3",
+    "--silent",
+    "--dat",
+    "/private/tmp/loom-vtebench-loom-after-unlocked/r0-loomtty/vtebench/scrolling_fullscreen.dat"
+  ],
+  "samples_ms": [
+    103,
+    104,
+    109,
+    110,
+    110,
+    109,
+    105,
+    105,
+    107,
+    112,
+    113,
+    113,
+    113,
+    110,
+    111,
+    112,
+    112,
+    112,
+    112,
+    112,
+    113,
+    113,
+    111,
+    111,
+    111,
+    112
+  ],
+  "sample_bytes": 16778502,
+  "warmup_samples": 1,
+  "payload": {
+    "name": "scrolling_fullscreen",
+    "benchmark": {
+      "bytes": 2106,
+      "sha256": "b247c42735889bd02cd746cd03a8b331c94b773199897f6956d11219742fea0f"
+    },
+    "setup": {
+      "bytes": 200002,
+      "sha256": "4377ba180b1a908816151943507e62b07ff71b9c044a3f620976701b45c20210"
+    }
+  },
+  "median_ms": 111.0,
+  "mib_per_second": 144.15519301955763,
+  "payload_bytes_written": 453019554
+}

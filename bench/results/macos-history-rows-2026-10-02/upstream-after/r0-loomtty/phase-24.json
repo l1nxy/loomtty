@@ -1,0 +1,43 @@
+{
+  "name": "vtebench/scrolling",
+  "benchmark": "scrolling",
+  "seconds": 4.79629225,
+  "argv": [
+    "/private/tmp/vtebench/target/release/vtebench",
+    "--benchmarks",
+    "/private/tmp/loom-vtebench-loom-after-unlocked/r0-loomtty/vtebench/scrolling",
+    "--min-bytes",
+    "16777216",
+    "--warmup",
+    "1",
+    "--max-secs",
+    "3",
+    "--silent",
+    "--dat",
+    "/private/tmp/loom-vtebench-loom-after-unlocked/r0-loomtty/vtebench/scrolling.dat"
+  ],
+  "samples_ms": [
+    569,
+    559,
+    568,
+    567,
+    573,
+    568
+  ],
+  "sample_bytes": 16777216,
+  "warmup_samples": 1,
+  "payload": {
+    "name": "scrolling",
+    "benchmark": {
+      "bytes": 2,
+      "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+    },
+    "setup": {
+      "bytes": 200002,
+      "sha256": "4377ba180b1a908816151943507e62b07ff71b9c044a3f620976701b45c20210"
+    }
+  },
+  "median_ms": 568.0,
+  "mib_per_second": 28.169014084507044,
+  "payload_bytes_written": 117440512
+}

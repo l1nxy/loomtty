@@ -1,0 +1,45 @@
+{
+  "name": "vtebench/scrolling_top_small_region",
+  "benchmark": "scrolling_top_small_region",
+  "seconds": 4.435854541,
+  "argv": [
+    "/private/tmp/vtebench/target/release/vtebench",
+    "--benchmarks",
+    "/private/tmp/loom-vtebench-loom-after-unlocked/r0-loomtty/vtebench/scrolling_top_small_region",
+    "--min-bytes",
+    "16777216",
+    "--warmup",
+    "1",
+    "--max-secs",
+    "3",
+    "--silent",
+    "--dat",
+    "/private/tmp/loom-vtebench-loom-after-unlocked/r0-loomtty/vtebench/scrolling_top_small_region.dat"
+  ],
+  "samples_ms": [
+    412,
+    411,
+    411,
+    410,
+    411,
+    410,
+    410,
+    411
+  ],
+  "sample_bytes": 16777216,
+  "warmup_samples": 1,
+  "payload": {
+    "name": "scrolling_top_small_region",
+    "benchmark": {
+      "bytes": 2,
+      "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+    },
+    "setup": {
+      "bytes": 16,
+      "sha256": "0cf828fca4f9639dfd11ff4350ed33927b66e24a3a3fddaceb113a4416589614"
+    }
+  },
+  "median_ms": 411.0,
+  "mib_per_second": 38.929440389294406,
+  "payload_bytes_written": 150994944
+}

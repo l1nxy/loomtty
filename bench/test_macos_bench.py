@@ -96,6 +96,29 @@ class ResultValidityTests(unittest.TestCase):
         from macos_bench import audit_terminal_log
         self.assertIn("error", audit_terminal_log("loomtty", "INFO config reloaded"))
 
+class UpstreamResultsTests(unittest.TestCase):
+    def parse(self, content, expected='dense_cells'):
+        import tempfile
+        from pathlib import Path
+        from vtebench_workload import parse_dat
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'result.dat'
+            path.write_text(content)
+            return parse_dat(path, expected)
+
+    def test_rejects_silently_skipped_upstream_workload(self):
+        for content in ('\n', 'other\n12\n', 'dense_cells\n', 'dense_cells\n0\n'):
+            with self.subTest(content=content), self.assertRaises(ValueError):
+                self.parse(content)
+
+    def test_keeps_quantized_samples_without_inventing_precision(self):
+        self.assertEqual(self.parse('dense_cells \n0 \n12 \n15 \n'), [0, 12, 15])
+
+    def test_rejects_truncated_or_multiple_columns(self):
+        for content in ('dense_cells\n_\n', 'dense_cells\n12 15\n', 'dense_cells\n-1\n'):
+            with self.subTest(content=content), self.assertRaises(ValueError):
+                self.parse(content)
+
 
 if __name__ == "__main__":
     unittest.main()

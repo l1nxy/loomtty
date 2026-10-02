@@ -118,6 +118,9 @@ def frame(index, columns, rows, partial=False):
 
 def execute(terminal, command, buffers, columns, rows):
     name = command["name"]
+    if name.startswith("vtebench/"):
+        from vtebench_workload import execute as execute_vtebench
+        return execute_vtebench(terminal, command)
     result = {"name": name}
     terminal.fence()
     if name == "idle":
@@ -202,6 +205,9 @@ def worker(directory):
                       term=os.environ.get("TERM"), term_program=os.environ.get("TERM_PROGRAM")))
             buffers = {name: payload(name, spec["columns"], spec["rows"], spec["bytes"])
                        for name in BULK}
+            if spec.get("vtebench"):
+                from vtebench_workload import prepare
+                prepare(spec["vtebench"], directory)
             save_json(directory / "prepared.json", {"ok": True})
             previous = -1
             deadline = time.monotonic() + spec["worker_timeout"]

@@ -291,6 +291,8 @@ def run_one(app, round_index, directory, args):
         sys.executable, str(ROOT / "bench/terminal_workload.py"), str(directory)]) + "\n")
     wrapper.chmod(0o700)
     spec = dict(columns=args.columns, rows=args.rows, bytes=int(args.mib * MIB), worker_timeout=1800)
+    if getattr(args, "vtebench", None):
+        spec["vtebench"] = str(args.vtebench)
     save_json(directory / "spec.json", spec)
     config = write_config(app, directory, args, wrapper)
     env = dict(os.environ, LANG="en_US.UTF-8", LC_ALL="en_US.UTF-8")
@@ -339,6 +341,10 @@ def run_one(app, round_index, directory, args):
         if (ready["columns"], ready["rows"]) != (args.columns, args.rows):
             raise RuntimeError(f"{app} grid is {ready['columns']}x{ready['rows']}; expected {args.columns}x{args.rows}")
         wait_file(directory / "prepared.json")
+        if getattr(args, "confirm_visible", False):
+            save_json(directory / "needs-visibility.json", dict(app=app, processes=result["processes"]))
+            print(f"  WAITING FOR VISIBLE WINDOW: {directory}", flush=True)
+            result["visibility_confirmation"] = wait_file(directory / "visible.json", timeout=300)
         time.sleep(1)
         if args.probe:
             result["probe"] = snapshot(processes)
@@ -351,6 +357,13 @@ def run_one(app, round_index, directory, args):
         commands += [{"name": name, "samples": args.latency_samples} for name in ("latency", "loaded_latency")]
         commands += [{"name": name, "frames": args.frames, "hz": 60} for name in ("tui_full", "tui_partial")]
         commands += [{"name": "scrollback"}, {"name": "idle", "seconds": args.idle_seconds, "label": "post_idle"}]
+        if getattr(args, "vtebench", None):
+            manifest = json.loads((directory / "vtebench/manifest.json").read_text())
+            result["vtebench_manifest"] = manifest
+            commands += [dict(name="vtebench/" + benchmark["name"], benchmark=benchmark,
+                              directory=str(directory), binary=str(args.vtebench / "target/release/vtebench"),
+                              min_bytes=16 * MIB, max_secs=args.vtebench_seconds)
+                         for benchmark in manifest]
         for sequence, command in enumerate(commands):
             phase = measure_phase(directory, processes, sequence, command, args.timeout)
             phase["name"] = command.get("label", command["name"])
@@ -432,6 +445,13 @@ def report(data, output):
         if name.startswith("tui_"):
             row(f"{name} terminal CPU (%) ↓", lambda r, n=name: phase(r, n)["resources"]["cpu_percent_one_core"], 1)
             row(f"{name} parser deadline misses ↓", lambda r, n=name: phase(r, n)["missed_deadlines"], 0)
+    names = sorted({p["benchmark"] for r in data["runs"] if "error" not in r
+                    for p in r["phases"] if p["name"].startswith("vtebench/")})
+    for name in names:
+        key = "vtebench/" + name
+        row(f"vtebench {name} PTY throughput (MiB/s) ↑", lambda r, n=key: phase(r, n)["mib_per_second"], 1, True)
+        row(f"vtebench {name} CPU ms/MiB ↓", lambda r, n=key: phase(r, n)["resources"]["cpu_seconds"] * 1000 / (phase(r, n)["payload_bytes_written"] / MIB), 3)
+        row(f"vtebench {name} physical footprint (MiB) ↓", lambda r, n=key: phase(r, n)["resources"]["end_footprint_mib"], 1)
     row("Peak sampled RSS (MiB) ↓", lambda r: max(p["resources"]["peak_rss_mib"] for p in r["phases"]), 1)
     row("Peak sampled physical footprint (MiB) ↓", lambda r: max(p["resources"]["peak_footprint_mib"] for p in r["phases"]), 1)
     lines += ["", "## Scope and limitations", "",
@@ -446,6 +466,11 @@ def report(data, output):
               + "No disk cache flushing or system-wide tuning.",
               "- Keep windows visible, connected to power and the machine otherwise idle. Window occlusion, background workloads, thermal state and macOS scheduling can affect results.",
               "", "## Versions", ""]
+    if data.get("vtebench"):
+        lines += [f"- Upstream vtebench: `{data['vtebench']['commit']}`; binary SHA-256 `{data['vtebench']['binary_sha256']}`",
+                  "- vtebench is unmodified; BSD ps tty padding is trimmed only while generating payloads. All payload/setup bytes are hashed and frozen before measurement.",
+                  "- Official timing measures blocked PTY writes with millisecond truncation, not parser completion or displayed FPS. It uses 16 MiB minimum samples, one warmup, and the configured time limit.",
+                  "- CPU ms/MiB includes setup, warmup and drain/settling; its denominator counts payload bytes including warmup, excluding small setup/reset/status bytes."]
     for app in apps:
         lines.append(f"- {app}: `{data['versions'][app]['text'].splitlines()[0]}`; binary SHA-256 `{data['versions'][app]['sha256']}`")
         if "server_sha256" in data["versions"][app]:
@@ -477,6 +502,9 @@ def argument_parser():
     parser.add_argument("--loom-server", type=Path, default=ROOT / "target/release/loomtty-server")
     parser.add_argument("--loom-width", type=float, help="Logical pixels for grid calibration on a different display")
     parser.add_argument("--loom-height", type=float, help="Logical pixels for grid calibration on a different display")
+    parser.add_argument("--vtebench", type=Path, help="Built upstream alacritty/vtebench checkout; add all default workloads")
+    parser.add_argument("--vtebench-seconds", type=int, default=3, help="Official per-workload sampling duration")
+    parser.add_argument("--confirm-visible", action="store_true", help="Wait for visible.json after each launch; see README")
     parser.add_argument("--probe", action="store_true", help="Only verify startup, grid and process ownership")
     return parser
 
@@ -490,6 +518,10 @@ def main():
         parser.error("counts and durations must be positive")
     if not 20 <= args.columns <= 250 or not 5 <= args.rows <= 100:
         parser.error("grid must be within 20..250 columns and 5..100 rows")
+    if args.vtebench:
+        args.vtebench = args.vtebench.expanduser().resolve()
+        if not (args.vtebench / "target/release/vtebench").is_file() or args.vtebench_seconds <= 0:
+            parser.error("build vtebench first and use a positive sampling duration")
     args.output = args.output.expanduser().resolve()
     args.loom, args.loom_server = args.loom.resolve(), args.loom_server.resolve()
     if args.output.exists() and any(args.output.iterdir()):
@@ -516,8 +548,16 @@ def main():
                 versions=versions, git_head=capture(["git", "-C", ROOT, "rev-parse", "HEAD"]),
                 git_status=capture(["git", "-C", ROOT, "status", "--short"]),
                 benchmark_sha256={name: hashlib.sha256((ROOT / "bench" / name).read_bytes()).hexdigest()
-                                  for name in ("macos_bench.py", "terminal_workload.py")}, runs=[])
+                                  for name in ("macos_bench.py", "terminal_workload.py", "vtebench_workload.py")}, runs=[])
+    if args.vtebench:
+        data["vtebench"] = dict(repository="https://github.com/alacritty/vtebench",
+                                commit=capture(["git", "-C", args.vtebench, "rev-parse", "HEAD"]),
+                                status=capture(["git", "-C", args.vtebench, "status", "--short"]),
+                                binary_sha256=hashlib.sha256((args.vtebench / "target/release/vtebench").read_bytes()).hexdigest())
+        if data["vtebench"]["status"]:
+            parser.error("upstream vtebench checkout must be clean")
     save_json(args.output / "results.json", data)
+    expected_manifest = None
     rng = random.Random(args.seed)
     try:
         for round_index in range(args.rounds):
@@ -526,6 +566,11 @@ def main():
             for app in order:
                 print(f"Round {round_index + 1}/{args.rounds}: {app}", flush=True)
                 run = run_one(app, round_index, args.output / f"r{round_index}-{app}", args)
+                if args.vtebench and not args.probe and "error" not in run:
+                    if expected_manifest is None:
+                        expected_manifest = run["vtebench_manifest"]
+                    elif run["vtebench_manifest"] != expected_manifest:
+                        run["error"] = "upstream payload bytes/hashes differ between terminals"
                 data["runs"].append(run)
                 save_json(args.output / "results.json", data)
                 report(data, args.output)

@@ -476,10 +476,10 @@ def report(data, output):
                   "- Official timing measures blocked PTY writes with millisecond truncation, not parser completion or displayed FPS. It uses 16 MiB minimum samples, one warmup, and the configured time limit.",
                   "- CPU ms/MiB includes setup, warmup and drain/settling; its denominator counts payload bytes including warmup, excluding small setup/reset/status bytes."]
         modes = sorted({(p.get("output_mode", {}).get("mode", "raw"),
-                         p.get("output_mode", {}).get("flags", 0))
+                         str(p.get("output_mode", {}).get("flags", "unrecorded")))
                         for run in data["runs"] for p in run.get("phases", [])
                         if p["name"].startswith("vtebench/")})
-        lines.append(f"- PTY output modes (mode, flags): {modes}. Missing legacy metadata means raw output. Payload byte counts precede kernel output processing.")
+        lines.append(f"- PTY output modes (mode, flags): {modes}. Missing legacy metadata means raw output, but the exact flags were not recorded. Payload byte counts precede kernel output processing.")
     for app in apps:
         lines.append(f"- {app}: `{data['versions'][app]['text'].splitlines()[0]}`; binary SHA-256 `{data['versions'][app]['sha256']}`")
         if "server_sha256" in data["versions"][app]:

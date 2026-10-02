@@ -1,0 +1,6 @@
+{
+  "observed_at": "2026-10-02T04:10:46.687350+00:00",
+  "observation": "CUA reported Mac locked when preparing the subsequent official after run. No after visibility acknowledgement was written. Prior paired runs had individual CUA Raise/AX/screenshot confirmations before measurement; continuous visibility was not instrumented.",
+  "paired_runs_completed": 6,
+  "official_after_run_started_measurement": false
+}

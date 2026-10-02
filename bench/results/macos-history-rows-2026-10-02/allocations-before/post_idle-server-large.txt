@@ -1,0 +1,31 @@
+heap(62152) MallocStackLogging: could not tag MSL-related memory as no_footprint, so those pages will be included in process footprint - No such file or directory (2)
+heap(62152) MallocStackLogging: recording malloc (and VM allocation) stacks using lite mode
+Process:         loomtty-server [62094]
+Path:            /Users/USER/*/loomtty-server
+Load Address:    0x100330000
+Identifier:      loomtty-server
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  python3.13 [62085]
+Target Type:     live task
+
+Date/Time:       2026-10-02 11:52:25.689 +0800
+Launch Time:     2026-10-02 11:52:03.438 +0800
+OS Version:      macOS 27.0 (26A428)
+Report Version:  7
+Analysis Tool:   /usr/bin/heap
+
+Physical footprint:         49.8M
+Physical footprint (peak):  49.8M
+Idle exit:                  untracked
+----
+
+Process 62094: 4 zones
+
+All zones: 11807 nodes malloced - Sizes: 2064KB[1] 528KB[1] 80KB[1] 48KB[1] 14KB[1] 10KB[2] 7KB[1] 5KB[4] 4KB[62] 2.5KB[10015] 1.75KB[35] 1.5KB[3] 1.25KB[11] 1KB[5] 896[6] 768[18] 640[13] 512[18] 448[5] 384[37] 320[18] 256[3] 224[6] 192[28] 160[129] 128[243] 112[92] 96[27] 80[92] 64[118] 48[90] 32[372] 16[349]
+
+Found:  171 ObjC classes  42 Swift classes  66 CFTypes
+Derived 140 type names for non-objects from allocation backtraces
+
+Active blocks in all zones that match pattern 'malloc[256k-]':

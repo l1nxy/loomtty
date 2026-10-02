@@ -1,0 +1,74 @@
+vmmap(62120) MallocStackLogging: could not tag MSL-related memory as no_footprint, so those pages will be included in process footprint - No such file or directory (2)
+vmmap(62120) MallocStackLogging: recording malloc (and VM allocation) stacks using lite mode
+Process:         loomtty-server [62094]
+Path:            /Users/USER/*/loomtty-server
+Load Address:    0x100330000
+Identifier:      loomtty-server
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  python3.13 [62085]
+Target Type:     live task
+
+Date/Time:       2026-10-02 11:52:11.904 +0800
+Launch Time:     2026-10-02 11:52:03.438 +0800
+OS Version:      macOS 27.0 (26A428)
+Report Version:  7
+Analysis Tool:   /usr/bin/vmmap
+
+Physical footprint:         7345K
+Physical footprint (peak):  7345K
+Idle exit:                  untracked
+----
+
+ReadOnly portion of Libraries: Total=2.1G resident=404.4M(19%) swapped_out_or_unallocated=1.7G(81%)
+Writable regions: Total=125.6M written=4433K(3%) resident=5953K(5%) swapped_out=0K(0%) unallocated=119.8M(95%)
+
+                                VIRTUAL RESIDENT    DIRTY  SWAPPED VOLATILE   NONVOL    EMPTY   REGION
+REGION TYPE                        SIZE     SIZE     SIZE     SIZE     SIZE     SIZE     SIZE    COUNT (non-coalesced)
+===========                     ======= ========    =====  ======= ========   ======    =====  =======
+Activity Tracing                   256K      16K      16K       0K       0K      16K       0K        1
+Deferred Reclaim                  64.0M      16K      16K       0K       0K       0K       0K        1
+Guard                            385.0G       0K       0K       0K       0K       0K       0K        1
+Malloc Guard Page                 3360K       0K       0K       0K       0K       0K       0K        4         see MALLOC ZONE table below
+Malloc Large                      2064K      16K      16K       0K       0K       0K       0K        1         see MALLOC ZONE table below
+Malloc Large (empty)                16K       0K       0K       0K       0K       0K       0K        1         see MALLOC ZONE table below
+Malloc Metadata                    352K     352K     352K       0K       0K       0K       0K        4         see MALLOC ZONE table below
+Malloc Metadata metadata          1216K     304K     304K       0K       0K       0K       0K        4         see MALLOC ZONE table below
+Malloc Small                      4656K    2976K    2976K       0K       0K       0K       0K        8         see MALLOC ZONE table below
+Malloc Small (empty)              11.5M      64K      64K       0K       0K       0K       0K        4         see MALLOC ZONE table below
+Malloc Tiny                       4096K      32K      32K       0K       0K       0K       0K        1         see MALLOC ZONE table below
+OS Alloc Once                       32K      16K      16K       0K       0K       0K       0K        1
+Performance Tool Data             1312K    1312K    1312K       0K       0K       0K       0K       14         not counted in TOTAL below
+Stack                             34.4M     464K     464K       0K       0K       0K       0K       14
+Stack Guard                       56.2M       0K       0K       0K       0K       0K       0K       14
+Untagged                           240K       0K       0K       0K       0K       0K       0K       15
+Untagged (reserved)               1792K       0K       0K       0K       0K       0K       0K       14         reserved VM address space (unallocated)
+__AUTH                            2845K    1893K       48       0K       0K       0K       0K      299
+__AUTH_CONST                      48.1M    23.6M       0K       0K       0K       0K       0K      510
+__CTF                               824      824       0K       0K       0K       0K       0K        1
+__DATA                            13.5M    5936K     264K       0K       0K       0K       0K      515
+__DATA_CONST                      26.6M    15.5M     448K       0K       0K       0K       0K      511
+__DATA_DIRTY                      2849K    2332K     424K       0K       0K       0K       0K      454
+__FONT_DATA                        2352     2352       0K       0K       0K       0K       0K        1
+__LINKEDIT                         1.5G    87.1M       0K       0K       0K       0K       0K        2
+__OBJC_RO                        118.0M    76.3M       0K       0K       0K       0K       0K        1
+__OBJC_RW                         2735K    2383K      47K       0K       0K       0K       0K        1
+__TEXT                           615.8M   317.3M       0K       0K       0K       0K       0K      585
+__TPRO_CONST                       132K     116K      48K       0K       0K       0K       0K        4
+page table in kernel               401K     401K     401K       0K       0K       0K       0K        1
+shared memory                       48K      48K      48K       0K       0K       0K       0K        2
+unused but dirty shlib __DATA      114K     114K     114K       0K       0K       0K       0K       73
+===========                     ======= ========    =====  ======= ========   ======    =====  =======
+TOTAL                            387.5G   536.8M    6049K       0K       0K      16K       0K     3048
+TOTAL, minus reserved VM space   387.5G   536.8M    6049K       0K       0K      16K       0K     3048
+
+                                                  VIRTUAL   RESIDENT      DIRTY    SWAPPED ALLOCATION      BYTES DIRTY+SWAP          REGION
+MALLOC ZONE                                          SIZE       SIZE       SIZE       SIZE      COUNT  ALLOCATED  FRAG SIZE  % FRAG   COUNT
+===========                                       =======  =========  =========  =========  =========  =========  =========  ======  ======
+DefaultMallocZone_0x10103c000                       16.7M       480K       480K         0K        423        56K       424K     89%      11
+MallocStackLoggingLiteZone_0x1057ec000              6608K      2880K      2880K         0K        960      2720K       160K      6%       6
+objc-class_rw_t_0x1010f0000                           32K        32K        32K         0K        420        10K        22K     70%       2
+MallocStackLoggingLiteZone_Wrapper_0x100ca0000         0K         0K         0K         0K          0         0K         0K      0%       0
+===========                                       =======  =========  =========  =========  =========  =========  =========  ======  ======
+TOTAL                                               23.2M      3392K      3392K         0K       1803      2786K       606K     18%      19

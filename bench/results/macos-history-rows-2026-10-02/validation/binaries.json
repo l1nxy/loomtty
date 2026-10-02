@@ -1,0 +1,8 @@
+{
+  "after_client_sha256": "9dc1e2be69ebb4d3262b7f564d2eecce0613f9921fa588c4884c2cbf17b7c099",
+  "server_sha256": "e70f23856e71ed6c0ed764d91564d1aaf18f65ebd892cc02d180297ae9914188",
+  "before_bundle_sections_match_saved_production": true,
+  "after_bundle_sections_match_release": true,
+  "client_sections": 45,
+  "server_sections": 14
+}

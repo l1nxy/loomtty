@@ -1,0 +1,113 @@
+10000 calls for 25600000 bytes:
+0   libsystem_malloc.dylib                0x1864c3684 _malloc_zone_malloc_instrumented_or_legacy + 152
+1   loomtty-server                        0x10060c824 <deduplicated_symbol> + 204
+2   loomtty-server                        0x1005fcb4c alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d + 436
+3   loomtty-server                        0x1005e0248 alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9 + 824
+4   loomtty-server                        0x1005e9334 _$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::linefeed::h09f627feaaaa13be + 172
+5   loomtty-server                        0x1005eb7f4 loom_term::pane::Pane::process_chunks::hf9fe9f1817861486 + 5616
+6   loomtty-server                        0x1005ecdf8 loom_term::pane::Pane::process_pty_output::hc8985faea51a41b6 + 100
+7   loomtty-server                        0x1003ebd20 loomtty_server::daemon::session::Session::process_pty_and_damage::h94c27f2e92b4b96e + 444
+8   loomtty-server                        0x1003529a8 loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$::h35ca8a89aa648c2e + 2200
+9   loomtty-server                        0x100365f4c <deduplicated_symbol> + 124
+10  loomtty-server                        0x100342750 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::hdfcf1530c9d191de + 80
+11  loomtty-server                        0x10077a3fc tokio::runtime::scheduler::multi_thread::worker::Context::run_task::h3a976313a6d0087c + 500
+12  loomtty-server                        0x1007794cc tokio::runtime::scheduler::multi_thread::worker::Context::run::hec67d908247640d4 + 2000
+13  loomtty-server                        0x10078d058 std::thread::local::LocalKey$LT$T$GT$::with::h4eb0bd4b1a9a94ec + 76
+14  loomtty-server                        0x100781008 tokio::runtime::context::runtime::enter_runtime::h65bb5ba50233b0d5 + 140
+15  loomtty-server                        0x1007770fc tokio::runtime::scheduler::multi_thread::worker::run::hfbaddd5a10d92f07 + 172
+16  loomtty-server                        0x10078bd44 _$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll::h5b3bab2b3561adba + 108
+17  loomtty-server                        0x10078ab0c tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll::h4b3dfc587708da72 + 164
+18  loomtty-server                        0x10076d484 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::h6865872d737ffaa3 + 172
+19  loomtty-server                        0x10076fba0 tokio::runtime::blocking::pool::Inner::run::h74e01d27e4d25af2 + 232
+20  loomtty-server                        0x100782c50 std::sys::backtrace::__rust_begin_short_backtrace::h910f9bd02d4362bd + 224
+21  loomtty-server                        0x100772fcc core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h7e77dc6bc14a455b + 96
+22  loomtty-server                        0x1007a92ac std::sys::thread::unix::Thread::new::thread_start::hb5c7d2a38fab9e31 + 408
+23  libsystem_pthread.dylib               0x186698a58 _pthread_start + 116
+24  libsystem_pthread.dylib               0x186693c44 thread_start + 8
+
+
+1 call for 540672 bytes:
+0   libsystem_malloc.dylib                0x1864c3b80 _malloc_zone_realloc + 148
+1   libsystem_malloc.dylib                0x1864c4340 _realloc + 444
+2   loomtty-server                        0x1007fd298 alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow::h8d4017a547927d23 + 108
+3   loomtty-server                        0x1007fd35c alloc::raw_vec::RawVecInner$LT$A$GT$::reserve::do_reserve_and_handle::hfbe2023259aca1a9 + 108
+4   loomtty-server                        0x10060c9b0 <deduplicated_symbol> + 600
+5   loomtty-server                        0x1005fcb4c alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d + 436
+6   loomtty-server                        0x1005e0248 alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9 + 824
+7   loomtty-server                        0x1005e9334 _$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::linefeed::h09f627feaaaa13be + 172
+8   loomtty-server                        0x1005eb7f4 loom_term::pane::Pane::process_chunks::hf9fe9f1817861486 + 5616
+9   loomtty-server                        0x1005ecdf8 loom_term::pane::Pane::process_pty_output::hc8985faea51a41b6 + 100
+10  loomtty-server                        0x1003ebd20 loomtty_server::daemon::session::Session::process_pty_and_damage::h94c27f2e92b4b96e + 444
+11  loomtty-server                        0x1003529a8 loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$::h35ca8a89aa648c2e + 2200
+12  loomtty-server                        0x100365f4c <deduplicated_symbol> + 124
+13  loomtty-server                        0x100342750 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::hdfcf1530c9d191de + 80
+14  loomtty-server                        0x10077a3fc tokio::runtime::scheduler::multi_thread::worker::Context::run_task::h3a976313a6d0087c + 500
+15  loomtty-server                        0x1007794cc tokio::runtime::scheduler::multi_thread::worker::Context::run::hec67d908247640d4 + 2000
+16  loomtty-server                        0x10078d058 std::thread::local::LocalKey$LT$T$GT$::with::h4eb0bd4b1a9a94ec + 76
+17  loomtty-server                        0x100781008 tokio::runtime::context::runtime::enter_runtime::h65bb5ba50233b0d5 + 140
+18  loomtty-server                        0x1007770fc tokio::runtime::scheduler::multi_thread::worker::run::hfbaddd5a10d92f07 + 172
+19  loomtty-server                        0x10078bd44 _$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll::h5b3bab2b3561adba + 108
+20  loomtty-server                        0x10078ab0c tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll::h4b3dfc587708da72 + 164
+21  loomtty-server                        0x10076d484 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::h6865872d737ffaa3 + 172
+22  loomtty-server                        0x10076fba0 tokio::runtime::blocking::pool::Inner::run::h74e01d27e4d25af2 + 232
+23  loomtty-server                        0x100782c50 std::sys::backtrace::__rust_begin_short_backtrace::h910f9bd02d4362bd + 224
+24  loomtty-server                        0x100772fcc core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h7e77dc6bc14a455b + 96
+25  loomtty-server                        0x1007a92ac std::sys::thread::unix::Thread::new::thread_start::hb5c7d2a38fab9e31 + 408
+26  libsystem_pthread.dylib               0x186698a58 _pthread_start + 116
+27  libsystem_pthread.dylib               0x186693c44 thread_start + 8
+
+
+31 calls for 126976 bytes:
+0   libsystem_malloc.dylib                0x1864c3684 _malloc_zone_malloc_instrumented_or_legacy + 152
+1   loomtty-server                        0x10060c824 <deduplicated_symbol> + 204
+2   loomtty-server                        0x1005fc6d8 alacritty_terminal::grid::Grid$LT$T$GT$::new::h5547b420e469192d + 152
+3   loomtty-server                        0x1006058a0 alacritty_terminal::term::Term$LT$T$GT$::new::hc9342040cd6bd78f + 100
+4   loomtty-server                        0x1005ec828 loom_term::pane::Pane::new_with_notify::h919d296e0ef12e26 + 492
+5   loomtty-server                        0x1003eb9ac loomtty_server::daemon::session::Session::create_pane_with_opts::hfd48ca7745b62007 + 932
+6   loomtty-server                        0x10037a70c loomtty_server::daemon::server::restore::_$LT$impl$u20$loomtty_server..daemon..server..Server$GT$::init_default_workspace::h44533285a35693e9 + 296
+7   loomtty-server                        0x10037a018 loomtty_server::daemon::server::restore::_$LT$impl$u20$loomtty_server..daemon..server..Server$GT$::get_or_create_session::hd4cd52cc587dbf2e + 2560
+8   loomtty-server                        0x10034d700 loomtty_server::daemon::connection::handle_client::_$u7b$$u7b$closure$u7d$$u7d$::hec2ed6a0b4a1b20d + 1844
+9   loomtty-server                        0x1003663c8 <deduplicated_symbol> + 64
+10  loomtty-server                        0x100340844 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::h85f4e73c601413fa + 84
+11  loomtty-server                        0x10077a3fc tokio::runtime::scheduler::multi_thread::worker::Context::run_task::h3a976313a6d0087c + 500
+12  loomtty-server                        0x1007794cc tokio::runtime::scheduler::multi_thread::worker::Context::run::hec67d908247640d4 + 2000
+13  loomtty-server                        0x10078d058 std::thread::local::LocalKey$LT$T$GT$::with::h4eb0bd4b1a9a94ec + 76
+14  loomtty-server                        0x100781008 tokio::runtime::context::runtime::enter_runtime::h65bb5ba50233b0d5 + 140
+15  loomtty-server                        0x1007770fc tokio::runtime::scheduler::multi_thread::worker::run::hfbaddd5a10d92f07 + 172
+16  loomtty-server                        0x10078bd44 _$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll::h5b3bab2b3561adba + 108
+17  loomtty-server                        0x10078ab0c tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll::h4b3dfc587708da72 + 164
+18  loomtty-server                        0x10076d484 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::h6865872d737ffaa3 + 172
+19  loomtty-server                        0x10076fba0 tokio::runtime::blocking::pool::Inner::run::h74e01d27e4d25af2 + 232
+20  loomtty-server                        0x100782c50 std::sys::backtrace::__rust_begin_short_backtrace::h910f9bd02d4362bd + 224
+21  loomtty-server                        0x100772fcc core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h7e77dc6bc14a455b + 96
+22  loomtty-server                        0x1007a92ac std::sys::thread::unix::Thread::new::thread_start::hb5c7d2a38fab9e31 + 408
+23  libsystem_pthread.dylib               0x186698a58 _pthread_start + 116
+24  libsystem_pthread.dylib               0x186693c44 thread_start + 8
+
+
+31 calls for 126976 bytes:
+0   libsystem_malloc.dylib                0x1864c3684 _malloc_zone_malloc_instrumented_or_legacy + 152
+1   loomtty-server                        0x10060c824 <deduplicated_symbol> + 204
+2   loomtty-server                        0x1005fc6d8 alacritty_terminal::grid::Grid$LT$T$GT$::new::h5547b420e469192d + 152
+3   loomtty-server                        0x10060588c alacritty_terminal::term::Term$LT$T$GT$::new::hc9342040cd6bd78f + 80
+4   loomtty-server                        0x1005ec828 loom_term::pane::Pane::new_with_notify::h919d296e0ef12e26 + 492
+5   loomtty-server                        0x1003eb9ac loomtty_server::daemon::session::Session::create_pane_with_opts::hfd48ca7745b62007 + 932
+6   loomtty-server                        0x10037a70c loomtty_server::daemon::server::restore::_$LT$impl$u20$loomtty_server..daemon..server..Server$GT$::init_default_workspace::h44533285a35693e9 + 296
+7   loomtty-server                        0x10037a018 loomtty_server::daemon::server::restore::_$LT$impl$u20$loomtty_server..daemon..server..Server$GT$::get_or_create_session::hd4cd52cc587dbf2e + 2560
+8   loomtty-server                        0x10034d700 loomtty_server::daemon::connection::handle_client::_$u7b$$u7b$closure$u7d$$u7d$::hec2ed6a0b4a1b20d + 1844
+9   loomtty-server                        0x1003663c8 <deduplicated_symbol> + 64
+10  loomtty-server                        0x100340844 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::h85f4e73c601413fa + 84
+11  loomtty-server                        0x10077a3fc tokio::runtime::scheduler::multi_thread::worker::Context::run_task::h3a976313a6d0087c + 500
+12  loomtty-server                        0x1007794cc tokio::runtime::scheduler::multi_thread::worker::Context::run::hec67d908247640d4 + 2000
+13  loomtty-server                        0x10078d058 std::thread::local::LocalKey$LT$T$GT$::with::h4eb0bd4b1a9a94ec + 76
+14  loomtty-server                        0x100781008 tokio::runtime::context::runtime::enter_runtime::h65bb5ba50233b0d5 + 140
+15  loomtty-server                        0x1007770fc tokio::runtime::scheduler::multi_thread::worker::run::hfbaddd5a10d92f07 + 172
+16  loomtty-server                        0x10078bd44 _$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll::h5b3bab2b3561adba + 108
+17  loomtty-server                        0x10078ab0c tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll::h4b3dfc587708da72 + 164
+18  loomtty-server                        0x10076d484 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::h6865872d737ffaa3 + 172
+19  loomtty-server                        0x10076fba0 tokio::runtime::blocking::pool::Inner::run::h74e01d27e4d25af2 + 232
+20  loomtty-server                        0x100782c50 std::sys::backtrace::__rust_begin_short_backtrace::h910f9bd02d4362bd + 224
+21  loomtty-server                        0x100772fcc core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h7e77dc6bc14a455b + 96
+22  loomtty-server                        0x1007a92ac std::sys::thread::unix::Thread::new::thread_start::hb5c7d2a38fab9e31 + 408
+23  libsystem_pthread.dylib               0x186698a58 _pthread_start + 116
+24  libsystem_pthread.dylib               0x186693c44 thread_start + 8

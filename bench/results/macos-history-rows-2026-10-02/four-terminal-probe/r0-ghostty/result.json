@@ -1,0 +1,34 @@
+{
+  "app": "ghostty",
+  "round": 0,
+  "phases": [],
+  "config": "font-family = Menlo\nfont-size = 10\nfont-feature = -liga\nfont-feature = -calt\nwindow-width = 100\nwindow-height = 30\nwindow-padding-x = 0\nwindow-padding-y = 0\nwindow-save-state = never\nwindow-inherit-working-directory = false\nwindow-inherit-font-size = false\ncursor-style-blink = false\nscrollback-limit = 10000000\nshell-integration = none\nquit-after-last-window-closed = true\nbackground-opacity = 1\nmacos-titlebar-style = native\n",
+  "ready": {
+    "pid": 56116,
+    "ppid": 56115,
+    "ready_ns": 54760169675708,
+    "columns": 100,
+    "rows": 30,
+    "term": "xterm-ghostty",
+    "term_program": "ghostty"
+  },
+  "startup_ms": 488.1525,
+  "processes": {
+    "ghostty": 56112
+  },
+  "probe": {
+    "cpu_seconds": 0.18855004166666664,
+    "rss_mib": 116.640625,
+    "footprint_mib": 50.907371520996094,
+    "wakeups": 118,
+    "components": {
+      "ghostty": {
+        "identity": 1314232370545,
+        "cpu_seconds": 0.18855004166666664,
+        "rss_mib": 116.640625,
+        "footprint_mib": 50.907371520996094,
+        "wakeups": 118
+      }
+    }
+  }
+}

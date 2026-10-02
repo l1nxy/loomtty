@@ -2415,3 +2415,60 @@ mod network_edge_cases {
         }
     }
 }
+
+#[test]
+fn row_decoder_preserves_runs_attributes_and_padding_across_rows() {
+    let mut cells = Vec::new();
+    for i in 0..700 {
+        let mut cell = PackedCell::with_ch(match i {
+            0..=69 => '界',
+            70..=319 => char::from_u32(0x4e00 + i).unwrap(),
+            320..=499 => 'x',
+            _ => char::from(b'A' + (i % 26) as u8),
+        });
+        if i < 400 {
+            cell.fg = PackedColor::rgb(19, 42, 123);
+            cell.bg = PackedColor::indexed(27);
+            cell.flags = (FLAG_BOLD | FLAG_ITALIC).to_le_bytes();
+        }
+        cells.push(cell);
+    }
+    let encoded = sm_encode_cells(&cells);
+    for columns in [1, 3, 37, 100, 701] {
+        let rows = cells.len().div_ceil(columns);
+        let decoded = decode_sm_rows(&encoded, columns, rows).unwrap();
+        let flat: Vec<_> = decoded.into_iter().flatten().collect();
+        let mut expected = cells.clone();
+        expected.resize(columns * rows, PackedCell::default());
+        assert_eq!(
+            bytemuck::cast_slice::<_, u8>(&flat),
+            bytemuck::cast_slice::<_, u8>(&expected)
+        );
+    }
+}
+
+#[test]
+fn row_decoder_rejects_overflow_and_truncation_like_contiguous_decoder() {
+    let mut data = vec![OP_CHARS_LONG, 3, 0];
+    for ch in ['中', '文', '界'] {
+        data.extend_from_slice(&PackedCell::with_ch(ch).ch_bytes);
+    }
+    data.extend_from_slice(&[OP_ASCII_REPEAT, 8, 0, b'x', OP_END]);
+    for end in 0..=data.len() {
+        let mut flat = vec![PackedCell::default(); 10];
+        let contiguous = decode_sm_cells(&data[..end], &mut flat);
+        let rows = decode_sm_rows(&data[..end], 2, 5);
+        assert_eq!(contiguous.is_err(), rows.is_err(), "prefix {end}");
+        if let Ok(rows) = rows {
+            let rows: Vec<_> = rows.into_iter().flatten().collect();
+            assert_eq!(
+                bytemuck::cast_slice::<_, u8>(&flat),
+                bytemuck::cast_slice::<_, u8>(&rows)
+            );
+        }
+    }
+    assert!(decode_sm_rows(&[OP_END], usize::MAX, 2).is_err());
+    assert!(decode_sm_rows(&[OP_END], 1, MAX_GRID_CELLS + 1).is_err());
+    assert!(decode_sm_rows(&[OP_END], 0, 1).is_err());
+    assert!(decode_sm_rows(&[OP_END], 0, 0).unwrap().is_empty());
+}

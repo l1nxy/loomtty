@@ -1,0 +1,19 @@
+{
+  "app": "alacritty",
+  "round": 0,
+  "phases": [],
+  "config": "[general]\nlive_config_reload = false\n[window]\ndimensions = { columns = 100, lines = 30 }\npadding = { x = 0, y = 0 }\ndynamic_padding = false\nopacity = 1.0\n[font]\nnormal = { family = \"Menlo\", style = \"Regular\" }\nsize = 10.0\n[scrolling]\nhistory = 10000\n[cursor]\nstyle = { shape = \"Block\", blinking = \"Never\" }\n",
+  "ready": {
+    "pid": 59050,
+    "ppid": 59048,
+    "ready_ns": 55173220709250,
+    "columns": 100,
+    "rows": 30,
+    "term": "xterm-256color",
+    "term_program": null
+  },
+  "startup_ms": 614.76125,
+  "processes": {
+    "alacritty": 59048
+  }
+}

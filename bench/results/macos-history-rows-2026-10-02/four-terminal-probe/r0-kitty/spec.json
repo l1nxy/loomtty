@@ -1,0 +1,7 @@
+{
+  "columns": 100,
+  "rows": 30,
+  "bytes": 8388608,
+  "worker_timeout": 1800,
+  "vtebench": "/private/tmp/vtebench"
+}

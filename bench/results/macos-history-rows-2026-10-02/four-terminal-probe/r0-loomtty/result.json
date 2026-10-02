@@ -1,0 +1,47 @@
+{
+  "app": "loomtty",
+  "round": 0,
+  "phases": [],
+  "config": "[font]\nfamily = \"Menlo\"\nsize = 10.0\ndisable_ligatures = \"always\"\n[window]\nwidth = 600.0\nheight = 400.0\ntitle = \"loom benchmark\"\n[appearance]\npadding = 0.0\nborder_width = 0.0\ncolumn_gap = 0.0\n[statusbar]\npadding_ratio = 0.0\n[terminal]\nshell = \"/private/tmp/loom-vtebench-probe-2/r0-loomtty/worker.sh\"\ndefault_cols = 100\ndefault_rows = 30\ncursor_blink = false\nscrollback_lines = 10000\n[render]\nbackend = \"blade\"\n",
+  "ready": {
+    "pid": 56944,
+    "ppid": 56942,
+    "ready_ns": 54765484264458,
+    "columns": 100,
+    "rows": 30,
+    "term": "xterm-256color",
+    "term_program": "loomtty"
+  },
+  "startup_ms": 503.9755,
+  "processes": {
+    "server": 56942,
+    "client": 56943
+  },
+  "probe": {
+    "cpu_seconds": 0.165445875,
+    "rss_mib": 109.515625,
+    "footprint_mib": 69.50162506103516,
+    "wakeups": 76,
+    "components": {
+      "server": {
+        "identity": 1314359543906,
+        "cpu_seconds": 0.01662045833333333,
+        "rss_mib": 13.09375,
+        "footprint_mib": 4.203697204589844,
+        "wakeups": 2
+      },
+      "client": {
+        "identity": 1314360251445,
+        "cpu_seconds": 0.14882541666666665,
+        "rss_mib": 96.421875,
+        "footprint_mib": 65.29792785644531,
+        "wakeups": 74
+      }
+    }
+  },
+  "display": {
+    "cell_width": 6.0,
+    "cell_height": 12.0,
+    "dpi_scale": 1.0
+  }
+}

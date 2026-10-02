@@ -1,0 +1,298 @@
+heap(62151) MallocStackLogging: could not tag MSL-related memory as no_footprint, so those pages will be included in process footprint - No such file or directory (2)
+heap(62151) MallocStackLogging: recording malloc (and VM allocation) stacks using lite mode
+Process:         loomtty-server [62094]
+Path:            /Users/USER/*/loomtty-server
+Load Address:    0x100330000
+Identifier:      loomtty-server
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  python3.13 [62085]
+Target Type:     live task
+
+Date/Time:       2026-10-02 11:52:24.643 +0800
+Launch Time:     2026-10-02 11:52:03.438 +0800
+OS Version:      macOS 27.0 (26A428)
+Report Version:  7
+Analysis Tool:   /usr/bin/heap
+
+Physical footprint:         49.8M
+Physical footprint (peak):  49.8M
+Idle exit:                  untracked
+----
+
+Process 62094: 4 zones
+
+All zones: 11807 nodes malloced - Sizes: 2064KB[1] 528KB[1] 80KB[1] 48KB[1] 14KB[1] 10KB[2] 7KB[1] 5KB[4] 4KB[62] 2.5KB[10015] 1.75KB[35] 1.5KB[3] 1.25KB[11] 1KB[5] 896[6] 768[18] 640[13] 512[18] 448[5] 384[37] 320[18] 256[3] 224[6] 192[28] 160[129] 128[243] 112[92] 96[27] 80[92] 64[118] 48[90] 32[372] 16[349]
+
+Found:  171 ObjC classes  42 Swift classes  66 CFTypes
+Derived 140 type names for non-objects from allocation backtraces
+
+-----------------------------------------------------------------------
+All zones: 11807 nodes (28994416 bytes)
+
+   COUNT      BYTES       AVG   CLASS_NAME                                        TYPE    BINARY
+   =====      =====       ===   ==========                                        ====    ======
+   10000   25600000    2560.0   malloc in alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d  C++     loomtty-server
+       1      81920   81920.0   malloc in loom_term::pane::Pane::new_with_notify::h919d296e0ef12e26  C++     loomtty-server
+       1    2113536  2113536.0   malloc in loom_term::pane::Pane::new_with_notify::h919d296e0ef12e26  C++     loomtty-server
+       1     540672  540672.0   realloc in alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow::h8d4017a547927d23  C++     loomtty-server
+      62     253952    4096.0   malloc in alacritty_terminal::grid::Grid$LT$T$GT$::new::h5547b420e469192d  C++     loomtty-server
+       1        768     768.0   malloc in alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow::h8d4017a547927d23  C++     loomtty-server
+      30      53760    1792.0   malloc in alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow::h8d4017a547927d23  C++     loomtty-server
+       4        192      48.0   xpc_dictionary_t (Storage)                        C       libxpc.dylib
+       2        128      64.0   xpc_dictionary_t (Storage)                        C       libxpc.dylib
+       1         96      96.0   xpc_dictionary_t (Storage)                        C       libxpc.dylib
+      74       8288     112.0   xpc_dictionary_t (Storage)                        C       libxpc.dylib
+     170      21760     128.0   xpc_dictionary_t (Storage)                        C       libxpc.dylib
+     101      16160     160.0   xpc_dictionary_t (Storage)                        C       libxpc.dylib
+      17       3264     192.0   xpc_dictionary_t (Storage)                        C       libxpc.dylib
+       1      49152   49152.0   malloc in mio::event::events::Events::with_capacity::h42bb2678baa765f0  C++     loomtty-server
+      12        768      64.0   malloc in tokio::runtime::scheduler::multi_thread::queue::local::h3e15582b409e6406  C++     loomtty-server
+      12      30720    2560.0   malloc in tokio::runtime::scheduler::multi_thread::queue::local::h3e15582b409e6406  C++     loomtty-server
+      16       8192     512.0   memalign in _RNvCs5QKde7ScR4H_7___rustc11___rdl_alloc  C       loomtty-server
+       2       1280     640.0   memalign in _RNvCs5QKde7ScR4H_7___rustc11___rdl_alloc  C       loomtty-server
+       2       1536     768.0   memalign in _RNvCs5QKde7ScR4H_7___rustc11___rdl_alloc  C       loomtty-server
+       1       1280    1280.0   memalign in _RNvCs5QKde7ScR4H_7___rustc11___rdl_alloc  C       loomtty-server
+       1       1536    1536.0   memalign in _RNvCs5QKde7ScR4H_7___rustc11___rdl_alloc  C       loomtty-server
+       1       1792    1792.0   memalign in _RNvCs5QKde7ScR4H_7___rustc11___rdl_alloc  C       loomtty-server
+       1       2560    2560.0   memalign in _RNvCs5QKde7ScR4H_7___rustc11___rdl_alloc  C       loomtty-server
+       1       5120    5120.0   memalign in _RNvCs5QKde7ScR4H_7___rustc11___rdl_alloc  C       loomtty-server
+       1      14336   14336.0   malloc in hashbrown::raw::RawTable$LT$T$C$A$GT$::reserve_rehash::h0bdb47fdc29340e8  C++     loomtty-server
+      33      12672     384.0   malloc in _$LT$tokio..signal..registry..EventInfo$u20$as$u20$core..default..Default$GT$::default::hbbd5b989f417eda8  C++     loomtty-server
+      14      10752     768.0   malloc in dyld::ThreadLocalVariables::instantiateVariable(dyld::ThreadLocalVariables::Thunk const&)  C++     libdyld.dylib
+       1      10240   10240.0   calloc in loomtty_server::daemon::connection::handle_client::_$u7b$$u7b$closure$u7d$$u7d$::hec2ed6a0b4a1b20d  C++     loomtty-server
+       1      10240   10240.0   malloc in loomtty_server::daemon::connection::handle_client::_$u7b$$u7b$closure$u7d$$u7d$::hec2ed6a0b4a1b20d  C++     loomtty-server
+       1        320     320.0   malloc in hashbrown::raw::RawTableInner::fallible_with_capacity::h4f9ef52d6e9c61ef  C++     loomtty-server
+       3       1344     448.0   malloc in hashbrown::raw::RawTableInner::fallible_with_capacity::h4f9ef52d6e9c61ef  C++     loomtty-server
+       5       4480     896.0   malloc in hashbrown::raw::RawTableInner::fallible_with_capacity::h4f9ef52d6e9c61ef  C++     loomtty-server
+       1       1792    1792.0   malloc in hashbrown::raw::RawTableInner::fallible_with_capacity::h4f9ef52d6e9c61ef  C++     loomtty-server
+       1       7168    7168.0   malloc in tokio::runtime::driver::Driver::new::hc4bad2edd9a3f85b  C++     loomtty-server
+     210       6720      32.0   Metaclass.data (metaclass_rw_v2_t)                C       libobjc.A.dylib
+      43       5504     128.0   memalign in id2data(objc_object*, SyncKind, usage)  C       libobjc.A.dylib
+       1         16      16.0   calloc in nw::object::class_def::register_method_def(nw::object::class_def::method_def const&, void (nw::object::*)())  C++     Network
+       1       5120    5120.0   calloc in nw::object::class_def::register_method_def(nw::object::class_def::method_def const&, void (nw::object::*)())  C++     Network
+       1         16      16.0   calloc in nw::object::class_def::setup(std::deque<void (nw::object::*)(), nw::c_allocator<void (nw::object::*)()>>&)  C++     Network
+       1       5120    5120.0   calloc in nw::object::class_def::setup(std::deque<void (nw::object::*)(), nw::c_allocator<void (nw::object::*)()>>&)  C++     Network
+       1       5120    5120.0   calloc in __si_module_cache_byname_block_invoke   C       libsystem_info.dylib
+      88       1408      16.0   malloc in _$LT$loom_config..keys..KeybindConfig$u20$as$u20$core..default..Default$GT$::default::h9df533969b42c7bf  C++     loomtty-server
+      93       2976      32.0   malloc in _$LT$loom_config..keys..KeybindConfig$u20$as$u20$core..default..Default$GT$::default::h9df533969b42c7bf  C++     loomtty-server
+       3        144      48.0   malloc in _$LT$loom_config..keys..KeybindConfig$u20$as$u20$core..default..Default$GT$::default::h9df533969b42c7bf  C++     loomtty-server
+       1         16      16.0   non-object in zone DefaultMallocZone_0x10103c000          <unknown>
+      11        352      32.0   non-object in zone DefaultMallocZone_0x10103c000          <unknown>
+       3        144      48.0   non-object in zone DefaultMallocZone_0x10103c000          <unknown>
+       3        192      64.0   non-object in zone DefaultMallocZone_0x10103c000          <unknown>
+       1         80      80.0   non-object in zone DefaultMallocZone_0x10103c000          <unknown>
+       1        128     128.0   non-object in zone DefaultMallocZone_0x10103c000          <unknown>
+       1        640     640.0   non-object in zone DefaultMallocZone_0x10103c000          <unknown>
+       1       1024    1024.0   non-object in zone DefaultMallocZone_0x10103c000          <unknown>
+       1       1536    1536.0   non-object in zone DefaultMallocZone_0x10103c000          <unknown>
+      12        576      48.0   malloc in tokio::runtime::scheduler::multi_thread::worker::create::h38b02bf23ce67720  C++     loomtty-server
+      12        768      64.0   malloc in tokio::runtime::scheduler::multi_thread::worker::create::h38b02bf23ce67720  C++     loomtty-server
+       1        112     112.0   malloc in tokio::runtime::scheduler::multi_thread::worker::create::h38b02bf23ce67720  C++     loomtty-server
+      12       1536     128.0   malloc in tokio::runtime::scheduler::multi_thread::worker::create::h38b02bf23ce67720  C++     loomtty-server
+       1        224     224.0   malloc in tokio::runtime::scheduler::multi_thread::worker::create::h38b02bf23ce67720  C++     loomtty-server
+       1        640     640.0   malloc in tokio::runtime::scheduler::multi_thread::worker::create::h38b02bf23ce67720  C++     loomtty-server
+       1         32      32.0   Class.data.methods (method_array_t)               C       libobjc.A.dylib
+       3        288      96.0   Class.data.methods (method_array_t)               C       libobjc.A.dylib
+       1        112     112.0   Class.data.methods (method_array_t)               C       libobjc.A.dylib
+       1        128     128.0   Class.data.methods (method_array_t)               C       libobjc.A.dylib
+       1        160     160.0   Class.data.methods (method_array_t)               C       libobjc.A.dylib
+       3        576     192.0   Class.data.methods (method_array_t)               C       libobjc.A.dylib
+       2        448     224.0   Class.data.methods (method_array_t)               C       libobjc.A.dylib
+       1        256     256.0   Class.data.methods (method_array_t)               C       libobjc.A.dylib
+       2        640     320.0   Class.data.methods (method_array_t)               C       libobjc.A.dylib
+       1        384     384.0   Class.data.methods (method_array_t)               C       libobjc.A.dylib
+       1        512     512.0   Class.data.methods (method_array_t)               C       libobjc.A.dylib
+     210       3360      16.0   Class.data (class_rw_v2_t)                        C       libobjc.A.dylib
+      15        720      48.0   malloc_with_options_outlined in cache_t::insert(objc_selector*, void (*)(), objc_object*)  C++     libobjc.A.dylib
+       3        240      80.0   malloc_with_options_outlined in cache_t::insert(objc_selector*, void (*)(), objc_object*)  C++     libobjc.A.dylib
+       1        160     160.0   malloc_with_options_outlined in cache_t::insert(objc_selector*, void (*)(), objc_object*)  C++     libobjc.A.dylib
+       1        320     320.0   malloc_with_options_outlined in cache_t::insert(objc_selector*, void (*)(), objc_object*)  C++     libobjc.A.dylib
+       2       1280     640.0   malloc_with_options_outlined in cache_t::insert(objc_selector*, void (*)(), objc_object*)  C++     libobjc.A.dylib
+       2       2560    1280.0   Class.data.methods.lists (method_list_t)          C       libobjc.A.dylib
+       1       2560    2560.0   malloc in _$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter..SpecFromIter$LT$T$C$I$GT$$GT$::from_iter::h2226332ad2042d87  C++     loomtty-server
+       1       2560    2560.0   malloc in hashbrown::raw::RawTable$LT$T$C$A$GT$::reserve_rehash::ha8ff82daec76ecae  C++     loomtty-server
+      24       1536      64.0   malloc in std::thread::lifecycle::spawn_unchecked::h48e402e75b5c1922  C++     loomtty-server
+      12        960      80.0   malloc in std::thread::lifecycle::spawn_unchecked::h48e402e75b5c1922  C++     loomtty-server
+      16        768      48.0   Class.methodCache._buckets (bucket_t)             C       libobjc.A.dylib
+       2        320     160.0   Class.methodCache._buckets (bucket_t)             C       libobjc.A.dylib
+       1       1280    1280.0   Class.methodCache._buckets (bucket_t)             C       libobjc.A.dylib
+      14       2240     160.0   malloc in dyld::ThreadLocalVariables::addTermFunc(void (*)(void*), void*)  C++     libdyld.dylib
+      24       1536      64.0   CFData                                            ObjC    CoreFoundation
+       2        448     224.0   CFData                                            ObjC    CoreFoundation
+      13        416      32.0   malloc in std::sys::thread::unix::Thread::new::thread_start::hb5c7d2a38fab9e31  C++     loomtty-server
+       1        640     640.0   malloc in std::sys::thread::unix::Thread::new::thread_start::hb5c7d2a38fab9e31  C++     loomtty-server
+       1        768     768.0   malloc in std::sys::thread::unix::Thread::new::thread_start::hb5c7d2a38fab9e31  C++     loomtty-server
+       1       1792    1792.0   malloc in alacritty_terminal::term::TermDamageState::new::h54fd40a4e9d9d4b8  C++     loomtty-server
+       1       1792    1792.0   malloc in loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$::h35ca8a89aa648c2e  C++     loomtty-server
+       1       1792    1792.0   malloc in tokio::util::sharded_list::ShardedList$LT$L$C$T$GT$::new::h68c84b1bbc812c10  C++     loomtty-server
+      21       1680      80.0   Class.data.readonly (class_ro_t)                  C       libobjc.A.dylib
+      21       1680      80.0   pthread_mutex_t                                   C       libpthread.dylib
+       1       1536    1536.0   malloc in hashbrown::raw::RawTable$LT$T$C$A$GT$::reserve_rehash::h052403129721496d  C++     loomtty-server
+       1        384     384.0   CFDictionary (Key Storage)                        C       CoreFoundation
+       1       1024    1024.0   CFDictionary (Key Storage)                        C       CoreFoundation
+       1        384     384.0   CFDictionary (Value Storage)                      C       CoreFoundation
+       1       1024    1024.0   CFDictionary (Value Storage)                      C       CoreFoundation
+       1        112     112.0   malloc in alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow::hf0443142ef2cb2e8  C++     loomtty-server
+       1       1280    1280.0   malloc in alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow::hf0443142ef2cb2e8  C++     loomtty-server
+       8        384      48.0   Class.data.extended (class_rw_ext_t)              C       libobjc.A.dylib
+      15        960      64.0   Class.data.extended (class_rw_ext_t)              C       libobjc.A.dylib
+       2        640     320.0   ColorSyncProfile                                  CFType  ColorSync
+       1        640     640.0   ColorSyncProfile                                  CFType  ColorSync
+       1       1280    1280.0   calloc in __CFTSDGetTable                         C       CoreFoundation
+       1       1280    1280.0   calloc in std::sync::mpmc::list::Channel$LT$T$GT$::send::h3d873c61dd4bb973  C++     loomtty-server
+       1       1280    1280.0   malloc in cache_t::collect_free(bucket_t*, unsigned int)  C++     libobjc.A.dylib
+       1       1280    1280.0   malloc in hashbrown::raw::RawTable$LT$T$C$A$GT$::reserve_rehash::h0666004aa7271c1d  C++     loomtty-server
+       1       1280    1280.0   malloc in tokio::sync::mpsc::bounded::channel::h2d155d5569135ada  C++     loomtty-server
+       1       1280    1280.0   malloc in tokio::sync::mpsc::list::Tx$LT$T$GT$::push::h4f7eec7402f0e034  C++     loomtty-server
+      13       1248      96.0   dispatch_semaphore_t                              ObjC    libdispatch.dylib
+       3         48      16.0   xpc_string_t (Storage)                            C       libxpc.dylib
+       1         48      48.0   xpc_string_t (Storage)                            C       libxpc.dylib
+       1         64      64.0   xpc_string_t (Storage)                            C       libxpc.dylib
+       1       1024    1024.0   xpc_string_t (Storage)                            C       libxpc.dylib
+      13       1040      80.0   malloc in alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow::h49b462f7651a4ea0  C++     loomtty-server
+       1       1024    1024.0   malloc in _$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter..SpecFromIter$LT$T$C$I$GT$$GT$::from_iter::h4f1aeb113246b6de  C++     loomtty-server
+       5        320      64.0   non-object from libsystem_notify.dylib            C       libsystem_notify.dylib
+       5        640     128.0   non-object from libsystem_notify.dylib            C       libsystem_notify.dylib
+       3        960     320.0   calloc in os_set_32_ptr_init                      C       libsystem_collections.dylib
+       1        896     896.0   malloc in __CGColorSpaceCreateWithName_block_invoke  C       CoreGraphics
+       1        128     128.0   malloc in cacheCanonicalSpecializedMetadata(swift::TargetTypeContextDescriptor<swift::InProcess> const*, long*)::$_0::__invoke(void*)  C++     libswiftCore.dylib
+       1        224     224.0   malloc in cacheCanonicalSpecializedMetadata(swift::TargetTypeContextDescriptor<swift::InProcess> const*, long*)::$_0::__invoke(void*)  C++     libswiftCore.dylib
+       1        320     320.0   malloc in cacheCanonicalSpecializedMetadata(swift::TargetTypeContextDescriptor<swift::InProcess> const*, long*)::$_0::__invoke(void*)  C++     libswiftCore.dylib
+       1         16      16.0   malloc in std::rt::lang_start_internal::hdd036a54cd97d929  C++     loomtty-server
+       1        640     640.0   malloc in std::rt::lang_start_internal::hdd036a54cd97d929  C++     loomtty-server
+       2         64      32.0   malloc in loomtty_server::daemon::prepare_daemon_with::_$u7b$$u7b$closure$u7d$$u7d$::hf2eb3dcf06e47ffc  C++     loomtty-server
+       2        128      64.0   malloc in loomtty_server::daemon::prepare_daemon_with::_$u7b$$u7b$closure$u7d$$u7d$::hf2eb3dcf06e47ffc  C++     loomtty-server
+       1        448     448.0   malloc in loomtty_server::daemon::prepare_daemon_with::_$u7b$$u7b$closure$u7d$$u7d$::hf2eb3dcf06e47ffc  C++     loomtty-server
+       2        256     128.0   NSMutableDictionary (Storage)                     C       CoreFoundation
+       1        384     384.0   NSMutableDictionary (Storage)                     C       CoreFoundation
+       2        640     320.0   calloc in os_set_64_ptr_init                      C       libsystem_collections.dylib
+       2        640     320.0   calloc in os_set_str_ptr_init                     C       libsystem_collections.dylib
+       1        640     640.0   calloc in os_map_64_init                          C       libsystem_collections.dylib
+       1        640     640.0   malloc in _CFRuntimeRegisterClass                 C       CoreFoundation
+       1        640     640.0   malloc in hashbrown::raw::RawTable$LT$T$C$A$GT$::reserve_rehash::ha2b293b098448f30  C++     loomtty-server
+       1        640     640.0   realloc in __setenv_locked                        C       libsystem_c.dylib
+       2        256     128.0   calloc in color_space_state_create_icc_with_profile  C       CoreGraphics
+       2        320     160.0   calloc in color_space_state_create_icc_with_profile  C       CoreGraphics
+       3        576     192.0   malloc in tokio::signal::unix::signal::h10edb447a92664c3  C++     loomtty-server
+      26        416      16.0   malloc in alloc::raw_vec::RawVecInner$LT$A$GT$::try_allocate_in::h7c6f5ca1490703e5  C++     loomtty-server
+       1         32      32.0   malloc in alloc::raw_vec::RawVecInner$LT$A$GT$::try_allocate_in::h7c6f5ca1490703e5  C++     loomtty-server
+       1         80      80.0   malloc in alloc::raw_vec::RawVecInner$LT$A$GT$::try_allocate_in::h7c6f5ca1490703e5  C++     loomtty-server
+       1        512     512.0   malloc in __ColorSyncProfileCreateWithName_block_invoke  C       ColorSync
+       2        224     112.0   CGColor                                           CFType  CoreGraphics
+       2        256     128.0   CGColor                                           CFType  CoreGraphics
+       4        448     112.0   CGColorSpace                                      CFType  CoreGraphics
+       1        448     448.0   calloc in __si_module_static_search_block_invoke  C       libsystem_info.dylib
+      13        416      32.0   realloc in alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow::h1f24ed514a1bb79e  C++     loomtty-server
+       2        384     192.0   realloc in alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow::h373801b2a6d9d98d  C++     loomtty-server
+       3         96      32.0   malloc in __setenv_locked                         C       libsystem_c.dylib
+       2         96      48.0   malloc in __setenv_locked                         C       libsystem_c.dylib
+       1        128     128.0   malloc in __setenv_locked                         C       libsystem_c.dylib
+       2        320     160.0   Swift.StringStorage                               Swift   libswiftCore.dylib
+       1        320     320.0   malloc in __CFBasicHashGetPtrIndex_block_invoke   C       CoreFoundation
+       1        320     320.0   malloc in alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow::h7eb9948e4e66d531  C++     loomtty-server
+       1        320     320.0   malloc in hashbrown::raw::RawTable$LT$T$C$A$GT$::reserve_rehash::h78ddde0ea7893b4e  C++     loomtty-server
+       1        320     320.0   malloc in tokio::runtime::blocking::pool::BlockingPool::new::h49f11860703f984c  C++     loomtty-server
+       6        288      48.0   xpc_string_t                                      ObjC    libxpc.dylib
+       4        256      64.0   _NSStateMarker                                    ObjC    AppKit
+       1        256     256.0   malloc in hashbrown::raw::RawTable$LT$T$C$A$GT$::reserve_rehash::h74c0e77e81c36a0b  C++     loomtty-server
+       1        256     256.0   realloc in alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow::he369ca681da90771  C++     loomtty-server
+       3        240      80.0   malloc in alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow::h16e44b9c52c843eb  C++     loomtty-server
+       2        128      64.0   malloc in std::thread::lifecycle::spawn_unchecked::h372cc6ed72d2904d  C++     loomtty-server
+       1        112     112.0   malloc in std::thread::lifecycle::spawn_unchecked::h372cc6ed72d2904d  C++     loomtty-server
+       2        224     112.0   malloc in __CGTypeRegisterInternal                C       CoreGraphics
+       1         96      96.0   CFString                                          ObjC    CoreFoundation
+       1        112     112.0   CFString                                          ObjC    CoreFoundation
+       4        192      48.0   NSMutableDictionary                               ObjC    CoreFoundation
+       3        192      64.0   Swift._ContiguousArrayStorage<Swift.UInt8>        Swift   libswiftCore.dylib
+       2        192      96.0   xpc_dictionary_t                                  ObjC    libxpc.dylib
+       1        192     192.0   _NSThreadData                                     ObjC    Foundation
+       1        192     192.0   malloc in LI_ils_create                           C       libsystem_info.dylib
+       1        192     192.0   malloc in alacritty_terminal::term::Term$LT$T$GT$::new::hc9342040cd6bd78f  C++     loomtty-server
+       2         96      48.0   calloc in swift::ConcurrentReadableHashMap<swift::HashMapElementWrapper<swift::GenericCacheEntry>, swift::Mutex>::resize(swift::ConcurrentReadableHashMap<swift::HashMapElementWrapper<swift::GenericCacheEntry>, swift::Mutex>::IndexStorage, unsigned char, swift::HashMapElementWrapper<swift::GenericCacheEntry>*)  C++     libswiftCore.dylib
+       1         80      80.0   calloc in swift::ConcurrentReadableHashMap<swift::HashMapElementWrapper<swift::GenericCacheEntry>, swift::Mutex>::resize(swift::ConcurrentReadableHashMap<swift::HashMapElementWrapper<swift::GenericCacheEntry>, swift::Mutex>::IndexStorage, unsigned char, swift::HashMapElementWrapper<swift::GenericCacheEntry>*)  C++     libswiftCore.dylib
+       1         64      64.0   xpc_pipe_t                                        ObjC    libxpc.dylib
+       1        112     112.0   xpc_pipe_t                                        ObjC    libxpc.dylib
+       2        160      80.0   CFDictionary                                      ObjC    CoreFoundation
+       2        160      80.0   NSURL                                             ObjC    CoreFoundation
+       2        160      80.0   Swift._ContiguousArrayStorage<Swift.String>       Swift   libswiftCore.dylib
+       1        160     160.0   _NSSwiftProcessInfo                               Swift   Foundation
+       1        160     160.0   malloc in alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow::ha7133e77f07b9cc5  C++     loomtty-server
+       1        160     160.0   malloc in alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow::he369ca681da90771  C++     loomtty-server
+       1        160     160.0   malloc in hashbrown::raw::RawTable$LT$T$C$A$GT$::reserve_rehash::h8bcdea3a6abe89ce  C++     loomtty-server
+       1        160     160.0   realloc in alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow::h16e44b9c52c843eb  C++     loomtty-server
+       1        160     160.0   realloc in alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow::h49b462f7651a4ea0  C++     loomtty-server
+       3        144      48.0   malloc in parking_lot_core::parking_lot::HashTable::new::h5da53fa35b1b0bba  C++     loomtty-server
+       3        144      48.0   malloc in std::sync::once_lock::OnceLock$LT$T$GT$::initialize::ha60bc739ec4f282f  C++     loomtty-server
+       4        128      32.0   malloc in _$LT$alloc..string..String$u20$as$u20$core..clone..Clone$GT$::clone::h65381f6df886e978  C++     loomtty-server
+       2        128      64.0   malloc in _$LT$env_logger..logger..Logger$u20$as$u20$log..Log$GT$::log::h28f3c5856f1f6ab9  C++     loomtty-server
+       1        128     128.0   calloc in color_space_state_create_device_gray    C       CoreGraphics
+       1        128     128.0   calloc in color_space_state_create_device_rgb     C       CoreGraphics
+       1        128     128.0   malloc in hashbrown::raw::RawTable$LT$T$C$A$GT$::reserve_rehash::h01a6b5f862750750  C++     loomtty-server
+       1         32      32.0   malloc in _owned_ptr_alloc                        C       libsystem_c.dylib
+       1         80      80.0   malloc in _owned_ptr_alloc                        C       libsystem_c.dylib
+       1         32      32.0   malloc in loomtty_server::daemon::session::Session::new::h385df0ea3c64e5f8  C++     loomtty-server
+       1         80      80.0   malloc in loomtty_server::daemon::session::Session::new::h385df0ea3c64e5f8  C++     loomtty-server
+       1         32      32.0   malloc in tokio::runtime::blocking::shutdown::channel::h8b5c393b81233437  C++     loomtty-server
+       1         80      80.0   malloc in tokio::runtime::blocking::shutdown::channel::h8b5c393b81233437  C++     loomtty-server
+       1        112     112.0   malloc in _$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter_nested..SpecFromIterNested$LT$T$C$I$GT$$GT$::from_iter::h64377020640ca79e  C++     loomtty-server
+       1        112     112.0   malloc in alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow::hbe420c3a4684e5e5  C++     loomtty-server
+       1        112     112.0   malloc in env_logger::logger::Builder::try_init::h88496e8829c09b01  C++     loomtty-server
+       1        112     112.0   malloc in std::sys::sync::once::queue::Once::call::h90cdeb873fe878e4  C++     loomtty-server
+       2         96      48.0   malloc in _$LT$alloc..vec..Vec$LT$T$C$A$GT$$u20$as$u20$core..clone..Clone$GT$::clone::hdf37e1fa12935611  C++     loomtty-server
+       1         16      16.0   malloc in _$LT$loom_config..schema.._..$LT$impl$u20$serde_core..de..Deserialize$u20$for$u20$loom_config..schema..LoomConfig$GT$..deserialize..__Visitor$u20$as$u20$serde_core..de..Visitor$GT$::visit_map::h290d9e1204a90921  C++     loomtty-server
+       1         80      80.0   malloc in _$LT$loom_config..schema.._..$LT$impl$u20$serde_core..de..Deserialize$u20$for$u20$loom_config..schema..LoomConfig$GT$..deserialize..__Visitor$u20$as$u20$serde_core..de..Visitor$GT$::visit_map::h290d9e1204a90921  C++     loomtty-server
+       1         32      32.0   malloc in color_space_state_create_icc_with_profile  C       CoreGraphics
+       1         64      64.0   malloc in color_space_state_create_icc_with_profile  C       CoreGraphics
+       1         96      96.0   calloc in __si_module_static_file_block_invoke    C       libsystem_info.dylib
+       1         96      96.0   malloc in _CFProcessPath                          C       CoreFoundation
+       1         96      96.0   malloc in hashbrown::map::HashMap$LT$K$C$V$C$S$C$A$GT$::insert::h98d606857ae80b8e  C++     loomtty-server
+       1         96      96.0   malloc in hashbrown::map::HashMap$LT$K$C$V$C$S$C$A$GT$::insert::hb78dab634d592f32  C++     loomtty-server
+       1         96      96.0   malloc in hashbrown::raw::RawTable$LT$T$C$A$GT$::reserve_rehash::h4a2f792fdba37ba9  C++     loomtty-server
+       1         96      96.0   malloc in hashbrown::raw::RawTable$LT$T$C$A$GT$::reserve_rehash::h5d5467747ff83cdd  C++     loomtty-server
+       1         96      96.0   malloc in tokio::runtime::scheduler::multi_thread::park::Parker::new::hc369244f4ae78649  C++     loomtty-server
+       5         80      16.0   malloc in loom_term::partial_buf::PartialBuf::store::h4744f4239ff4dd92  C++     loomtty-server
+       1         32      32.0   calloc in _fetchInitializingClassList(bool)       C       libobjc.A.dylib
+       1         48      48.0   calloc in _fetchInitializingClassList(bool)       C       libobjc.A.dylib
+       1         32      32.0   calloc in si_module_config_modules_for_category   C       libsystem_info.dylib
+       1         48      48.0   calloc in si_module_config_modules_for_category   C       libsystem_info.dylib
+       1         80      80.0   _NSMainThread                                     ObjC    Foundation
+       1         80      80.0   _ProcessInfo                                      Swift   Foundation
+       1         80      80.0   calloc in fetch_cache(bool)                       C       libobjc.A.dylib
+       1         80      80.0   malloc in _fetchInitializingClassList(bool)       C       libobjc.A.dylib
+       1         80      80.0   malloc in loom_layout::workspace_set::WorkspaceSet::new_with_gaps::h5d0377c57c515749  C++     loomtty-server
+       1         80      80.0   malloc in loomtty_server::daemon::server::Server::new::h92458620bf637878  C++     loomtty-server
+       2         64      32.0   calloc in LI_get_thread_info                      C       libsystem_info.dylib
+       1         64      64.0   Swift._ContiguousArrayStorage<Swift.Array<Swift.UInt8>>  Swift   libswiftCore.dylib
+       1         64      64.0   malloc in signal_hook_registry::half_lock::WriteGuard$LT$T$GT$::store::hc9239ba1560880c1  C++     loomtty-server
+       1         64      64.0   malloc in std::sys::backtrace::__rust_begin_short_backtrace::he2946a50a4994206  C++     loomtty-server
+       1         64      64.0   malloc in tokio::net::unix::stream::UnixStream::into_split::h6647b52ce59d24cd  C++     loomtty-server
+       1         64      64.0   malloc in tokio::runtime::park::CachedParkThread::block_on::h612138fe57464c7f  C++     loomtty-server
+       1         48      48.0   malloc in env_logger::logger::Builder::build::h80138e5d720c8d41  C++     loomtty-server
+       1         48      48.0   malloc in signal_hook_registry::half_lock::WriteGuard$LT$T$GT$::store::h2db1ff676a4be834  C++     loomtty-server
+       1         48      48.0   malloc in std::sys::thread_local::native::lazy::Storage$LT$T$C$D$GT$::get_or_init_slow::hc810cfa4214a708d  C++     loomtty-server
+       1         48      48.0   xpc_array_t                                       ObjC    libxpc.dylib
+       2         32      16.0   malloc in LI_get_thread_info                      C       libsystem_info.dylib
+       2         32      16.0   malloc in _$LT$loom_config..schema..TerminalConfig$u20$as$u20$core..default..Default$GT$::default::h705a1464a8d3099d  C++     loomtty-server
+       1         32      32.0   calloc in __si_module_static_ds_block_invoke      C       libsystem_info.dylib
+       1         32      32.0   malloc in CGPropertiesCreate                      C       CoreGraphics
+       1         32      32.0   malloc in _$LT$alacritty_terminal..term..Config$u20$as$u20$core..default..Default$GT$::default::h4c76a62d5cd56fee  C++     loomtty-server
+       1         32      32.0   malloc in _$LT$portable_pty..unix..UnixPtySystem$u20$as$u20$portable_pty..PtySystem$GT$::openpty::h9180baba2751d976  C++     loomtty-server
+       1         32      32.0   malloc in _$LT$portable_pty..unix..UnixSlavePty$u20$as$u20$portable_pty..SlavePty$GT$::spawn_command::h886c24907ee689a0  C++     loomtty-server
+       1         32      32.0   malloc in __si_module_static_darwin_directory_block_invoke  C       libsystem_info.dylib
+       1         32      32.0   malloc in alloc::raw_vec::RawVecInner$LT$A$GT$::try_allocate_in::hff569474c0e3211a  C++     loomtty-server
+       1         32      32.0   malloc in loom_layout::workspace::Workspace::add_column_right::h9f2a40390739627c  C++     loomtty-server
+       1         32      32.0   malloc in loom_protocol::codec::handshake::decode_client_hello_parts::hf2c19466a177f39b  C++     loomtty-server
+       1         32      32.0   malloc in loom_term::pty::Pty::spawn_inner::h99af16c1c7c74d87  C++     loomtty-server
+       1         32      32.0   malloc in std::env::args_os::hd47f08fb465353ca    C++     loomtty-server
+       1         32      32.0   malloc in tokio::runtime::builder::Builder::new::h7d4af7fbe67e97bd  C++     loomtty-server
+       1         32      32.0   malloc in tokio::runtime::signal::Driver::new::h7c1d74a4ff474e5d  C++     loomtty-server
+       1         16      16.0   malloc in _$LT$portable_pty..unix..UnixMasterPty$u20$as$u20$portable_pty..MasterPty$GT$::take_writer::hfe820263fd693fad  C++     loomtty-server
+       1         16      16.0   malloc in _$LT$portable_pty..unix..UnixMasterPty$u20$as$u20$portable_pty..MasterPty$GT$::try_clone_reader::h19caf5ab7aca448f  C++     loomtty-server
+       1         16      16.0   malloc in __si_module_cache_byname_block_invoke   C       libsystem_info.dylib
+       1         16      16.0   malloc in __si_module_static_ds_block_invoke      C       libsystem_info.dylib
+       1         16      16.0   malloc in __si_module_static_file_block_invoke    C       libsystem_info.dylib
+       1         16      16.0   malloc in __si_module_static_mdns_block_invoke    C       libsystem_info.dylib
+       1         16      16.0   malloc in __si_module_static_search_block_invoke  C       libsystem_info.dylib
+       1         16      16.0   malloc in look_up_class                           C       libobjc.A.dylib

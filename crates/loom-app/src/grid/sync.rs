@@ -46,7 +46,7 @@ impl ClientPaneGrid {
     /// - viewport SM data + `rows`: the current live viewport
     ///
     /// SM data is decoded directly into the viewport buffer (no intermediate alloc).
-    /// Scrollback is decoded into a temporary buffer, then sliced into rows.
+    /// Scrollback is decoded directly into its final row allocations.
     pub fn apply_full_sync(&mut self, sync: &FullPaneSyncBorrowed) {
         self.content_revision = self.content_revision.wrapping_add(1);
         let old_cols = self.cols as usize;
@@ -83,7 +83,7 @@ impl ClientPaneGrid {
         };
 
         // Step 1: Handle scrollback — replace or append.
-        // Scrollback must be decoded into a temp buffer since rows go into VecDeque.
+        // Decode into owned rows; avoid a full-history intermediate allocation.
         if sync.scrollback_replace {
             self.scrollback.clear();
         }
@@ -95,33 +95,28 @@ impl ClientPaneGrid {
 
         let sb_expected = appended_scrollback_rows * new_cols;
         if sb_expected > 0 {
-            let sb_sm_data = sync.scrollback_sm_data();
-            let mut sb_cells = vec![PackedCell::default(); sb_expected];
-            match loom_protocol::codec::decode_sm_cells(sb_sm_data, &mut sb_cells) {
-                Ok(_) => {
-                    for r in 0..appended_scrollback_rows {
-                        let start = r * new_cols;
-                        let end = (start + new_cols).min(sb_cells.len());
-                        if end > start {
-                            self.scrollback
-                                .push_back(ScrollbackRow::from_cells(&sb_cells[start..end]));
-                        }
-                    }
-
-                    let scrollback_base = self
-                        .scrollback
-                        .len()
-                        .saturating_sub(appended_scrollback_rows);
-                    let sb_grapheme_map =
-                        sync.grapheme_extras.build_lookup_with_offset(&sb_cells, 0);
-                    for (idx, grapheme) in sb_grapheme_map {
-                        let idx = idx as usize;
+            match loom_protocol::codec::decode_sm_rows(
+                sync.scrollback_sm_data(),
+                new_cols,
+                appended_scrollback_rows,
+            ) {
+                Ok(rows) => {
+                    let scrollback_base = self.scrollback.len();
+                    // Extras index the combined incoming history + viewport.
+                    // Resolve history in one pass before moving its row buffers.
+                    for (idx, extra) in &sync.grapheme_extras.0 {
+                        let idx = *idx as usize;
                         let buffer_idx = scrollback_base * new_cols + idx;
-                        if idx < sb_cells.len() && buffer_idx >= trim_count * new_cols {
+                        if idx < sb_expected && buffer_idx >= trim_count * new_cols {
+                            let mut grapheme = String::new();
+                            grapheme.push(rows[idx / new_cols][idx % new_cols].ch());
+                            grapheme.push_str(extra);
                             rebased_grapheme_map
                                 .insert((buffer_idx - trim_count * new_cols) as u32, grapheme);
                         }
                     }
+                    self.scrollback
+                        .extend(rows.into_iter().map(ScrollbackRow::from_vec));
                 }
                 Err(e) => log::warn!("scrollback SM decode error: {e}"),
             }

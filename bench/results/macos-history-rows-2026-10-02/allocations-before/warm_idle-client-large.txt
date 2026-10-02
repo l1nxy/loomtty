@@ -1,0 +1,31 @@
+heap(62123) MallocStackLogging: could not tag MSL-related memory as no_footprint, so those pages will be included in process footprint - No such file or directory (2)
+heap(62123) MallocStackLogging: recording malloc (and VM allocation) stacks using lite mode
+Process:         loomtty [62095]
+Path:            /private/tmp/Loomtty-Benchmark.app/Contents/MacOS/loomtty
+Load Address:    0x100208000
+Identifier:      dev.loomtty.benchmark
+Version:         0.2.1 (0.2.1)
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  python3.13 [62085]
+Target Type:     live task
+
+Date/Time:       2026-10-02 11:52:15.310 +0800
+Launch Time:     2026-10-02 11:52:03.452 +0800
+OS Version:      macOS 27.0 (26A428)
+Report Version:  7
+Analysis Tool:   /usr/bin/heap
+
+Physical footprint:         86.0M
+Physical footprint (peak):  128.5M
+Idle exit:                  untracked
+----
+
+Process 62095: 9 zones
+
+All zones: 78155 nodes malloced - Sizes: 352KB[1] 336KB[1] 320KB[1] 272KB[2] 128KB[1] 112KB[1] 96KB[1] 64KB[2] 48KB[4] 28KB[1] 24KB[7] 20KB[64] 16KB[1] 14KB[4] 12KB[20] 10KB[96] 8KB[11] 7KB[14] 6KB[31] 5KB[205] 4KB[19] 3.5KB[81] 3KB[108] 2.5KB[189] 2KB[56] 1.75KB[93] 1.5KB[93] 1.25KB[183] 1KB[151] 896[123] 768[204] 640[659] 512[158] 448[477] 384[557] 344[1] 320[1541] 304[1] 296[1] 288[1] 272[7] 268[1] 260[1] 256[204] 255[1] 240[3] 236[1] 232[1] 224[758] 220[1] 204[1] 196[4] 192[797] 187[1] 184[1] 180[1] 176[2] 172[3] 168[3] 160[3980] 152[7] 148[4] 144[4] 143[1] 140[1] 139[1] 136[7] 132[1] 128[2488] 124[1] 120[3] 116[4] 112[1705] 110[6] 108[6] 104[50] 102[1] 100[2] 96[2864] 94[2] 92[19] 91[3] 88[21] 85[3] 84[109] 80[9924] 79[2] 76[45] 75[3] 73[5] 72[83] 71[1] 70[3] 68[99] 66[4] 65[4] 64[15740] 60[39] 58[5] 56[71] 55[20] 53[2] 52[59] 51[15] 50[3] 49[10] 48[15690] 47[1] 44[8] 42[2] 41[4] 40[177] 39[6] 38[1] 36[88] 35[1] 34[3] 33[15] 32[11351] 31[36] 30[5] 29[4] 28[437] 26[3] 25[5] 24[186] 23[1] 22[6] 20[34] 19[5] 18[11] 17[13] 16[4744] 15[6] 14[1] 13[30] 12[118] 11[2] 10[10] 9[33] 8[467] 4[227] 1[39]
+
+Found:  1432 ObjC classes  667 Swift classes  151 C++ classes  222 CFTypes
+Derived 826 type names for non-objects from allocation backtraces
+
+Active blocks in all zones that match pattern 'malloc[256k-]':

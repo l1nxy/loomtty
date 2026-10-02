@@ -1,0 +1,21 @@
+{
+  "app": "kitty",
+  "round": 0,
+  "phases": [],
+  "config": "font_family Menlo\nfont_size 10.0\ndisable_ligatures always\nremember_window_size no\ninitial_window_width 100c\ninitial_window_height 30c\nwindow_padding_width 0\nwindow_margin_width 0\ncursor_blink_interval 0\nscrollback_lines 10000\nshell_integration disabled\nconfirm_os_window_close 0\nmacos_quit_when_last_window_closed yes\nbackground_opacity 1.0\n",
+  "ready": {
+    "pid": 57982,
+    "ppid": 57979,
+    "ready_ns": 54868742105041,
+    "columns": 100,
+    "rows": 30,
+    "term": "xterm-kitty",
+    "term_program": null
+  },
+  "startup_ms": 783.558583,
+  "processes": {
+    "kitty": 57979
+  },
+  "error": "timed out waiting for /private/tmp/loom-vtebench-four-20261002/r0-kitty/visible.json",
+  "traceback": "Traceback (most recent call last):\n  File \"/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py\", line 347, in run_one\n    result[\"visibility_confirmation\"] = wait_file(directory / \"visible.json\", timeout=300)\n                                        ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py\", line 144, in wait_file\n    raise TimeoutError(f\"timed out waiting for {path}\")\nTimeoutError: timed out waiting for /private/tmp/loom-vtebench-four-20261002/r0-kitty/visible.json\n"
+}

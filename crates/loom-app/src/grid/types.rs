@@ -9,15 +9,12 @@ pub struct ScrollbackRow {
 }
 
 impl ScrollbackRow {
-    /// Build from a slice of cells, extracting the wrap flag from the last cell.
-    pub(super) fn from_cells(cells: &[PackedCell]) -> Self {
+    /// Take a decoded row without copying its cells; preserve its wrap flag.
+    pub(super) fn from_vec(cells: Vec<PackedCell>) -> Self {
         let wrapped = cells
             .last()
             .is_some_and(|c| c.flags_u16() & FLAG_WRAPLINE != 0);
-        ScrollbackRow {
-            cells: cells.to_vec(),
-            wrapped,
-        }
+        ScrollbackRow { cells, wrapped }
     }
 }
 

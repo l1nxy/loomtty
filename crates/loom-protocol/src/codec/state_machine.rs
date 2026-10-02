@@ -321,6 +321,87 @@ impl Default for StateEncoder {
 
 /// Decode an SM opcode stream, writing cells into the provided slice.
 pub fn decode_sm_cells(data: &[u8], cells: &mut [PackedCell]) -> io::Result<usize> {
+    decode_cells_into(data, cells)
+}
+
+/// Decode history directly into its final rows, without a second flat copy.
+/// Short streams retain default cells just like `decode_sm_cells` into a
+/// default-initialized slice. Errors never expose partially decoded rows.
+pub fn decode_sm_rows(
+    data: &[u8],
+    columns: usize,
+    rows: usize,
+) -> io::Result<Vec<Vec<PackedCell>>> {
+    let count = columns
+        .checked_mul(rows)
+        .filter(|&n| n <= MAX_GRID_CELLS)
+        .ok_or_else(overflow_err)?;
+    if columns == 0 && rows != 0 {
+        return Err(overflow_err());
+    }
+    let mut output = RowCells {
+        columns,
+        count,
+        rows: (0..rows)
+            .map(|_| vec![PackedCell::default(); columns])
+            .collect(),
+    };
+    decode_cells_into(data, &mut output)?;
+    Ok(output.rows)
+}
+
+// Share opcode validation/state between the hot contiguous viewport decoder
+// and row storage. Static dispatch keeps the contiguous path a single span.
+trait CellOutput {
+    fn len(&self) -> usize;
+    fn spans(&mut self, start: usize, count: usize, write: impl FnMut(usize, &mut [PackedCell]));
+}
+
+impl CellOutput for [PackedCell] {
+    fn len(&self) -> usize {
+        self.len()
+    }
+    fn spans(
+        &mut self,
+        start: usize,
+        count: usize,
+        mut write: impl FnMut(usize, &mut [PackedCell]),
+    ) {
+        write(0, &mut self[start..start + count]);
+    }
+}
+
+struct RowCells {
+    columns: usize,
+    count: usize,
+    rows: Vec<Vec<PackedCell>>,
+}
+
+impl CellOutput for RowCells {
+    fn len(&self) -> usize {
+        self.count
+    }
+    fn spans(
+        &mut self,
+        start: usize,
+        count: usize,
+        mut write: impl FnMut(usize, &mut [PackedCell]),
+    ) {
+        let mut written = 0;
+        while written < count {
+            let index = start + written;
+            let column = index % self.columns;
+            let length = (count - written).min(self.columns - column);
+            write(
+                written,
+                &mut self.rows[index / self.columns][column..column + length],
+            );
+            written += length;
+        }
+    }
+}
+
+fn decode_cells_into(data: &[u8], cells: &mut (impl CellOutput + ?Sized)) -> io::Result<usize> {
     let (mut fg, mut bg, mut flags) = default_cell_state();
     let mut pos = 0;
     let mut ci = 0;
@@ -369,13 +450,15 @@ pub fn decode_sm_cells(data: &[u8], cells: &mut [PackedCell]) -> io::Result<usiz
                 if ci >= cells.len() {
                     return Err(overflow_err());
                 }
-                cells[ci] = PackedCell {
-                    ch_bytes: [data[pos], data[pos + 1], data[pos + 2], data[pos + 3]],
-                    fg,
-                    bg,
-                    flags: flags.to_le_bytes(),
-                    _pad: [0; 2],
-                };
+                cells.spans(ci, 1, |_, dest| {
+                    dest[0] = PackedCell {
+                        ch_bytes: [data[pos], data[pos + 1], data[pos + 2], data[pos + 3]],
+                        fg,
+                        bg,
+                        flags: flags.to_le_bytes(),
+                        _pad: [0; 2],
+                    };
+                });
                 ci += 1;
                 pos += 4;
             }
@@ -392,17 +475,18 @@ pub fn decode_sm_cells(data: &[u8], cells: &mut [PackedCell]) -> io::Result<usiz
                     return Err(overflow_err());
                 }
                 let flags_le = flags.to_le_bytes();
-                let dest = &mut cells[ci..ci + count];
-                for (i, cell) in dest.iter_mut().enumerate() {
-                    let off = pos + i * 4;
-                    *cell = PackedCell {
-                        ch_bytes: [data[off], data[off + 1], data[off + 2], data[off + 3]],
-                        fg,
-                        bg,
-                        flags: flags_le,
-                        _pad: [0; 2],
-                    };
-                }
+                cells.spans(ci, count, |offset, dest| {
+                    for (i, cell) in dest.iter_mut().enumerate() {
+                        let off = pos + (offset + i) * 4;
+                        *cell = PackedCell {
+                            ch_bytes: [data[off], data[off + 1], data[off + 2], data[off + 3]],
+                            fg,
+                            bg,
+                            flags: flags_le,
+                            _pad: [0; 2],
+                        };
+                    }
+                });
                 ci += count;
                 pos += count * 4;
             }
@@ -424,7 +508,7 @@ pub fn decode_sm_cells(data: &[u8], cells: &mut [PackedCell]) -> io::Result<usiz
                     flags: flags.to_le_bytes(),
                     _pad: [0; 2],
                 };
-                fill_cells(&mut cells[ci..ci + count], cell);
+                cells.spans(ci, count, |_, dest| fill_cells(dest, cell));
                 ci += count;
             }
             OP_CHARS_LONG => {
@@ -440,17 +524,18 @@ pub fn decode_sm_cells(data: &[u8], cells: &mut [PackedCell]) -> io::Result<usiz
                     return Err(overflow_err());
                 }
                 let flags_le = flags.to_le_bytes();
-                let dest = &mut cells[ci..ci + count];
-                for (i, cell) in dest.iter_mut().enumerate() {
-                    let off = pos + i * 4;
-                    *cell = PackedCell {
-                        ch_bytes: [data[off], data[off + 1], data[off + 2], data[off + 3]],
-                        fg,
-                        bg,
-                        flags: flags_le,
-                        _pad: [0; 2],
-                    };
-                }
+                cells.spans(ci, count, |offset, dest| {
+                    for (i, cell) in dest.iter_mut().enumerate() {
+                        let off = pos + (offset + i) * 4;
+                        *cell = PackedCell {
+                            ch_bytes: [data[off], data[off + 1], data[off + 2], data[off + 3]],
+                            fg,
+                            bg,
+                            flags: flags_le,
+                            _pad: [0; 2],
+                        };
+                    }
+                });
                 ci += count;
                 pos += count * 4;
             }
@@ -467,17 +552,18 @@ pub fn decode_sm_cells(data: &[u8], cells: &mut [PackedCell]) -> io::Result<usiz
                     return Err(overflow_err());
                 }
                 let flags_le = flags.to_le_bytes();
-                let dest = &mut cells[ci..ci + count];
-                let src = &data[pos..pos + count];
-                for (cell, &byte) in dest.iter_mut().zip(src.iter()) {
-                    *cell = PackedCell {
-                        ch_bytes: [byte, 0, 0, 0],
-                        fg,
-                        bg,
-                        flags: flags_le,
-                        _pad: [0; 2],
-                    };
-                }
+                cells.spans(ci, count, |offset, dest| {
+                    let src = &data[pos + offset..pos + offset + dest.len()];
+                    for (cell, &byte) in dest.iter_mut().zip(src.iter()) {
+                        *cell = PackedCell {
+                            ch_bytes: [byte, 0, 0, 0],
+                            fg,
+                            bg,
+                            flags: flags_le,
+                            _pad: [0; 2],
+                        };
+                    }
+                });
                 ci += count;
                 pos += count;
             }
@@ -499,7 +585,7 @@ pub fn decode_sm_cells(data: &[u8], cells: &mut [PackedCell]) -> io::Result<usiz
                     flags: flags.to_le_bytes(),
                     _pad: [0; 2],
                 };
-                fill_cells(&mut cells[ci..ci + count], cell);
+                cells.spans(ci, count, |_, dest| fill_cells(dest, cell));
                 ci += count;
             }
             OP_SET_FG_NAMED => {

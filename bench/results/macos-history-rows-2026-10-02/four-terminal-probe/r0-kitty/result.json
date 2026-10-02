@@ -1,0 +1,34 @@
+{
+  "app": "kitty",
+  "round": 0,
+  "phases": [],
+  "config": "font_family Menlo\nfont_size 10.0\ndisable_ligatures always\nremember_window_size no\ninitial_window_width 100c\ninitial_window_height 30c\nwindow_padding_width 0\nwindow_margin_width 0\ncursor_blink_interval 0\nscrollback_lines 10000\nshell_integration disabled\nconfirm_os_window_close 0\nmacos_quit_when_last_window_closed yes\nbackground_opacity 1.0\n",
+  "ready": {
+    "pid": 54458,
+    "ppid": 54455,
+    "ready_ns": 54747910308416,
+    "columns": 100,
+    "rows": 30,
+    "term": "xterm-kitty",
+    "term_program": null
+  },
+  "startup_ms": 700.498541,
+  "processes": {
+    "kitty": 54455
+  },
+  "probe": {
+    "cpu_seconds": 0.17752749999999998,
+    "rss_mib": 118.8125,
+    "footprint_mib": 58.95417785644531,
+    "wakeups": 101,
+    "components": {
+      "kitty": {
+        "identity": 1313933037011,
+        "cpu_seconds": 0.17752749999999998,
+        "rss_mib": 118.8125,
+        "footprint_mib": 58.95417785644531,
+        "wakeups": 101
+      }
+    }
+  }
+}

@@ -1,0 +1,97 @@
+9971 calls for 17868032 bytes:
+0   libsystem_malloc.dylib                0x1864c3684 _malloc_zone_malloc_instrumented_or_legacy + 152
+1   dev.loomtty.benchmark                 0x1007ed51c loom_app::grid::sync::_$LT$impl$u20$loom_app..grid..ClientPaneGrid$GT$::apply_full_sync::hf42c179ba9bb419c + 3612
+2   dev.loomtty.benchmark                 0x1002579e8 loomtty::app::sync::_$LT$impl$u20$loomtty..app..App$GT$::process_server_events::h5baef85c7175bc8f + 2400
+3   dev.loomtty.benchmark                 0x10025b61c loomtty::app::event::_$LT$impl$u20$winit..application..ApplicationHandler$u20$for$u20$loomtty..app..App$GT$::new_events::h036cb386d3551ccd + 2128
+4   dev.loomtty.benchmark                 0x100355fcc _$LT$loomtty..macos..MacApplication$u20$as$u20$winit..application..ApplicationHandler$GT$::new_events::h1c2bb73b6a97aeb4 + 376
+5   dev.loomtty.benchmark                 0x1002836b0 winit::platform_impl::macos::event_loop::map_user_event::_$u7b$$u7b$closure$u7d$$u7d$::h79ac02fb49632239 + 224
+6   dev.loomtty.benchmark                 0x10074c294 winit::platform_impl::macos::event_handler::EventHandler::handle_event::h36b5e153d5d8c1d1 + 112
+7   dev.loomtty.benchmark                 0x1007463a4 winit::platform_impl::macos::app_state::ApplicationDelegate::wakeup::h3f35175b65e1df8f + 444
+8   dev.loomtty.benchmark                 0x100747914 winit::platform_impl::macos::observer::control_flow_begin_handler::ha233dc3714c52703 + 144
+9   com.apple.CoreFoundation              0x186756cdc __CFRUNLOOP_IS_CALLING_OUT_TO_AN_OBSERVER_CALLBACK_FUNCTION__ + 36
+10  com.apple.CoreFoundation              0x186756bd4 __CFRunLoopDoObservers + 628
+11  com.apple.CoreFoundation              0x186756520 __CFRunLoopRun + 1620
+12  com.apple.CoreFoundation              0x18682d530 _CFRunLoopRunSpecificWithOptions + 536
+13  com.apple.HIToolbox                   0x1939e5c04 RunCurrentEventLoopInMode + 320
+14  com.apple.HIToolbox                   0x1939e8e84 ReceiveNextEventCommon + 492
+15  com.apple.HIToolbox                   0x193b66828 _BlockUntilNextEventMatchingListInMode + 48
+16  com.apple.AppKit                      0x18afc6b68 _DPSBlockUntilNextEventMatchingListInMode + 292
+17  com.apple.AppKit                      0x18ac96274 _DPSNextEvent + 580
+18  com.apple.AppKit                      0x18b4ddc88 -[NSApplication(NSEventRouting) _nextEventMatchingEventMask:untilDate:inMode:dequeue:] + 780
+19  com.apple.AppKit                      0x18b4dd7ac -[NSApplication(NSEventRouting) nextEventMatchingMask:untilDate:inMode:dequeue:] + 292
+20  com.apple.AppKit                      0x18ac8994c -[NSApplication run] + 396
+21  dev.loomtty.benchmark                 0x100283aa0 winit::platform_impl::macos::event_loop::EventLoop$LT$T$GT$::run::he638e0ec18377cc0 + 264
+22  dev.loomtty.benchmark                 0x1002b47a0 loomtty::run_gui::h10c85a872fed482d + 160
+23  dev.loomtty.benchmark                 0x1002b3958 loomtty::run::h7fb5395e8012096b + 5528
+24  dev.loomtty.benchmark                 0x10020cb88 loomtty::main::hce089285156be18d + 168
+25  dev.loomtty.benchmark                 0x10020be38 std::sys::backtrace::__rust_begin_short_backtrace::h37d5b9c81f6be710 + 12
+26  dev.loomtty.benchmark                 0x10020bdd0 std::rt::lang_start::_$u7b$$u7b$closure$u7d$$u7d$::h2ac989cba13d7ded + 24
+27  dev.loomtty.benchmark                 0x1009df304 std::rt::lang_start_internal::hdd036a54cd97d929 + 952
+28  dev.loomtty.benchmark                 0x10020d0c0 main + 52
+29  dyld                                  0x1862cd158 start + 6688
+
+
+1 call for 49152 bytes:
+0   libsystem_malloc.dylib                0x1864c3684 _malloc_zone_malloc_instrumented_or_legacy + 152
+1   dev.loomtty.benchmark                 0x1007ed1d0 loom_app::grid::sync::_$LT$impl$u20$loom_app..grid..ClientPaneGrid$GT$::apply_full_sync::hf42c179ba9bb419c + 2768
+2   dev.loomtty.benchmark                 0x1002579e8 loomtty::app::sync::_$LT$impl$u20$loomtty..app..App$GT$::process_server_events::h5baef85c7175bc8f + 2400
+3   dev.loomtty.benchmark                 0x10025b61c loomtty::app::event::_$LT$impl$u20$winit..application..ApplicationHandler$u20$for$u20$loomtty..app..App$GT$::new_events::h036cb386d3551ccd + 2128
+4   dev.loomtty.benchmark                 0x100355fcc _$LT$loomtty..macos..MacApplication$u20$as$u20$winit..application..ApplicationHandler$GT$::new_events::h1c2bb73b6a97aeb4 + 376
+5   dev.loomtty.benchmark                 0x1002836b0 winit::platform_impl::macos::event_loop::map_user_event::_$u7b$$u7b$closure$u7d$$u7d$::h79ac02fb49632239 + 224
+6   dev.loomtty.benchmark                 0x10074c294 winit::platform_impl::macos::event_handler::EventHandler::handle_event::h36b5e153d5d8c1d1 + 112
+7   dev.loomtty.benchmark                 0x1007463a4 winit::platform_impl::macos::app_state::ApplicationDelegate::wakeup::h3f35175b65e1df8f + 444
+8   dev.loomtty.benchmark                 0x100747914 winit::platform_impl::macos::observer::control_flow_begin_handler::ha233dc3714c52703 + 144
+9   com.apple.CoreFoundation              0x186756cdc __CFRUNLOOP_IS_CALLING_OUT_TO_AN_OBSERVER_CALLBACK_FUNCTION__ + 36
+10  com.apple.CoreFoundation              0x186756bd4 __CFRunLoopDoObservers + 628
+11  com.apple.CoreFoundation              0x186756520 __CFRunLoopRun + 1620
+12  com.apple.CoreFoundation              0x18682d530 _CFRunLoopRunSpecificWithOptions + 536
+13  com.apple.HIToolbox                   0x1939e5c04 RunCurrentEventLoopInMode + 320
+14  com.apple.HIToolbox                   0x1939e8e84 ReceiveNextEventCommon + 492
+15  com.apple.HIToolbox                   0x193b66828 _BlockUntilNextEventMatchingListInMode + 48
+16  com.apple.AppKit                      0x18afc6b68 _DPSBlockUntilNextEventMatchingListInMode + 292
+17  com.apple.AppKit                      0x18ac96274 _DPSNextEvent + 580
+18  com.apple.AppKit                      0x18b4ddc88 -[NSApplication(NSEventRouting) _nextEventMatchingEventMask:untilDate:inMode:dequeue:] + 780
+19  com.apple.AppKit                      0x18b4dd7ac -[NSApplication(NSEventRouting) nextEventMatchingMask:untilDate:inMode:dequeue:] + 292
+20  com.apple.AppKit                      0x18ac8994c -[NSApplication run] + 396
+21  dev.loomtty.benchmark                 0x100283aa0 winit::platform_impl::macos::event_loop::EventLoop$LT$T$GT$::run::he638e0ec18377cc0 + 264
+22  dev.loomtty.benchmark                 0x1002b47a0 loomtty::run_gui::h10c85a872fed482d + 160
+23  dev.loomtty.benchmark                 0x1002b3958 loomtty::run::h7fb5395e8012096b + 5528
+24  dev.loomtty.benchmark                 0x10020cb88 loomtty::main::hce089285156be18d + 168
+25  dev.loomtty.benchmark                 0x10020be38 std::sys::backtrace::__rust_begin_short_backtrace::h37d5b9c81f6be710 + 12
+26  dev.loomtty.benchmark                 0x10020bdd0 std::rt::lang_start::_$u7b$$u7b$closure$u7d$$u7d$::h2ac989cba13d7ded + 24
+27  dev.loomtty.benchmark                 0x1009df304 std::rt::lang_start_internal::hdd036a54cd97d929 + 952
+28  dev.loomtty.benchmark                 0x10020d0c0 main + 52
+29  dyld                                  0x1862cd158 start + 6688
+
+
+1 call for 48 bytes:
+0   libsystem_malloc.dylib                0x1864c3874 _malloc_zone_calloc_instrumented_or_legacy + 132
+1   dev.loomtty.benchmark                 0x1007ed23c loom_app::grid::sync::_$LT$impl$u20$loom_app..grid..ClientPaneGrid$GT$::apply_full_sync::hf42c179ba9bb419c + 2876
+2   dev.loomtty.benchmark                 0x1002579e8 loomtty::app::sync::_$LT$impl$u20$loomtty..app..App$GT$::process_server_events::h5baef85c7175bc8f + 2400
+3   dev.loomtty.benchmark                 0x10025b61c loomtty::app::event::_$LT$impl$u20$winit..application..ApplicationHandler$u20$for$u20$loomtty..app..App$GT$::new_events::h036cb386d3551ccd + 2128
+4   dev.loomtty.benchmark                 0x100355fcc _$LT$loomtty..macos..MacApplication$u20$as$u20$winit..application..ApplicationHandler$GT$::new_events::h1c2bb73b6a97aeb4 + 376
+5   dev.loomtty.benchmark                 0x1002836b0 winit::platform_impl::macos::event_loop::map_user_event::_$u7b$$u7b$closure$u7d$$u7d$::h79ac02fb49632239 + 224
+6   dev.loomtty.benchmark                 0x10074c294 winit::platform_impl::macos::event_handler::EventHandler::handle_event::h36b5e153d5d8c1d1 + 112
+7   dev.loomtty.benchmark                 0x1007463a4 winit::platform_impl::macos::app_state::ApplicationDelegate::wakeup::h3f35175b65e1df8f + 444
+8   dev.loomtty.benchmark                 0x100747914 winit::platform_impl::macos::observer::control_flow_begin_handler::ha233dc3714c52703 + 144
+9   com.apple.CoreFoundation              0x186756cdc __CFRUNLOOP_IS_CALLING_OUT_TO_AN_OBSERVER_CALLBACK_FUNCTION__ + 36
+10  com.apple.CoreFoundation              0x186756bd4 __CFRunLoopDoObservers + 628
+11  com.apple.CoreFoundation              0x186756520 __CFRunLoopRun + 1620
+12  com.apple.CoreFoundation              0x18682d530 _CFRunLoopRunSpecificWithOptions + 536
+13  com.apple.HIToolbox                   0x1939e5c04 RunCurrentEventLoopInMode + 320
+14  com.apple.HIToolbox                   0x1939e8e84 ReceiveNextEventCommon + 492
+15  com.apple.HIToolbox                   0x193b66828 _BlockUntilNextEventMatchingListInMode + 48
+16  com.apple.AppKit                      0x18afc6b68 _DPSBlockUntilNextEventMatchingListInMode + 292
+17  com.apple.AppKit                      0x18ac96274 _DPSNextEvent + 580
+18  com.apple.AppKit                      0x18b4ddc88 -[NSApplication(NSEventRouting) _nextEventMatchingEventMask:untilDate:inMode:dequeue:] + 780
+19  com.apple.AppKit                      0x18b4dd7ac -[NSApplication(NSEventRouting) nextEventMatchingMask:untilDate:inMode:dequeue:] + 292
+20  com.apple.AppKit                      0x18ac8994c -[NSApplication run] + 396
+21  dev.loomtty.benchmark                 0x100283aa0 winit::platform_impl::macos::event_loop::EventLoop$LT$T$GT$::run::he638e0ec18377cc0 + 264
+22  dev.loomtty.benchmark                 0x1002b47a0 loomtty::run_gui::h10c85a872fed482d + 160
+23  dev.loomtty.benchmark                 0x1002b3958 loomtty::run::h7fb5395e8012096b + 5528
+24  dev.loomtty.benchmark                 0x10020cb88 loomtty::main::hce089285156be18d + 168
+25  dev.loomtty.benchmark                 0x10020be38 std::sys::backtrace::__rust_begin_short_backtrace::h37d5b9c81f6be710 + 12
+26  dev.loomtty.benchmark                 0x10020bdd0 std::rt::lang_start::_$u7b$$u7b$closure$u7d$$u7d$::h2ac989cba13d7ded + 24
+27  dev.loomtty.benchmark                 0x1009df304 std::rt::lang_start_internal::hdd036a54cd97d929 + 952
+28  dev.loomtty.benchmark                 0x10020d0c0 main + 52
+29  dyld                                  0x1862cd158 start + 6688

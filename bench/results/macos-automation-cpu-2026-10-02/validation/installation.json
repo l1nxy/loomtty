@@ -1,0 +1,12 @@
+{
+  "installed_app": "/Applications/loomtty.app",
+  "backup": "/Users/linxy/Library/Application Support/loomtty/install-backups/20261002-101226/loomtty-before-automation-cache.app",
+  "old_gui": "34884 Fri Oct  2 01:03:36 2026     /Applications/loomtty.app/Contents/MacOS/loomtty",
+  "new_gui": "51800 Fri Oct  2 10:12:26 2026     /Applications/loomtty.app/Contents/MacOS/loomtty",
+  "preserved_server": "7961 Thu Oct  1 21:50:18 2026     /Applications/loomtty.app/Contents/Helpers/loomtty-server.app/Contents/MacOS/loomtty-server",
+  "sessions_before": "NAME                 STATUS     PANES  CLIENTS\nslim-bear            running    2      0\n",
+  "sessions_after": "NAME                 STATUS     PANES  CLIENTS\nslim-bear            running    2      1\n",
+  "server_activation": "Previous server CPU optimization still requires next server startup; current sessions retained",
+  "client_sections_verified": 45,
+  "server_sections_verified": 14
+}

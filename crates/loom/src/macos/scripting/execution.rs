@@ -91,6 +91,23 @@ impl MacApplication {
             Source::AppleScript => &mut self.scripting,
             Source::AppIntents => &mut self.intents,
         };
+        // Keep pending command deadlines/completions live even if the object
+        // tree is unchanged. Ordinary terminal output can reuse the published
+        // snapshot without cloning it or reconstructing IDs and native groups.
+        if bridge.waiting.is_empty()
+            && bridge
+                .capture_state
+                .as_ref()
+                .is_some_and(|state| state.matches(&self.windows, self.active, enabled, source))
+        {
+            return;
+        }
+        bridge.capture_state = Some(super::capture_cache::CaptureState::capture(
+            &self.windows,
+            self.active,
+            enabled,
+            source,
+        ));
         let snapshot = bridge.capture(&self.windows, self.active, enabled, source);
         let now = Instant::now();
         let mut completions = Vec::new();

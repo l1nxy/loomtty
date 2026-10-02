@@ -1,0 +1,10 @@
+loomtty.app  version=0.2.1  arch=arm64  sign=-
+2026-10-02 10:12:25.962 appintentsmetadataprocessor[51726:860030] Starting appintentsmetadataprocessor export
+2026-10-02 10:12:25.994 appintentsmetadataprocessor[51726:860030] Writing Metadata.appintents
+2026-10-02 10:12:25.994 appintentsmetadataprocessor[51726:860030] Metadata root: /Users/linxy/.codex/worktrees/macos-native/loomtty/target/macos-automation-cpu-20261002/.loomtty-app.wtvwuH/loomtty.app/Contents/Resources/Metadata.appintents
+target/macos-automation-cpu-20261002/.loomtty-app.wtvwuH/loomtty.app/Contents/Helpers/loomtty-server.app: replacing existing signature
+target/macos-automation-cpu-20261002/.loomtty-app.wtvwuH/loomtty.app: replacing existing signature
+codesign: verified
+App Intents metadata included; macOS may reject Shortcuts discovery for ad-hoc signatures.
+Use --sign-id with an Apple Development or Developer ID identity for live Shortcuts testing.
+Built: target/macos-automation-cpu-20261002/loomtty.app

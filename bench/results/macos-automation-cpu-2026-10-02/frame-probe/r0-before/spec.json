@@ -1,0 +1,6 @@
+{
+  "columns": 100,
+  "rows": 30,
+  "bytes": 262144,
+  "worker_timeout": 1800
+}

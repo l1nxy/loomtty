@@ -1,4 +1,5 @@
 //! Cocoa scripting objects, queued commands, and correlated terminal creation.
+mod capture_cache;
 mod cocoa;
 mod execution;
 mod intents;
@@ -100,6 +101,7 @@ pub(super) struct Bridge {
     ids: model::Ids,
     connections: HashMap<String, Connection>,
     waiting: Vec<Waiting>,
+    capture_state: Option<capture_cache::CaptureState>,
 }
 impl Bridge {
     pub fn deadline(&self) -> Option<Instant> {

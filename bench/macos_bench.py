@@ -325,7 +325,8 @@ def run_one(app, round_index, directory, args):
             command = [str(APPS[app]),
                        "--config-default-files=false", f"--config-file={config}", "-e", str(wrapper)]
         elif app == "kitty":
-            command = [str(APPS[app]), "--config", str(config), str(wrapper)]
+            command = [str(APPS[app]), "--title", f"loom benchmark [{directory.name}]",
+                       "--config", str(config), str(wrapper)]
         else:
             command = [str(APPS[app]), "--config-file", str(config), "-e", str(wrapper)]
         child = subprocess.Popen(command, env=env, stdout=log, stderr=log)

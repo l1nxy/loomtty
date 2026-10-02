@@ -221,7 +221,8 @@ background_opacity 1.0
 '''
         suffix = "conf"
     else:
-        config = f'''font-family = Menlo
+        config = f'''title = loom benchmark [{directory.name}]
+font-family = Menlo
 font-size = 10
 font-feature = -liga
 font-feature = -calt
@@ -323,8 +324,7 @@ def run_one(app, round_index, directory, args):
             # leaving the new instance waiting to create its initial window.
             # Direct launch also captures the actual application's stderr.
             command = [str(APPS[app]),
-                       "--config-default-files=false", f"--config-file={config}",
-                       f"--title=loom benchmark [{directory.name}]", "-e", str(wrapper)]
+                       "--config-default-files=false", f"--config-file={config}", "-e", str(wrapper)]
         elif app == "kitty":
             command = [str(APPS[app]), "--title", f"loom benchmark [{directory.name}]",
                        "--config", str(config), str(wrapper)]

@@ -1,0 +1,12 @@
+2026-10-02 unlocked desktop audit
+
+CUA successfully selected and raised /tmp/Loomtty-Row-After.app; AX and screenshot confirmed the private benchmark window. All 12 official workloads completed.
+
+CUA app selections then returned:
+- net.kovidgoyal.kitty: Computer Use is not allowed to use the app for safety reasons.
+- org.alacritty: Computer Use is not allowed to use the app for safety reasons.
+- com.mitchellh.ghostty: Computer Use is not allowed to use the app for safety reasons.
+
+Kitty waited for manual foreground confirmation and timed out without a receipt. The four-terminal controller was interrupted during Alacritty's pre-measurement wait. The separate Ghostty controller was also interrupted before measurements after its CUA denial. All owned test processes were cleaned up by the runner. No alternate UI-control mechanism was used.
+
+The earlier Kitty confirmation question is stale because that instance has exited. Further competitor measurements require fresh per-window manual visibility confirmation.

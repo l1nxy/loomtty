@@ -1,0 +1,15 @@
+Round 1/1: ghostty
+  WAITING FOR VISIBLE WINDOW: /private/tmp/loom-vtebench-ghostty-unlocked/r0-ghostty
+Traceback (most recent call last):
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py", line 590, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py", line 568, in main
+    run = run_one(app, round_index, args.output / f"r{round_index}-{app}", args)
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py", line 347, in run_one
+    result["visibility_confirmation"] = wait_file(directory / "visible.json", timeout=300)
+                                        ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py", line 143, in wait_file
+    time.sleep(.01)
+    ~~~~~~~~~~^^^^^
+KeyboardInterrupt

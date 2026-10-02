@@ -1,0 +1,5 @@
+   Compiling loom-render v0.2.1 (/Users/linxy/.codex/worktrees/macos-native/loomtty/crates/loom-render)
+   Compiling loom-ui v0.2.1 (/Users/linxy/.codex/worktrees/macos-native/loomtty/crates/loom-ui)
+   Compiling loom-gpu v0.2.1 (/Users/linxy/.codex/worktrees/macos-native/loomtty/crates/loom-gpu)
+   Compiling loomtty v0.2.1 (/Users/linxy/.codex/worktrees/macos-native/loomtty/crates/loom)
+    Finished `release` profile [optimized] target(s) in 7.72s

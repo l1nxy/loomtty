@@ -50,14 +50,15 @@ impl Text {
         } else {
             top.max(end.saturating_sub(MAX_ROWS))
         };
-        let mut lines = Vec::new();
+        let mut lines = Vec::with_capacity(end.saturating_sub(start));
         let mut units = 0;
         // Build from the visible end backwards, keeping the viewport when a
         // large scrollback reaches the bounded accessibility working set.
         for row in (start..end).rev() {
-            let mut line_text = Vec::new();
-            let mut cells: Vec<Cell> = Vec::new();
-            for (col, cell) in grid.buffer_row(row).iter().enumerate() {
+            let source = grid.buffer_row(row);
+            let mut line_text = Vec::with_capacity(source.len() + 1);
+            let mut cells: Vec<Cell> = Vec::with_capacity(source.len());
+            for (col, cell) in source.iter().enumerate() {
                 if cell.flags_u16() & FLAG_WIDE_CHAR_SPACER != 0
                     && let Some(cell) = cells.last_mut()
                 {
@@ -79,7 +80,10 @@ impl Text {
                             .take(MAX_UNITS.saturating_sub(line_text.len()) + 1),
                     );
                 } else {
-                    let ch = if cell.ch() == '\0' { ' ' } else { cell.ch() };
+                    let ch = match cell.ch() {
+                        '\0' => ' ',
+                        ch => ch,
+                    };
                     line_text.extend_from_slice(ch.encode_utf16(&mut [0; 2]));
                 }
                 cells.push(Cell {
@@ -99,6 +103,8 @@ impl Text {
             units += line_text.len();
             lines.push((row, line_text, cells));
         }
+        result.utf16.reserve(units);
+        result.lines.reserve(lines.len());
         for (row, text, mut cells) in lines.into_iter().rev() {
             let start = result.utf16.len();
             result.utf16.extend(text);

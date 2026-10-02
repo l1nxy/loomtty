@@ -1,0 +1,4212 @@
+{
+  "target": "server",
+  "process": "loomtty-server (35546)",
+  "samples": 302,
+  "total_running_weight_ns": 302000000,
+  "buckets": [
+    {
+      "name": "Other IO/tick/runtime",
+      "weight_ns": 188000000,
+      "percent": 62.25165562913907
+    },
+    {
+      "name": "PTY output processing",
+      "weight_ns": 50000000,
+      "percent": 16.556291390728475
+    },
+    {
+      "name": "Row fingerprint (including packing)",
+      "weight_ns": 35000000,
+      "percent": 11.589403973509933
+    },
+    {
+      "name": "Cell encoding (including packing)",
+      "weight_ns": 15000000,
+      "percent": 4.966887417218543
+    },
+    {
+      "name": "Other damage processing",
+      "weight_ns": 14000000,
+      "percent": 4.635761589403973
+    }
+  ],
+  "inclusive_overlapping": [
+    {
+      "name": "std::sys::thread::unix::Thread::new::thread_start",
+      "weight_ns": 302000000,
+      "percent": 100.0
+    },
+    {
+      "name": "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+      "weight_ns": 302000000,
+      "percent": 100.0
+    },
+    {
+      "name": "thread_start",
+      "weight_ns": 302000000,
+      "percent": 100.0
+    },
+    {
+      "name": "std::sys::backtrace::__rust_begin_short_backtrace",
+      "weight_ns": 302000000,
+      "percent": 100.0
+    },
+    {
+      "name": "_pthread_start",
+      "weight_ns": 302000000,
+      "percent": 100.0
+    },
+    {
+      "name": "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+      "weight_ns": 284000000,
+      "percent": 94.03973509933775
+    },
+    {
+      "name": "tokio::runtime::blocking::pool::Inner::run",
+      "weight_ns": 284000000,
+      "percent": 94.03973509933775
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+      "weight_ns": 284000000,
+      "percent": 94.03973509933775
+    },
+    {
+      "name": "std::thread::local::LocalKey$LT$T$GT$::with",
+      "weight_ns": 284000000,
+      "percent": 94.03973509933775
+    },
+    {
+      "name": "tokio::runtime::context::runtime::enter_runtime",
+      "weight_ns": 284000000,
+      "percent": 94.03973509933775
+    },
+    {
+      "name": "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+      "weight_ns": 284000000,
+      "percent": 94.03973509933775
+    },
+    {
+      "name": "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+      "weight_ns": 284000000,
+      "percent": 94.03973509933775
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::run",
+      "weight_ns": 284000000,
+      "percent": 94.03973509933775
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+      "weight_ns": 191000000,
+      "percent": 63.24503311258278
+    },
+    {
+      "name": "<deduplicated_symbol>",
+      "weight_ns": 190000000,
+      "percent": 62.913907284768214
+    },
+    {
+      "name": "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+      "weight_ns": 156000000,
+      "percent": 51.65562913907285
+    },
+    {
+      "name": "loomtty_server::daemon::session::Session::process_pty_and_damage",
+      "weight_ns": 99000000,
+      "percent": 32.78145695364238
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+      "weight_ns": 75000000,
+      "percent": 24.834437086092716
+    },
+    {
+      "name": "kevent",
+      "weight_ns": 61000000,
+      "percent": 20.198675496688743
+    },
+    {
+      "name": "tokio::runtime::time::Driver::park_internal",
+      "weight_ns": 60000000,
+      "percent": 19.867549668874172
+    },
+    {
+      "name": "loom_term::pane::Pane::process_pty_output",
+      "weight_ns": 50000000,
+      "percent": 16.556291390728475
+    },
+    {
+      "name": "tokio::runtime::io::driver::Driver::turn",
+      "weight_ns": 50000000,
+      "percent": 16.556291390728475
+    },
+    {
+      "name": "mio::poll::Poll::poll",
+      "weight_ns": 47000000,
+      "percent": 15.562913907284768
+    },
+    {
+      "name": "_$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter_nested..SpecFromIterNested$LT$T$C$I$GT$$GT$::from_iter",
+      "weight_ns": 36000000,
+      "percent": 11.920529801324504
+    },
+    {
+      "name": "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::viewport_row_fingerprint",
+      "weight_ns": 35000000,
+      "percent": 11.589403973509933
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell",
+      "weight_ns": 21000000,
+      "percent": 6.953642384105961
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks",
+      "weight_ns": 21000000,
+      "percent": 6.953642384105961
+    },
+    {
+      "name": "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::write_cells_into_sm",
+      "weight_ns": 15000000,
+      "percent": 4.966887417218543
+    },
+    {
+      "name": "mio::waker::Waker::wake",
+      "weight_ns": 14000000,
+      "percent": 4.635761589403973
+    },
+    {
+      "name": "loom_term::pty::Pty::write",
+      "weight_ns": 14000000,
+      "percent": 4.635761589403973
+    },
+    {
+      "name": "std::io::Write::write_all",
+      "weight_ns": 14000000,
+      "percent": 4.635761589403973
+    },
+    {
+      "name": "loom_term::pane::Pane::write_to_pty",
+      "weight_ns": 14000000,
+      "percent": 4.635761589403973
+    },
+    {
+      "name": "tokio::runtime::task::waker::wake_by_val",
+      "weight_ns": 14000000,
+      "percent": 4.635761589403973
+    },
+    {
+      "name": "loomtty_server::daemon::connection::handle_client::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$",
+      "weight_ns": 13000000,
+      "percent": 4.304635761589404
+    },
+    {
+      "name": "filedescriptor::unix::_$LT$impl$u20$std..io..Write$u20$for$u20$filedescriptor..FileDescriptor$GT$::write",
+      "weight_ns": 13000000,
+      "percent": 4.304635761589404
+    },
+    {
+      "name": "write",
+      "weight_ns": 13000000,
+      "percent": 4.304635761589404
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::_$LT$impl$u20$tokio..runtime..scheduler..multi_thread..handle..Handle$GT$::schedule_task",
+      "weight_ns": 13000000,
+      "percent": 4.304635761589404
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::park::Inner::park_condvar",
+      "weight_ns": 12000000,
+      "percent": 3.9735099337748343
+    },
+    {
+      "name": "__psynch_cvwait",
+      "weight_ns": 12000000,
+      "percent": 3.9735099337748343
+    },
+    {
+      "name": "parking_lot::condvar::Condvar::wait_until_internal",
+      "weight_ns": 12000000,
+      "percent": 3.9735099337748343
+    },
+    {
+      "name": "_pthread_cond_wait",
+      "weight_ns": 12000000,
+      "percent": 3.9735099337748343
+    },
+    {
+      "name": "loomtty_server::daemon::connection::handle_client::_$u7b$$u7b$closure$u7d$$u7d$",
+      "weight_ns": 12000000,
+      "percent": 3.9735099337748343
+    },
+    {
+      "name": "_$LT$core..panic..unwind_safe..AssertUnwindSafe$LT$F$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+      "weight_ns": 11000000,
+      "percent": 3.642384105960265
+    },
+    {
+      "name": "tokio::io::util::buf_writer::BufWriter$LT$W$GT$::flush_buf",
+      "weight_ns": 11000000,
+      "percent": 3.642384105960265
+    },
+    {
+      "name": "_$LT$$RF$mio..net..uds..stream..UnixStream$u20$as$u20$std..io..Write$GT$::write",
+      "weight_ns": 11000000,
+      "percent": 3.642384105960265
+    },
+    {
+      "name": "__sendto",
+      "weight_ns": 11000000,
+      "percent": 3.642384105960265
+    },
+    {
+      "name": "tokio::io::poll_evented::PollEvented$LT$E$GT$::poll_write",
+      "weight_ns": 11000000,
+      "percent": 3.642384105960265
+    },
+    {
+      "name": "_$LT$$RF$std..net..tcp..TcpStream$u20$as$u20$std..io..Write$GT$::write",
+      "weight_ns": 11000000,
+      "percent": 3.642384105960265
+    },
+    {
+      "name": "parking_lot::condvar::Condvar::notify_one_slow",
+      "weight_ns": 10000000,
+      "percent": 3.3112582781456954
+    },
+    {
+      "name": "loom_protocol::codec::state_machine::StateEncoder::push_cell",
+      "weight_ns": 10000000,
+      "percent": 3.3112582781456954
+    },
+    {
+      "name": "std::sys::pal::unix::time::Timespec::now",
+      "weight_ns": 10000000,
+      "percent": 3.3112582781456954
+    },
+    {
+      "name": "_platform_memmove",
+      "weight_ns": 10000000,
+      "percent": 3.3112582781456954
+    },
+    {
+      "name": "_$LT$portable_pty..unix..UnixMasterPty$u20$as$u20$portable_pty..MasterPty$GT$::get_termios",
+      "weight_ns": 9000000,
+      "percent": 2.980132450331126
+    },
+    {
+      "name": "nix::sys::termios::tcgetattr",
+      "weight_ns": 8000000,
+      "percent": 2.6490066225165565
+    },
+    {
+      "name": "tcgetattr",
+      "weight_ns": 8000000,
+      "percent": 2.6490066225165565
+    },
+    {
+      "name": "__ioctl",
+      "weight_ns": 8000000,
+      "percent": 2.6490066225165565
+    },
+    {
+      "name": "ioctl",
+      "weight_ns": 8000000,
+      "percent": 2.6490066225165565
+    },
+    {
+      "name": "clock_gettime",
+      "weight_ns": 8000000,
+      "percent": 2.6490066225165565
+    },
+    {
+      "name": "filedescriptor::unix::_$LT$impl$u20$std..io..Read$u20$for$u20$filedescriptor..FileDescriptor$GT$::read",
+      "weight_ns": 8000000,
+      "percent": 2.6490066225165565
+    },
+    {
+      "name": "_$LT$portable_pty..unix..PtyFd$u20$as$u20$std..io..Read$GT$::read",
+      "weight_ns": 8000000,
+      "percent": 2.6490066225165565
+    },
+    {
+      "name": "pthread_cond_signal",
+      "weight_ns": 8000000,
+      "percent": 2.6490066225165565
+    },
+    {
+      "name": "__psynch_cvsignal",
+      "weight_ns": 8000000,
+      "percent": 2.6490066225165565
+    },
+    {
+      "name": "mach_absolute_time",
+      "weight_ns": 7000000,
+      "percent": 2.3178807947019866
+    },
+    {
+      "name": "_$LT$core..future..poll_fn..PollFn$LT$F$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+      "weight_ns": 7000000,
+      "percent": 2.3178807947019866
+    },
+    {
+      "name": "read",
+      "weight_ns": 7000000,
+      "percent": 2.3178807947019866
+    },
+    {
+      "name": "_$LT$tokio..io..util..buf_reader..BufReader$LT$R$GT$$u20$as$u20$tokio..io..async_read..AsyncRead$GT$::poll_read",
+      "weight_ns": 7000000,
+      "percent": 2.3178807947019866
+    },
+    {
+      "name": "tokio::runtime::context::scoped::Scoped$LT$T$GT$::with",
+      "weight_ns": 7000000,
+      "percent": 2.3178807947019866
+    },
+    {
+      "name": "_$LT$tokio..time..sleep..Sleep$u20$as$u20$core..future..future..Future$GT$::poll",
+      "weight_ns": 6000000,
+      "percent": 1.9867549668874172
+    },
+    {
+      "name": "tokio::runtime::Timer::poll_elapsed",
+      "weight_ns": 6000000,
+      "percent": 1.9867549668874172
+    },
+    {
+      "name": "tokio::runtime::time::_$LT$impl$u20$tokio..runtime..time..handle..Handle$GT$::reregister",
+      "weight_ns": 6000000,
+      "percent": 1.9867549668874172
+    },
+    {
+      "name": "alloc::raw_vec::RawVec$LT$T$C$A$GT$::grow_one",
+      "weight_ns": 6000000,
+      "percent": 1.9867549668874172
+    },
+    {
+      "name": "alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow",
+      "weight_ns": 6000000,
+      "percent": 1.9867549668874172
+    },
+    {
+      "name": "clock_gettime_nsec_np",
+      "weight_ns": 6000000,
+      "percent": 1.9867549668874172
+    },
+    {
+      "name": "tokio::io::poll_evented::PollEvented$LT$E$GT$::poll_read",
+      "weight_ns": 6000000,
+      "percent": 1.9867549668874172
+    },
+    {
+      "name": "_$LT$$RF$std..net..tcp..TcpStream$u20$as$u20$std..io..Read$GT$::read",
+      "weight_ns": 6000000,
+      "percent": 1.9867549668874172
+    },
+    {
+      "name": "__recvfrom",
+      "weight_ns": 6000000,
+      "percent": 1.9867549668874172
+    },
+    {
+      "name": "_$LT$$RF$mio..net..uds..stream..UnixStream$u20$as$u20$std..io..Read$GT$::read",
+      "weight_ns": 6000000,
+      "percent": 1.9867549668874172
+    },
+    {
+      "name": "_xzm_free_main",
+      "weight_ns": 5000000,
+      "percent": 1.6556291390728477
+    },
+    {
+      "name": "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::extract_damage",
+      "weight_ns": 5000000,
+      "percent": 1.6556291390728477
+    },
+    {
+      "name": "_realloc",
+      "weight_ns": 5000000,
+      "percent": 1.6556291390728477
+    },
+    {
+      "name": "lz4_flex::block::compress::compress_into_vec_with_dict",
+      "weight_ns": 5000000,
+      "percent": 1.6556291390728477
+    },
+    {
+      "name": "loom_protocol::codec::frame::finalize_frame_compression",
+      "weight_ns": 5000000,
+      "percent": 1.6556291390728477
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input",
+      "weight_ns": 5000000,
+      "percent": 1.6556291390728477
+    },
+    {
+      "name": "_xzm_xzone_malloc_tiny",
+      "weight_ns": 4000000,
+      "percent": 1.3245033112582782
+    },
+    {
+      "name": "xzm_malloc_zone_malloc_type_realloc",
+      "weight_ns": 4000000,
+      "percent": 1.3245033112582782
+    },
+    {
+      "name": "_malloc_zone_realloc",
+      "weight_ns": 4000000,
+      "percent": 1.3245033112582782
+    },
+    {
+      "name": "tokio::sync::mutex::Mutex$LT$T$GT$::lock::_$u7b$$u7b$closure$u7d$$u7d$",
+      "weight_ns": 4000000,
+      "percent": 1.3245033112582782
+    },
+    {
+      "name": "_$LT$tokio..sync..batch_semaphore..Acquire$u20$as$u20$core..future..future..Future$GT$::poll",
+      "weight_ns": 4000000,
+      "percent": 1.3245033112582782
+    },
+    {
+      "name": "loom_term::pane::cell::pack_color",
+      "weight_ns": 4000000,
+      "percent": 1.3245033112582782
+    },
+    {
+      "name": "_$LT$std..process..Child$u20$as$u20$portable_pty..Child$GT$::try_wait",
+      "weight_ns": 4000000,
+      "percent": 1.3245033112582782
+    },
+    {
+      "name": "loom_term::pty::Pty::try_wait",
+      "weight_ns": 4000000,
+      "percent": 1.3245033112582782
+    },
+    {
+      "name": "vte::Parser$LT$_$GT$::action_csi_dispatch",
+      "weight_ns": 3000000,
+      "percent": 0.9933774834437086
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::device_status",
+      "weight_ns": 3000000,
+      "percent": 0.9933774834437086
+    },
+    {
+      "name": "hashbrown::map::HashMap$LT$K$C$V$C$S$C$A$GT$::insert",
+      "weight_ns": 3000000,
+      "percent": 0.9933774834437086
+    },
+    {
+      "name": "tokio::runtime::time::_$LT$impl$u20$tokio..runtime..time..handle..Handle$GT$::process_at_time",
+      "weight_ns": 3000000,
+      "percent": 0.9933774834437086
+    },
+    {
+      "name": "std::time::Instant::elapsed",
+      "weight_ns": 3000000,
+      "percent": 0.9933774834437086
+    },
+    {
+      "name": "lz4_flex::block::compress::compress_internal",
+      "weight_ns": 3000000,
+      "percent": 0.9933774834437086
+    },
+    {
+      "name": "__wait4",
+      "weight_ns": 3000000,
+      "percent": 0.9933774834437086
+    },
+    {
+      "name": "std::process::Child::try_wait",
+      "weight_ns": 3000000,
+      "percent": 0.9933774834437086
+    },
+    {
+      "name": "loom_protocol::message::PackedCell::set_ch",
+      "weight_ns": 3000000,
+      "percent": 0.9933774834437086
+    },
+    {
+      "name": "loom_term::sixel::SixelParser::scan",
+      "weight_ns": 3000000,
+      "percent": 0.9933774834437086
+    },
+    {
+      "name": "loom_protocol::codec::state_machine::StateEncoder::flush_char_buf",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "core::hash::BuildHasher::hash_one",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "core::fmt::write",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "alloc::fmt::format::format_inner",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "loom_term::pane::cell::partial_damage_rows",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "_tlv_get_addr",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "_$LT$loom_protocol..message..PackedCell$u20$as$u20$core..default..Default$GT$::default",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "_xzm_xzone_malloc_freelist_outlined",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "loom_term::osc7_parser::Osc7Parser::scan",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "tokio::runtime::io::scheduled_io::ScheduledIo::wake",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "pow",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::queue::Steal$LT$T$GT$::steal_into",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "_$LT$alloc..vec..Vec$LT$T$C$A$GT$$u20$as$u20$alloc..vec..spec_extend..SpecExtend$LT$T$C$I$GT$$GT$::spec_extend",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "_$LT$alloc..string..String$u20$as$u20$core..clone..Clone$GT$::clone",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "_xzm_xzone_find_and_malloc_from_freelist_chunk",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "loom_term::pty::Pty::drain_output",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "bytes::bytes::shared_drop",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "pthread_mutex_unlock",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "alacritty_terminal::term::TermDamageState::reset",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_RNvCs5QKde7ScR4H_7___rustc11___rdl_alloc",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::damage",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "core::fmt::num::imp::_$LT$impl$u20$u64$GT$::_fmt_inner",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_$LT$alacritty_terminal..index..Column$u20$as$u20$core..fmt..Display$GT$::fmt",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "core::fmt::num::imp::_$LT$impl$u20$core..fmt..Display$u20$for$u20$u64$GT$::fmt",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_$LT$core..hash..sip..Hasher$LT$S$GT$$u20$as$u20$core..hash..Hasher$GT$::write",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::signal::Driver::process",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "core::fmt::num::imp::_$LT$impl$u20$u32$GT$::_fmt_inner",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_$LT$alacritty_terminal..index..Line$u20$as$u20$core..fmt..Display$GT$::fmt",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "core::fmt::num::imp::_$LT$impl$u20$core..fmt..Display$u20$for$u20$i32$GT$::fmt",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::pane::Pane::drain_notifications",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_xzm_chunk_list_pop",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::macros::support::thread_rng_n",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "core::ops::function::FnOnce::call_once",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::kitty_graphics::KittyGraphicsParser::scan",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "lz4_flex::block::compress::handle_last_literals",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "std::sys::pal::unix::time::Timespec::sub_timespec",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "mach_timebase_info",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "std::sync::mpmc::Sender$LT$T$GT$::send",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "waitpid",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::esc_scanner::scan_dcs",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::sync::notify::Notify::notify_with_strategy",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loomtty_server::daemon::server::Server::handle_message",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loomtty_server::daemon::damage::DamageAccumulator::merge_ranges",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "DYLD-STUB$$clock_gettime",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::partial_buf::PartialBuf::prepend_to",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::osc8_parser::Osc8Parser::scan",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::time::wheel::Wheel::next_expiration",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::esc_scanner::scan_osc",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_platform_memcmp",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "hashbrown::raw::RawTable$LT$T$C$A$GT$::remove_entry",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::time::wheel::Wheel::poll",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::dec_mode_parser::DecModeParser::scan",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::esc_scanner::scan_csi_dec",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "cthread_yield",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "swtch_pri",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "parking_lot::raw_mutex::RawMutex::lock_slow",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::task::core::TaskIdGuard::enter",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::task::state::State::transition_to_notified_by_val",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_xzm_xzone_malloc_from_empty_freelist_chunk",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::_$LT$impl$u20$tokio..runtime..scheduler..multi_thread..handle..Handle$GT$::schedule_local",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "core::str::converts::from_utf8",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::scheduler::defer::Defer::defer",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "0x18defa771",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::time::sleep::sleep_until",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::scheduler::Handle::current",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::try_recv",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "xzm_malloc_zone_malloc_type_malloc_main",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_$LT$tokio..runtime..task..core..TaskIdGuard$u20$as$u20$core..ops..drop..Drop$GT$::drop",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    }
+  ],
+  "leaf": [
+    {
+      "name": "kevent",
+      "weight_ns": 61000000,
+      "percent": 20.198675496688743
+    },
+    {
+      "name": "write",
+      "weight_ns": 13000000,
+      "percent": 4.304635761589404
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell",
+      "weight_ns": 12000000,
+      "percent": 3.9735099337748343
+    },
+    {
+      "name": "__psynch_cvwait",
+      "weight_ns": 12000000,
+      "percent": 3.9735099337748343
+    },
+    {
+      "name": "__sendto",
+      "weight_ns": 11000000,
+      "percent": 3.642384105960265
+    },
+    {
+      "name": "_platform_memmove",
+      "weight_ns": 10000000,
+      "percent": 3.3112582781456954
+    },
+    {
+      "name": "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::viewport_row_fingerprint",
+      "weight_ns": 9000000,
+      "percent": 2.980132450331126
+    },
+    {
+      "name": "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+      "weight_ns": 9000000,
+      "percent": 2.980132450331126
+    },
+    {
+      "name": "__ioctl",
+      "weight_ns": 8000000,
+      "percent": 2.6490066225165565
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+      "weight_ns": 8000000,
+      "percent": 2.6490066225165565
+    },
+    {
+      "name": "__psynch_cvsignal",
+      "weight_ns": 8000000,
+      "percent": 2.6490066225165565
+    },
+    {
+      "name": "mach_absolute_time",
+      "weight_ns": 7000000,
+      "percent": 2.3178807947019866
+    },
+    {
+      "name": "read",
+      "weight_ns": 7000000,
+      "percent": 2.3178807947019866
+    },
+    {
+      "name": "__recvfrom",
+      "weight_ns": 6000000,
+      "percent": 1.9867549668874172
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input",
+      "weight_ns": 5000000,
+      "percent": 1.6556291390728477
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks",
+      "weight_ns": 4000000,
+      "percent": 1.3245033112582782
+    },
+    {
+      "name": "loom_protocol::codec::state_machine::StateEncoder::push_cell",
+      "weight_ns": 4000000,
+      "percent": 1.3245033112582782
+    },
+    {
+      "name": "_xzm_xzone_malloc_tiny",
+      "weight_ns": 4000000,
+      "percent": 1.3245033112582782
+    },
+    {
+      "name": "loom_term::pane::cell::pack_color",
+      "weight_ns": 4000000,
+      "percent": 1.3245033112582782
+    },
+    {
+      "name": "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::write_cells_into_sm",
+      "weight_ns": 3000000,
+      "percent": 0.9933774834437086
+    },
+    {
+      "name": "loomtty_server::daemon::session::Session::process_pty_and_damage",
+      "weight_ns": 3000000,
+      "percent": 0.9933774834437086
+    },
+    {
+      "name": "__wait4",
+      "weight_ns": 3000000,
+      "percent": 0.9933774834437086
+    },
+    {
+      "name": "loom_protocol::message::PackedCell::set_ch",
+      "weight_ns": 3000000,
+      "percent": 0.9933774834437086
+    },
+    {
+      "name": "_$LT$tokio..sync..batch_semaphore..Acquire$u20$as$u20$core..future..future..Future$GT$::poll",
+      "weight_ns": 3000000,
+      "percent": 0.9933774834437086
+    },
+    {
+      "name": "loom_protocol::codec::state_machine::StateEncoder::flush_char_buf",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "xzm_malloc_zone_malloc_type_realloc",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "_$LT$core..panic..unwind_safe..AssertUnwindSafe$LT$F$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "_tlv_get_addr",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "_$LT$loom_protocol..message..PackedCell$u20$as$u20$core..default..Default$GT$::default",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "_xzm_free_main",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "pow",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::queue::Steal$LT$T$GT$::steal_into",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "lz4_flex::block::compress::compress_internal",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "loom_term::sixel::SixelParser::scan",
+      "weight_ns": 2000000,
+      "percent": 0.6622516556291391
+    },
+    {
+      "name": "pthread_mutex_unlock",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "alacritty_terminal::term::TermDamageState::reset",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_RNvCs5QKde7ScR4H_7___rustc11___rdl_alloc",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::damage",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "core::hash::BuildHasher::hash_one",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "core::fmt::num::imp::_$LT$impl$u20$u64$GT$::_fmt_inner",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_$LT$core..hash..sip..Hasher$LT$S$GT$$u20$as$u20$core..hash..Hasher$GT$::write",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "clock_gettime",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::time::_$LT$impl$u20$tokio..runtime..time..handle..Handle$GT$::process_at_time",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "clock_gettime_nsec_np",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::signal::Driver::process",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "core::fmt::num::imp::_$LT$impl$u20$u32$GT$::_fmt_inner",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::extract_damage",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::pane::Pane::drain_notifications",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::device_status",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_xzm_chunk_list_pop",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "hashbrown::map::HashMap$LT$K$C$V$C$S$C$A$GT$::insert",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::time::Driver::park_internal",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "core::ops::function::FnOnce::call_once",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::osc7_parser::Osc7Parser::scan",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::kitty_graphics::KittyGraphicsParser::scan",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::io::scheduled_io::ScheduledIo::wake",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::context::scoped::Scoped$LT$T$GT$::with",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "lz4_flex::block::compress::handle_last_literals",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loomtty_server::daemon::connection::handle_client::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "std::io::Write::write_all",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_$LT$portable_pty..unix..UnixMasterPty$u20$as$u20$portable_pty..MasterPty$GT$::get_termios",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "std::sys::pal::unix::time::Timespec::sub_timespec",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "mach_timebase_info",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "std::sync::mpmc::Sender$LT$T$GT$::send",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::io::driver::Driver::turn",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "waitpid",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::esc_scanner::scan_dcs",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::sync::notify::Notify::notify_with_strategy",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loomtty_server::daemon::server::Server::handle_message",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_realloc",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loomtty_server::daemon::damage::DamageAccumulator::merge_ranges",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_xzm_xzone_find_and_malloc_from_freelist_chunk",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "DYLD-STUB$$clock_gettime",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::partial_buf::PartialBuf::prepend_to",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::time::wheel::Wheel::next_expiration",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::esc_scanner::scan_osc",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_platform_memcmp",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::time::wheel::Wheel::poll",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loomtty_server::daemon::connection::handle_client::_$u7b$$u7b$closure$u7d$$u7d$",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "swtch_pri",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::task::core::TaskIdGuard::enter",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "std::sys::pal::unix::time::Timespec::now",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "loom_term::pty::Pty::drain_output",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::task::state::State::transition_to_notified_by_val",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_xzm_xzone_malloc_from_empty_freelist_chunk",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::_$LT$impl$u20$tokio..runtime..scheduler..multi_thread..handle..Handle$GT$::schedule_local",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "core::str::converts::from_utf8",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::scheduler::defer::Defer::defer",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "0x18defa771",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "tokio::runtime::scheduler::Handle::current",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::try_recv",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter_nested..SpecFromIterNested$LT$T$C$I$GT$$GT$::from_iter",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "filedescriptor::unix::_$LT$impl$u20$std..io..Read$u20$for$u20$filedescriptor..FileDescriptor$GT$::read",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "xzm_malloc_zone_malloc_type_malloc_main",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    },
+    {
+      "name": "_$LT$tokio..runtime..task..core..TaskIdGuard$u20$as$u20$core..ops..drop..Drop$GT$::drop",
+      "weight_ns": 1000000,
+      "percent": 0.33112582781456956
+    }
+  ],
+  "stacks": [
+    {
+      "weight_ns": 47000000,
+      "frames_leaf_first": [
+        "kevent",
+        "mio::poll::Poll::poll",
+        "tokio::runtime::io::driver::Driver::turn",
+        "tokio::runtime::time::Driver::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 13000000,
+      "frames_leaf_first": [
+        "write",
+        "filedescriptor::unix::_$LT$impl$u20$std..io..Write$u20$for$u20$filedescriptor..FileDescriptor$GT$::write",
+        "std::io::Write::write_all",
+        "loom_term::pty::Pty::write",
+        "loom_term::pane::Pane::write_to_pty",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 12000000,
+      "frames_leaf_first": [
+        "__psynch_cvwait",
+        "_pthread_cond_wait",
+        "parking_lot::condvar::Condvar::wait_until_internal",
+        "tokio::runtime::scheduler::multi_thread::park::Inner::park_condvar",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 11000000,
+      "frames_leaf_first": [
+        "loom_term::pane::cell::pack_cell",
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::viewport_row_fingerprint",
+        "_$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter_nested..SpecFromIterNested$LT$T$C$I$GT$$GT$::from_iter",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 11000000,
+      "frames_leaf_first": [
+        "__sendto",
+        "_$LT$$RF$std..net..tcp..TcpStream$u20$as$u20$std..io..Write$GT$::write",
+        "_$LT$$RF$mio..net..uds..stream..UnixStream$u20$as$u20$std..io..Write$GT$::write",
+        "tokio::io::poll_evented::PollEvented$LT$E$GT$::poll_write",
+        "tokio::io::util::buf_writer::BufWriter$LT$W$GT$::flush_buf",
+        "loomtty_server::daemon::connection::handle_client::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 9000000,
+      "frames_leaf_first": [
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::viewport_row_fingerprint",
+        "_$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter_nested..SpecFromIterNested$LT$T$C$I$GT$$GT$::from_iter",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 9000000,
+      "frames_leaf_first": [
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 8000000,
+      "frames_leaf_first": [
+        "__ioctl",
+        "ioctl",
+        "tcgetattr",
+        "nix::sys::termios::tcgetattr",
+        "_$LT$portable_pty..unix..UnixMasterPty$u20$as$u20$portable_pty..MasterPty$GT$::get_termios",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 8000000,
+      "frames_leaf_first": [
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 7000000,
+      "frames_leaf_first": [
+        "_platform_memmove",
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::viewport_row_fingerprint",
+        "_$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter_nested..SpecFromIterNested$LT$T$C$I$GT$$GT$::from_iter",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 7000000,
+      "frames_leaf_first": [
+        "read",
+        "filedescriptor::unix::_$LT$impl$u20$std..io..Read$u20$for$u20$filedescriptor..FileDescriptor$GT$::read",
+        "_$LT$portable_pty..unix..PtyFd$u20$as$u20$std..io..Read$GT$::read",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 6000000,
+      "frames_leaf_first": [
+        "kevent",
+        "mio::waker::Waker::wake",
+        "<deduplicated_symbol>",
+        "tokio::runtime::time::_$LT$impl$u20$tokio..runtime..time..handle..Handle$GT$::reregister",
+        "tokio::runtime::Timer::poll_elapsed",
+        "_$LT$tokio..time..sleep..Sleep$u20$as$u20$core..future..future..Future$GT$::poll",
+        "_$LT$core..future..poll_fn..PollFn$LT$F$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 6000000,
+      "frames_leaf_first": [
+        "__recvfrom",
+        "_$LT$$RF$std..net..tcp..TcpStream$u20$as$u20$std..io..Read$GT$::read",
+        "_$LT$$RF$mio..net..uds..stream..UnixStream$u20$as$u20$std..io..Read$GT$::read",
+        "tokio::io::poll_evented::PollEvented$LT$E$GT$::poll_read",
+        "_$LT$tokio..io..util..buf_reader..BufReader$LT$R$GT$$u20$as$u20$tokio..io..async_read..AsyncRead$GT$::poll_read",
+        "_$LT$core..panic..unwind_safe..AssertUnwindSafe$LT$F$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "loomtty_server::daemon::connection::handle_client::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 5000000,
+      "frames_leaf_first": [
+        "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input",
+        "loom_term::pane::Pane::process_chunks",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 4000000,
+      "frames_leaf_first": [
+        "loom_term::pane::Pane::process_chunks",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 4000000,
+      "frames_leaf_first": [
+        "loom_protocol::codec::state_machine::StateEncoder::push_cell",
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::write_cells_into_sm",
+        "<deduplicated_symbol>",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 4000000,
+      "frames_leaf_first": [
+        "kevent",
+        "mio::waker::Waker::wake",
+        "<deduplicated_symbol>",
+        "tokio::runtime::scheduler::multi_thread::worker::_$LT$impl$u20$tokio..runtime..scheduler..multi_thread..handle..Handle$GT$::schedule_task",
+        "tokio::runtime::task::waker::wake_by_val",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 4000000,
+      "frames_leaf_first": [
+        "loom_term::pane::cell::pack_color",
+        "loom_term::pane::cell::pack_cell",
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::viewport_row_fingerprint",
+        "_$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter_nested..SpecFromIterNested$LT$T$C$I$GT$$GT$::from_iter",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 4000000,
+      "frames_leaf_first": [
+        "__psynch_cvsignal",
+        "pthread_cond_signal",
+        "parking_lot::condvar::Condvar::notify_one_slow",
+        "tokio::runtime::context::scoped::Scoped$LT$T$GT$::with",
+        "tokio::runtime::scheduler::multi_thread::worker::_$LT$impl$u20$tokio..runtime..scheduler..multi_thread..handle..Handle$GT$::schedule_task",
+        "tokio::runtime::task::waker::wake_by_val",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 4000000,
+      "frames_leaf_first": [
+        "__psynch_cvsignal",
+        "pthread_cond_signal",
+        "parking_lot::condvar::Condvar::notify_one_slow",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 3000000,
+      "frames_leaf_first": [
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::write_cells_into_sm",
+        "<deduplicated_symbol>",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 3000000,
+      "frames_leaf_first": [
+        "kevent",
+        "mio::waker::Waker::wake",
+        "<deduplicated_symbol>",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 3000000,
+      "frames_leaf_first": [
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 3000000,
+      "frames_leaf_first": [
+        "__wait4",
+        "std::process::Child::try_wait",
+        "_$LT$std..process..Child$u20$as$u20$portable_pty..Child$GT$::try_wait",
+        "loom_term::pty::Pty::try_wait",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 3000000,
+      "frames_leaf_first": [
+        "loom_protocol::message::PackedCell::set_ch",
+        "loom_term::pane::cell::pack_cell",
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::viewport_row_fingerprint",
+        "_$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter_nested..SpecFromIterNested$LT$T$C$I$GT$$GT$::from_iter",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 2000000,
+      "frames_leaf_first": [
+        "loom_protocol::codec::state_machine::StateEncoder::flush_char_buf",
+        "loom_protocol::codec::state_machine::StateEncoder::push_cell",
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::write_cells_into_sm",
+        "<deduplicated_symbol>",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 2000000,
+      "frames_leaf_first": [
+        "xzm_malloc_zone_malloc_type_realloc",
+        "_malloc_zone_realloc",
+        "_realloc",
+        "alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow",
+        "alloc::raw_vec::RawVec$LT$T$C$A$GT$::grow_one",
+        "loom_protocol::codec::state_machine::StateEncoder::push_cell",
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::write_cells_into_sm",
+        "<deduplicated_symbol>",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 2000000,
+      "frames_leaf_first": [
+        "mach_absolute_time",
+        "clock_gettime_nsec_np",
+        "clock_gettime",
+        "std::sys::pal::unix::time::Timespec::now",
+        "std::time::Instant::elapsed",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 2000000,
+      "frames_leaf_first": [
+        "_$LT$core..panic..unwind_safe..AssertUnwindSafe$LT$F$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "loomtty_server::daemon::connection::handle_client::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 2000000,
+      "frames_leaf_first": [
+        "pow",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 2000000,
+      "frames_leaf_first": [
+        "tokio::runtime::scheduler::multi_thread::queue::Steal$LT$T$GT$::steal_into",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 2000000,
+      "frames_leaf_first": [
+        "mach_absolute_time",
+        "clock_gettime_nsec_np",
+        "clock_gettime",
+        "std::sys::pal::unix::time::Timespec::now",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 2000000,
+      "frames_leaf_first": [
+        "_$LT$tokio..sync..batch_semaphore..Acquire$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::sync::mutex::Mutex$LT$T$GT$::lock::_$u7b$$u7b$closure$u7d$$u7d$",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 2000000,
+      "frames_leaf_first": [
+        "lz4_flex::block::compress::compress_internal",
+        "lz4_flex::block::compress::compress_into_vec_with_dict",
+        "loom_protocol::codec::frame::finalize_frame_compression",
+        "<deduplicated_symbol>",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 2000000,
+      "frames_leaf_first": [
+        "loom_term::sixel::SixelParser::scan",
+        "loom_term::pane::Pane::process_chunks",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "mach_absolute_time",
+        "_xzm_free_main",
+        "bytes::bytes::shared_drop",
+        "loomtty_server::daemon::connection::handle_client::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "pthread_mutex_unlock",
+        "parking_lot::condvar::Condvar::notify_one_slow",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "alacritty_terminal::term::TermDamageState::reset",
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::extract_damage",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_RNvCs5QKde7ScR4H_7___rustc11___rdl_alloc",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "alacritty_terminal::term::Term$LT$T$GT$::damage",
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::extract_damage",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "core::hash::BuildHasher::hash_one",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "core::fmt::num::imp::_$LT$impl$u20$u64$GT$::_fmt_inner",
+        "core::fmt::num::imp::_$LT$impl$u20$core..fmt..Display$u20$for$u20$u64$GT$::fmt",
+        "core::fmt::write",
+        "_$LT$alacritty_terminal..index..Column$u20$as$u20$core..fmt..Display$GT$::fmt",
+        "core::fmt::write",
+        "alloc::fmt::format::format_inner",
+        "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::device_status",
+        "vte::Parser$LT$_$GT$::action_csi_dispatch",
+        "loom_term::pane::Pane::process_chunks",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_$LT$core..hash..sip..Hasher$LT$S$GT$$u20$as$u20$core..hash..Hasher$GT$::write",
+        "core::hash::BuildHasher::hash_one",
+        "hashbrown::map::HashMap$LT$K$C$V$C$S$C$A$GT$::insert",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "clock_gettime",
+        "std::sys::pal::unix::time::Timespec::now",
+        "tokio::runtime::time::Driver::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_xzm_xzone_malloc_tiny",
+        "alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow",
+        "alloc::raw_vec::RawVec$LT$T$C$A$GT$::grow_one",
+        "loom_term::pane::cell::partial_damage_rows",
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::extract_damage",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "tokio::runtime::time::_$LT$impl$u20$tokio..runtime..time..handle..Handle$GT$::process_at_time",
+        "tokio::runtime::time::Driver::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "clock_gettime_nsec_np",
+        "clock_gettime",
+        "std::sys::pal::unix::time::Timespec::now",
+        "parking_lot::condvar::Condvar::notify_one_slow",
+        "tokio::runtime::scheduler::multi_thread::worker::_$LT$impl$u20$tokio..runtime..scheduler..multi_thread..handle..Handle$GT$::schedule_task",
+        "tokio::runtime::task::waker::wake_by_val",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "tokio::runtime::signal::Driver::process",
+        "tokio::runtime::time::Driver::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "core::fmt::num::imp::_$LT$impl$u20$u32$GT$::_fmt_inner",
+        "core::fmt::num::imp::_$LT$impl$u20$core..fmt..Display$u20$for$u20$i32$GT$::fmt",
+        "core::fmt::write",
+        "_$LT$alacritty_terminal..index..Line$u20$as$u20$core..fmt..Display$GT$::fmt",
+        "core::fmt::write",
+        "alloc::fmt::format::format_inner",
+        "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::device_status",
+        "vte::Parser$LT$_$GT$::action_csi_dispatch",
+        "loom_term::pane::Pane::process_chunks",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::extract_damage",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "loom_term::pane::Pane::drain_notifications",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::device_status",
+        "vte::Parser$LT$_$GT$::action_csi_dispatch",
+        "loom_term::pane::Pane::process_chunks",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow",
+        "alloc::raw_vec::RawVec$LT$T$C$A$GT$::grow_one",
+        "loom_term::pane::cell::partial_damage_rows",
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::extract_damage",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_tlv_get_addr",
+        "_$LT$tokio..sync..batch_semaphore..Acquire$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::sync::mutex::Mutex$LT$T$GT$::lock::_$u7b$$u7b$closure$u7d$$u7d$",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_$LT$loom_protocol..message..PackedCell$u20$as$u20$core..default..Default$GT$::default",
+        "loom_term::pane::cell::pack_cell",
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::viewport_row_fingerprint",
+        "_$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter_nested..SpecFromIterNested$LT$T$C$I$GT$$GT$::from_iter",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_xzm_chunk_list_pop",
+        "_xzm_xzone_malloc_freelist_outlined",
+        "xzm_malloc_zone_malloc_type_realloc",
+        "_malloc_zone_realloc",
+        "_realloc",
+        "lz4_flex::block::compress::compress_into_vec_with_dict",
+        "loom_protocol::codec::frame::finalize_frame_compression",
+        "<deduplicated_symbol>",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_xzm_free_main",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "hashbrown::map::HashMap$LT$K$C$V$C$S$C$A$GT$::insert",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "tokio::runtime::time::Driver::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "core::ops::function::FnOnce::call_once",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::macros::support::thread_rng_n",
+        "_$LT$core..future..poll_fn..PollFn$LT$F$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "loom_term::osc7_parser::Osc7Parser::scan",
+        "loom_term::pane::Pane::process_chunks",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "loom_term::kitty_graphics::KittyGraphicsParser::scan",
+        "loom_term::pane::Pane::process_chunks",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "tokio::runtime::io::scheduled_io::ScheduledIo::wake",
+        "tokio::runtime::io::driver::Driver::turn",
+        "tokio::runtime::time::Driver::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "mach_absolute_time",
+        "_xzm_free_main",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "tokio::runtime::context::scoped::Scoped$LT$T$GT$::with",
+        "tokio::runtime::scheduler::multi_thread::worker::_$LT$impl$u20$tokio..runtime..scheduler..multi_thread..handle..Handle$GT$::schedule_task",
+        "tokio::runtime::task::waker::wake_by_val",
+        "tokio::runtime::io::scheduled_io::ScheduledIo::wake",
+        "tokio::runtime::io::driver::Driver::turn",
+        "tokio::runtime::time::Driver::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_tlv_get_addr",
+        "tokio::runtime::scheduler::multi_thread::worker::_$LT$impl$u20$tokio..runtime..scheduler..multi_thread..handle..Handle$GT$::schedule_task",
+        "tokio::runtime::task::waker::wake_by_val",
+        "tokio::runtime::time::_$LT$impl$u20$tokio..runtime..time..handle..Handle$GT$::process_at_time",
+        "tokio::runtime::time::Driver::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "lz4_flex::block::compress::handle_last_literals",
+        "lz4_flex::block::compress::compress_internal",
+        "lz4_flex::block::compress::compress_into_vec_with_dict",
+        "loom_protocol::codec::frame::finalize_frame_compression",
+        "<deduplicated_symbol>",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "loom_term::pane::cell::pack_cell",
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::write_cells_into_sm",
+        "<deduplicated_symbol>",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "loomtty_server::daemon::connection::handle_client::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "std::io::Write::write_all",
+        "loom_term::pty::Pty::write",
+        "loom_term::pane::Pane::write_to_pty",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_$LT$portable_pty..unix..UnixMasterPty$u20$as$u20$portable_pty..MasterPty$GT$::get_termios",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "std::sys::pal::unix::time::Timespec::sub_timespec",
+        "std::time::Instant::elapsed",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "mach_timebase_info",
+        "clock_gettime_nsec_np",
+        "clock_gettime",
+        "std::sys::pal::unix::time::Timespec::now",
+        "tokio::runtime::time::Driver::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "std::sync::mpmc::Sender$LT$T$GT$::send",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_xzm_xzone_malloc_tiny",
+        "<deduplicated_symbol>",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_xzm_xzone_malloc_tiny",
+        "_$LT$alloc..string..String$u20$as$u20$core..clone..Clone$GT$::clone",
+        "_$LT$alloc..vec..Vec$LT$T$C$A$GT$$u20$as$u20$alloc..vec..spec_extend..SpecExtend$LT$T$C$I$GT$$GT$::spec_extend",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "kevent",
+        "mio::waker::Waker::wake",
+        "<deduplicated_symbol>",
+        "tokio::runtime::context::scoped::Scoped$LT$T$GT$::with",
+        "tokio::runtime::scheduler::multi_thread::worker::_$LT$impl$u20$tokio..runtime..scheduler..multi_thread..handle..Handle$GT$::schedule_task",
+        "tokio::runtime::task::waker::wake_by_val",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_$LT$loom_protocol..message..PackedCell$u20$as$u20$core..default..Default$GT$::default",
+        "loom_term::pane::cell::pack_cell",
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::write_cells_into_sm",
+        "<deduplicated_symbol>",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "tokio::runtime::io::driver::Driver::turn",
+        "tokio::runtime::time::Driver::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "waitpid",
+        "_$LT$std..process..Child$u20$as$u20$portable_pty..Child$GT$::try_wait",
+        "loom_term::pty::Pty::try_wait",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "loom_term::esc_scanner::scan_dcs",
+        "loom_term::sixel::SixelParser::scan",
+        "loom_term::pane::Pane::process_chunks",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "tokio::sync::notify::Notify::notify_with_strategy",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "loomtty_server::daemon::server::Server::handle_message",
+        "loomtty_server::daemon::server::Server::handle_message",
+        "_$LT$core..panic..unwind_safe..AssertUnwindSafe$LT$F$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "loomtty_server::daemon::connection::handle_client::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_xzm_xzone_malloc_tiny",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_realloc",
+        "alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow",
+        "alloc::raw_vec::RawVec$LT$T$C$A$GT$::grow_one",
+        "loom_protocol::codec::state_machine::StateEncoder::push_cell",
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::write_cells_into_sm",
+        "<deduplicated_symbol>",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "loomtty_server::daemon::damage::DamageAccumulator::merge_ranges",
+        "loomtty_server::daemon::damage::DamageAccumulator::merge_ranges",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_xzm_xzone_find_and_malloc_from_freelist_chunk",
+        "xzm_malloc_zone_malloc_type_realloc",
+        "_malloc_zone_realloc",
+        "_realloc",
+        "alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow",
+        "alloc::raw_vec::RawVec$LT$T$C$A$GT$::grow_one",
+        "loom_protocol::codec::state_machine::StateEncoder::push_cell",
+        "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::write_cells_into_sm",
+        "<deduplicated_symbol>",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_platform_memmove",
+        "hashbrown::map::HashMap$LT$K$C$V$C$S$C$A$GT$::insert",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "DYLD-STUB$$clock_gettime",
+        "std::sys::pal::unix::time::Timespec::now",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "loom_term::partial_buf::PartialBuf::prepend_to",
+        "loom_term::osc8_parser::Osc8Parser::scan",
+        "loom_term::pane::Pane::process_chunks",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "tokio::runtime::time::wheel::Wheel::next_expiration",
+        "tokio::runtime::time::Driver::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "loom_term::esc_scanner::scan_osc",
+        "loom_term::osc7_parser::Osc7Parser::scan",
+        "loom_term::pane::Pane::process_chunks",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_platform_memmove",
+        "_$LT$tokio..io..util..buf_reader..BufReader$LT$R$GT$$u20$as$u20$tokio..io..async_read..AsyncRead$GT$::poll_read",
+        "_$LT$core..panic..unwind_safe..AssertUnwindSafe$LT$F$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "loomtty_server::daemon::connection::handle_client::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_platform_memcmp",
+        "hashbrown::raw::RawTable$LT$T$C$A$GT$::remove_entry",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "tokio::runtime::time::wheel::Wheel::poll",
+        "tokio::runtime::time::_$LT$impl$u20$tokio..runtime..time..handle..Handle$GT$::process_at_time",
+        "tokio::runtime::time::Driver::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_platform_memmove",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "loom_term::esc_scanner::next_intro",
+        "loom_term::esc_scanner::scan_csi_dec",
+        "loom_term::dec_mode_parser::DecModeParser::scan",
+        "loom_term::pane::Pane::process_chunks",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "loomtty_server::daemon::connection::handle_client::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "swtch_pri",
+        "cthread_yield",
+        "parking_lot::raw_mutex::RawMutex::lock_slow",
+        "tokio::runtime::time::Driver::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "tokio::runtime::task::core::TaskIdGuard::enter",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "std::sys::pal::unix::time::Timespec::now",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "loom_term::pty::Pty::drain_output",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "tokio::runtime::task::state::State::transition_to_notified_by_val",
+        "tokio::runtime::task::waker::wake_by_val",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_xzm_xzone_malloc_from_empty_freelist_chunk",
+        "_xzm_xzone_find_and_malloc_from_freelist_chunk",
+        "_xzm_xzone_malloc_freelist_outlined",
+        "lz4_flex::block::compress::compress_into_vec_with_dict",
+        "loom_protocol::codec::frame::finalize_frame_compression",
+        "<deduplicated_symbol>",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "tokio::runtime::scheduler::multi_thread::worker::_$LT$impl$u20$tokio..runtime..scheduler..multi_thread..handle..Handle$GT$::schedule_local",
+        "tokio::runtime::context::scoped::Scoped$LT$T$GT$::with",
+        "tokio::runtime::scheduler::multi_thread::worker::_$LT$impl$u20$tokio..runtime..scheduler..multi_thread..handle..Handle$GT$::schedule_task",
+        "tokio::runtime::task::waker::wake_by_val",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "core::str::converts::from_utf8",
+        "loom_term::pane::Pane::process_chunks",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "tokio::runtime::scheduler::defer::Defer::defer",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "0x18defa771",
+        "clock_gettime",
+        "std::sys::pal::unix::time::Timespec::now",
+        "tokio::runtime::time::Driver::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_xzm_free_main",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_$LT$tokio..sync..batch_semaphore..Acquire$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::sync::mutex::Mutex$LT$T$GT$::lock::_$u7b$$u7b$closure$u7d$$u7d$",
+        "_$LT$core..panic..unwind_safe..AssertUnwindSafe$LT$F$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "loomtty_server::daemon::connection::handle_client::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "tokio::runtime::scheduler::Handle::current",
+        "tokio::time::sleep::sleep_until",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "mach_absolute_time",
+        "_xzm_free_main",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "std::sync::mpmc::array::Channel$LT$T$GT$::try_recv",
+        "loom_term::pty::Pty::drain_output",
+        "loom_term::pane::Pane::process_pty_output",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter_nested..SpecFromIterNested$LT$T$C$I$GT$$GT$::from_iter",
+        "loomtty_server::daemon::session::Session::process_pty_and_damage",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "filedescriptor::unix::_$LT$impl$u20$std..io..Read$u20$for$u20$filedescriptor..FileDescriptor$GT$::read",
+        "_$LT$portable_pty..unix..PtyFd$u20$as$u20$std..io..Read$GT$::read",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "xzm_malloc_zone_malloc_type_malloc_main",
+        "_$LT$alloc..string..String$u20$as$u20$core..clone..Clone$GT$::clone",
+        "_$LT$alloc..vec..Vec$LT$T$C$A$GT$$u20$as$u20$alloc..vec..spec_extend..SpecExtend$LT$T$C$I$GT$$GT$::spec_extend",
+        "loomtty_server::daemon::tick::run_tick_loop::_$u7b$$u7b$closure$u7d$$u7d$",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    },
+    {
+      "weight_ns": 1000000,
+      "frames_leaf_first": [
+        "_$LT$tokio..runtime..task..core..TaskIdGuard$u20$as$u20$core..ops..drop..Drop$GT$::drop",
+        "<deduplicated_symbol>",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run_task",
+        "tokio::runtime::scheduler::multi_thread::worker::Context::run",
+        "std::thread::local::LocalKey$LT$T$GT$::with",
+        "tokio::runtime::context::runtime::enter_runtime",
+        "tokio::runtime::scheduler::multi_thread::worker::run",
+        "_$LT$tokio..runtime..blocking..task..BlockingTask$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll",
+        "tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll",
+        "tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll",
+        "tokio::runtime::blocking::pool::Inner::run",
+        "std::sys::backtrace::__rust_begin_short_backtrace",
+        "core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$",
+        "std::sys::thread::unix::Thread::new::thread_start",
+        "_pthread_start",
+        "thread_start"
+      ]
+    }
+  ]
+}

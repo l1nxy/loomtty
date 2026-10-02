@@ -1,0 +1,10 @@
+{
+  "client_pid": 34884,
+  "server_pid": 7961,
+  "server_unchanged": true,
+  "backup": "/Users/linxy/Library/Application Support/loomtty/install-backups/20261002-010336",
+  "matching_macho_sections": {
+    "loomtty": 45,
+    "loomtty-server": 14
+  }
+}

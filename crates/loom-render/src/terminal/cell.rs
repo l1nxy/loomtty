@@ -6,7 +6,7 @@ use loom_config::theme::ThemeConfig;
 use loom_protocol::message::{
     FLAG_BOLD, FLAG_DIM, FLAG_HIDDEN, FLAG_INVERSE, FLAG_ITALIC, FLAG_STRIKEOUT, FLAG_UNDERLINE,
     FLAG_UNDERLINE_CURLY, FLAG_UNDERLINE_DASHED, FLAG_UNDERLINE_DOTTED, FLAG_UNDERLINE_DOUBLE,
-    FLAG_UNDERLINE_STYLE_MASK, FLAG_WIDE_CHAR, FLAG_WIDE_CHAR_SPACER, PackedCell,
+    FLAG_UNDERLINE_STYLE_MASK, FLAG_WIDE_CHAR, FLAG_WIDE_CHAR_SPACER, PackedCell, PackedColor,
 };
 
 use crate::glyph_cache::{FontStyle, GlyphCache};
@@ -16,7 +16,7 @@ use super::color::{ColorTable, ansi_color_to_rgba};
 // ─── Common types ────────────────────────────────────────────────────
 
 /// Underline decoration style, abstracted from source-specific flag formats.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UnderlineStyle {
     None,
     Single,
@@ -28,6 +28,7 @@ pub(super) enum UnderlineStyle {
 
 /// Cell properties extracted from either alacritty `Term` or protocol `PackedCell`.
 /// Colors are pre-processed: bold-brighten, dim, and inverse already applied.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct CellProps {
     pub(super) ch: char,
     pub(super) fg: [f32; 4],
@@ -37,6 +38,38 @@ pub(super) struct CellProps {
     pub(super) is_hidden: bool,
     pub(super) underline: UnderlineStyle,
     pub(super) is_strikeout: bool,
+}
+
+/// Row-local attribute run cache. Borrowing the palette prevents reuse across
+/// a theme change; flags include width/spacer/hidden and every decoration bit.
+pub(super) struct CellPropsCache<'a> {
+    colors: &'a ColorTable,
+    key: Option<([PackedColor; 2], [u8; 2])>,
+    props: Option<CellProps>,
+}
+
+impl<'a> CellPropsCache<'a> {
+    pub(super) fn new(colors: &'a ColorTable) -> Self {
+        Self {
+            colors,
+            key: None,
+            props: None,
+        }
+    }
+
+    #[inline]
+    pub(super) fn get(&mut self, cell: &PackedCell) -> Option<CellProps> {
+        let key = ([cell.fg, cell.bg], cell.flags);
+        if self.key != Some(key) {
+            self.key = Some(key);
+            self.props = CellProps::from_packed_cell_fast(cell, self.colors);
+            return self.props;
+        }
+        self.props.map(|mut props| {
+            props.ch = cell.ch();
+            props
+        })
+    }
 }
 
 /// Pre-computed cell layout values from the glyph atlas.
@@ -197,6 +230,48 @@ impl UnderlineStyle {
             FLAG_UNDERLINE_DOTTED => Self::Dotted,
             FLAG_UNDERLINE_DASHED => Self::Dashed,
             _ => Self::Single,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attribute_runs_match_uncached_decoding_for_all_flags() {
+        let colors = ColorTable::new(&LoomConfig::default());
+        let mut cache = CellPropsCache::new(&colors);
+        let palette = [
+            PackedColor::named(16),
+            PackedColor::indexed(123),
+            PackedColor::rgb(17, 89, 201),
+        ];
+        for fg in palette {
+            for bg in palette {
+                for flags in 0..=u16::MAX {
+                    let mut cell = PackedCell::default();
+                    cell.fg = fg;
+                    cell.bg = bg;
+                    cell.flags = flags.to_le_bytes();
+                    for ch in ['a', '中', '😀', '\0'] {
+                        cell.set_ch(ch);
+                        assert_eq!(
+                            cache.get(&cell),
+                            CellProps::from_packed_cell_fast(&cell, &colors)
+                        );
+                    }
+                }
+            }
+        }
+        // A background-only change must end a run, even with unchanged flags.
+        let mut cell = PackedCell::with_ch('x');
+        for bg in palette {
+            cell.bg = bg;
+            assert_eq!(
+                cache.get(&cell),
+                CellProps::from_packed_cell_fast(&cell, &colors)
+            );
         }
     }
 }

@@ -12,7 +12,7 @@ use crate::glyph_cache::GlyphInstance;
 use crate::rect::Rect;
 use crate::shaper::TextShaper;
 
-use super::cell::{CellMetrics, CellProps};
+use super::cell::{CellMetrics, CellProps, CellPropsCache, UnderlineStyle};
 use super::color::ColorTable;
 use super::cursor::{cursor_shape_to_protocol, make_cursor_rects};
 use super::decoration::{flush_bg_strip, render_cell, render_cell_decorations};
@@ -502,6 +502,7 @@ fn rebuild_row_render_data(
     let mut strip_start: usize = 0;
     let mut grapheme_idx = 0usize;
     let mut char_idx = 0usize;
+    let mut props_cache = CellPropsCache::new(grid.colors);
 
     for col in 0..grid.cols as usize {
         let idx = row * grid.cols as usize + col;
@@ -509,7 +510,7 @@ fn rebuild_row_render_data(
             break;
         }
 
-        let Some(props) = CellProps::from_packed_cell_fast(&grid.cells[idx], grid.colors) else {
+        let Some(props) = props_cache.get(&grid.cells[idx]) else {
             continue;
         };
 
@@ -528,7 +529,9 @@ fn rebuild_row_render_data(
             flush_bg_strip(bg_rects, sc, strip_start, col, row, grid.metrics);
         }
 
-        render_cell_decorations(row, col, &props, grid.metrics, bg_rects);
+        if props.underline != UnderlineStyle::None || props.is_strikeout {
+            render_cell_decorations(row, col, &props, grid.metrics, bg_rects);
+        }
 
         if props.is_hidden || props.ch == ' ' || props.ch == '\0' || props.ch.is_control() {
             continue;

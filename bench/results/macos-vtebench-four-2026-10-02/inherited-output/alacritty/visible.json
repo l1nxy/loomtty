@@ -1,0 +1,10 @@
+{
+  "app": "alacritty",
+  "processes": {
+    "alacritty": 88255
+  },
+  "method": "User stated benchmark windows automatically become foreground and requested no further per-window confirmation",
+  "window": "loom benchmark [r0-alacritty]",
+  "confirmed_at": "2026-10-02T08:05:00.261465+00:00",
+  "visibility_limit": "Foreground assumed from user-observed launch behavior; not independently monitored"
+}

@@ -1,0 +1,10 @@
+{
+  "app": "ghostty",
+  "processes": {
+    "ghostty": 89340
+  },
+  "method": "Automatic foreground on launch, per user instruction; no per-window confirmation",
+  "window": "loom benchmark [r0-ghostty]",
+  "confirmed_at": "2026-10-02T08:07:42.617960+00:00",
+  "visibility_limit": "Foreground assumed from user-observed launch behavior; not independently monitored"
+}

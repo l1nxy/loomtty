@@ -197,7 +197,10 @@ impl DrawFrameProfiler {
         const FRAME_LOG_THRESHOLD: Duration = Duration::from_millis(2);
 
         let total = self.started_at.elapsed();
-        if total < FRAME_LOG_THRESHOLD
+        // Trace logging records every frame for submission-count diagnostics;
+        // debug logging keeps the existing slow-frame-only behavior.
+        if !log::log_enabled!(log::Level::Trace)
+            && total < FRAME_LOG_THRESHOLD
             && self.timings.sync_wait < FRAME_LOG_THRESHOLD
             && self.timings.present < FRAME_LOG_THRESHOLD
         {

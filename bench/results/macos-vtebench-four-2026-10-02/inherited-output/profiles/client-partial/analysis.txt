@@ -1,0 +1,143 @@
+Samples 1495 active ms 1495.0
+THREADS
+ 46.56%    696.0ms Main Thread (0x137db3) (loomtty, pid: 91407)
+ 16.25%    243.0ms loomtty (0x13817a) (loomtty, pid: 91407)
+ 11.57%    173.0ms loomtty (0x137e14) (loomtty, pid: 91407)
+ 11.30%    169.0ms loomtty (0x137ff8) (loomtty, pid: 91407)
+  6.76%    101.0ms loomtty (0x13877d) (loomtty, pid: 91407)
+  3.14%     47.0ms server-io (0x137de4) (loomtty, pid: 91407)
+  2.54%     38.0ms tokio-rt-worker (0x137de7) (loomtty, pid: 91407)
+  1.00%     15.0ms tokio-rt-worker (0x137dee) (loomtty, pid: 91407)
+  0.87%     13.0ms tokio-rt-worker (0x137de6) (loomtty, pid: 91407)
+INCLUSIVE
+ 54.11%    809.0ms std::sys::backtrace::__rust_begin_short_backtrace
+ 46.56%    696.0ms -[NSApplication(NSEventRouting) _nextEventMatchingEventMask:untilDate:inMode:dequeue:]
+ 46.56%    696.0ms winit::platform_impl::macos::event_loop::EventLoop$LT$T$GT$::run
+ 46.56%    696.0ms std::rt::lang_start::_$u7b$$u7b$closure$u7d$$u7d$
+ 46.56%    696.0ms std::rt::lang_start_internal
+ 46.56%    696.0ms ReceiveNextEventCommon
+ 46.56%    696.0ms -[NSApplication(NSEventRouting) nextEventMatchingMask:untilDate:inMode:dequeue:]
+ 46.56%    696.0ms _DPSBlockUntilNextEventMatchingListInMode
+ 46.56%    696.0ms loomtty::run
+ 46.56%    696.0ms loomtty::run_gui
+ 46.56%    696.0ms main
+ 46.56%    696.0ms RunCurrentEventLoopInMode
+ 46.56%    696.0ms -[NSApplication run]
+ 46.56%    696.0ms _CFRunLoopRunSpecificWithOptions
+ 46.56%    696.0ms start
+ 46.56%    696.0ms _DPSNextEvent
+ 46.56%    696.0ms loomtty::main
+ 46.56%    696.0ms _BlockUntilNextEventMatchingListInMode
+ 46.49%    695.0ms __CFRunLoopRun
+ 45.75%    684.0ms start_wqthread
+ 44.15%    660.0ms __CFRunLoopDoObservers
+ 43.55%    651.0ms __CFRUNLOOP_IS_CALLING_OUT_TO_AN_OBSERVER_CALLBACK_FUNCTION__
+ 41.94%    627.0ms winit::platform_impl::macos::event_handler::EventHandler::handle_event
+ 41.87%    626.0ms winit::platform_impl::macos::event_loop::map_user_event::_$u7b$$u7b$closure$u7d$$u7d$
+ 40.80%    610.0ms winit::platform_impl::macos::app_state::ApplicationDelegate::cleared
+ 40.80%    610.0ms winit::platform_impl::macos::observer::control_flow_end_handler
+ 35.25%    527.0ms _pthread_wqthread
+ 34.92%    522.0ms _dispatch_workloop_worker_thread
+ 34.11%    510.0ms _dispatch_root_queue_drain_deferred_wlh
+ 34.05%    509.0ms _dispatch_lane_invoke
+ 33.78%    505.0ms _dispatch_lane_serial_drain
+ 28.36%    424.0ms _dispatch_client_callout
+ 26.69%    399.0ms winit::event_loop::EventLoop$LT$T$GT$::run_app::_$u7b$$u7b$closure$u7d$$u7d$
+ 26.69%    399.0ms _$LT$loomtty..macos..MacApplication$u20$as$u20$winit..application..ApplicationHandler$GT$::window_event
+ 26.62%    398.0ms loomtty::app::render::_$LT$impl$u20$loomtty..app..App$GT$::render
+ 26.62%    398.0ms loomtty::app::event::_$LT$impl$u20$winit..application..ApplicationHandler$u20$for$u20$loomtty..app..App$GT$::window_event
+ 19.20%    287.0ms loom_gpu::blade::Renderer::draw_frame
+ 19.20%    287.0ms loom_gpu::Renderer::draw_frame
+ 18.93%    283.0ms _dispatch_source_invoke
+ 18.93%    283.0ms _dispatch_continuation_pop
+ 18.93%    283.0ms _dispatch_source_latch_and_call
+ 12.91%    193.0ms iokit_user_client_trap
+ 12.78%    191.0ms -[_MTLCommandQueue _submitAvailableCommandBuffers]
+ 12.71%    190.0ms _$LT$loomtty..macos..MacApplication$u20$as$u20$winit..application..ApplicationHandler$GT$::about_to_wait
+ 12.37%    185.0ms -[IOGPUMetalCommandQueue _submitCommandBuffers:count:]
+ 12.37%    185.0ms -[IOGPUMetalCommandQueue submitCommandBuffers:count:]
+ 12.37%    185.0ms loomtty::macos::MacApplication::update_native_state
+ 12.31%    184.0ms IOGPUCommandQueueSubmitCommandBuffers
+ 10.64%    159.0ms qos_class_main
+  7.56%    113.0ms std::sys::thread::unix::Thread::new::thread_start
+  7.56%    113.0ms core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$
+  7.56%    113.0ms tokio::runtime::context::runtime::enter_runtime
+  7.56%    113.0ms _pthread_start
+  7.56%    113.0ms thread_start
+  6.22%     93.0ms blade_graphics::hal::command::_$LT$impl$u20$blade_graphics..hal..CommandEncoder$GT$::render
+  5.42%     81.0ms mach_msg2_internal
+  5.42%     81.0ms -[AGXG18GFamilyCommandBuffer renderCommandEncoderWithDescriptor:]
+  5.35%     80.0ms mach_msg2_trap
+  5.22%     78.0ms -[AGXG18GFamilyRenderContext initWithCommandBuffer:descriptor:subEncoderIndex:framebuffer:]
+  5.15%     77.0ms loomtty::macos::accessibility::Bridge::update
+  5.15%     77.0ms _dispatch_call_block_and_release
+  5.02%     75.0ms _dispatch_mach_invoke
+  4.95%     74.0ms _dispatch_client_callout4
+  4.95%     74.0ms _dispatch_mach_msg_invoke
+  4.95%     74.0ms __IOGPUNotificationQueueSetDispatchQueue_block_invoke
+LEAF
+ 12.91%    193.0ms iokit_user_client_trap
+ 10.64%    159.0ms start_wqthread
+  5.35%     80.0ms mach_msg2_trap
+  4.82%     72.0ms kevent_id
+  4.28%     64.0ms _platform_memmove
+  1.27%     19.0ms objc_msgSend
+  1.20%     18.0ms _kernelrpc_mach_port_mod_refs_trap
+  1.14%     17.0ms _$LT$core..hash..sip..Hasher$LT$S$GT$$u20$as$u20$core..hash..Hasher$GT$::write
+  1.07%     16.0ms _xzm_xzone_malloc_tiny
+  0.94%     14.0ms _xzm_free_main
+  0.94%     14.0ms kevent
+  0.87%     13.0ms loomtty::macos::accessibility::text::Text::capture
+  0.80%     12.0ms loom_render::terminal::view::rebuild_row_render_data
+  0.80%     12.0ms __recvfrom
+  0.74%     11.0ms _platform_memset
+  0.74%     11.0ms __kdebug_trace64
+  0.67%     10.0ms <deduplicated_symbol>
+  0.67%     10.0ms mk_timer_arm
+  0.60%      9.0ms __sendto
+  0.54%      8.0ms _platform_memcmp
+  0.47%      7.0ms core::hash::BuildHasher::hash_one
+  0.47%      7.0ms __psynch_cvwait
+  0.40%      6.0ms semaphore_signal_trap
+  0.40%      6.0ms loom_render::terminal::shaping::precompute_row_shaping_into
+  0.40%      6.0ms -[AGXG18GFamilyRenderContext initWithCommandBuffer:descriptor:subEncoderIndex:framebuffer:]
+  0.40%      6.0ms _dispatch_lane_serial_drain
+  0.40%      6.0ms mach_absolute_time
+  0.40%      6.0ms AGX::ContextCommon<AGX::HAL400::Encoders, AGX::HAL400::Classes, AGX::HAL400::ObjClasses, AGX::HAL400::DataBufferAllocator>::newCommand(unsigned long, bool)
+  0.33%      5.0ms AGX::RenderContext<AGX::HAL400::Encoders, AGX::HAL400::Classes, AGX::HAL400::ObjClasses, AGX::HAL400::CommandEncoding>::encodeAndEmitRenderState(AGX::HAL400::VertexProgramVariant const*, AGX::HAL400::FragmentProgramVariant const*, AGX::HAL400::FixedLayoutUserArgumentTable*, AGX::HAL400::FixedLayoutUserArgumentTable*, AGX::RenderDirtyBits<AGX::HAL400::Classes>&, bool)
+  0.33%      5.0ms AGX::RenderContext<AGX::HAL400::Encoders, AGX::HAL400::Classes, AGX::HAL400::ObjClasses, AGX::HAL400::CommandEncoding>::setRenderPipelineStateCommon(AGX::HAL400::RenderPipeline const*)
+  0.33%      5.0ms loomtty::macos::MacApplication::update_native_state
+  0.33%      5.0ms loomtty::macos::menu::MenuBar::update
+  0.33%      5.0ms swtch_pri
+  0.27%      4.0ms loomtty::app::render::_$LT$impl$u20$loomtty..app..App$GT$::render
+  0.27%      4.0ms bool objc::DenseMapBase<objc::DenseMap<DisguisedPtr<objc_object>, objc::SmallDenseMap<void const*, objc::ObjcAssociation, 1u, objc::DenseMapValueInfo<objc::ObjcAssociation>, objc::DenseMapInfo<void const*>, objc::detail::DenseMapPair<void const*, objc::ObjcAssociation>>, objc::DenseMapValueInfo<objc::SmallDenseMap<void const*, objc::ObjcAssociation, 1u, objc::DenseMapValueInfo<objc::ObjcAssociation>, objc::DenseMapInfo<void const*>, objc::detail::DenseMapPair<void const*, objc::ObjcAssociation>>>, objc::DenseMapInfo<DisguisedPtr<objc_object>>, objc::detail::DenseMapPair<DisguisedPtr<objc_object>, objc::SmallDenseMap<void const*, objc::ObjcAssociation, 1u, objc::DenseMapValueInfo<objc::ObjcAssociation>, objc::DenseMapInfo<void const*>, objc::detail::DenseMapPair<void const*, objc::ObjcAssociation>>>>, DisguisedPtr<objc_object>, objc::SmallDenseMap<void const*, objc::ObjcAssociation, 1u, objc::DenseMapValueInfo<objc::ObjcAssociation>, objc::DenseMapInfo<void const*>, objc::detail::DenseMapPair<void const*, objc::ObjcAssociation>>, objc::DenseMapValueInfo<objc::SmallDenseMap<void const*, objc::ObjcAssociation, 1u, objc::DenseMapValueInfo<objc::ObjcAssociation>, objc::DenseMapInfo<void const*>, objc::detail::DenseMapPair<void const*, objc::ObjcAssociation>>>, objc::DenseMapInfo<DisguisedPtr<objc_object>>, objc::detail::DenseMapPair<DisguisedPtr<objc_object>, objc::SmallDenseMap<void const*, objc::ObjcAssociation, 1u, objc::DenseMapValueInfo<objc::ObjcAssociation>, objc::DenseMapInfo<void const*>, objc::detail::DenseMapPair<void const*, objc::ObjcAssociation>>>>::LookupBucketFor<DisguisedPtr<objc_object>>(DisguisedPtr<objc_object> const&, objc::detail::DenseMapPair<DisguisedPtr<objc_object>, objc::SmallDenseMap<void const*, objc::ObjcAssociation, 1u, objc::DenseMapValueInfo<objc::ObjcAssociation>, objc::DenseMapInfo<void const*>, objc::detail::DenseMapPair<void const*, objc::ObjcAssociation>>> const*&) const
+  0.27%      4.0ms tokio::runtime::time::wheel::Wheel::next_expiration
+  0.27%      4.0ms -[__NSArrayM countByEnumeratingWithState:objects:count:]
+  0.27%      4.0ms objc_release
+  0.27%      4.0ms loomtty::macos::accessibility::element::publish
+  0.27%      4.0ms loomtty::app::event::_$LT$impl$u20$winit..application..ApplicationHandler$u20$for$u20$loomtty..app..App$GT$::new_events
+  0.27%      4.0ms crossbeam_channel::channel::Receiver$LT$T$GT$::recv
+  0.27%      4.0ms loomtty::macos::pane_tabs::PaneTabs::update
+  0.27%      4.0ms loomtty::macos::accessibility::Bridge::update
+  0.27%      4.0ms AGX::Framebuffer<AGX::HAL400::Encoders, AGX::HAL400::Classes, AGX::HAL400::ObjClasses>::Framebuffer(AGXG18GFamilyDevice*, AGX::HAL400::CommandBuffer*, AGX::HAL400::FramebufferDriverConfig const&, unsigned int, unsigned int, bool)
+  0.27%      4.0ms _FPMTLMetricsGPUTimeTrackerWrapupFrameForPresentedDrawable(FPMTLMetricsGPUTimeTracker*, unsigned long, unsigned long long, void (FPMTLMetricsGPUTimeTrackerFrameTimingData*) block_pointer)
+  0.27%      4.0ms _CFRuntimeCreateInstance
+  0.20%      3.0ms FPMTLMetricsGPUTimeTrackerCommandBuffer* std::__1::vector<FPMTLMetricsGPUTimeTrackerCommandBuffer, std::__1::allocator<FPMTLMetricsGPUTimeTrackerCommandBuffer>>::__emplace_back_slow_path<FPMTLMetricsGPUTimeTrackerCommandBuffer const&>(FPMTLMetricsGPUTimeTrackerCommandBuffer const&)
+  0.20%      3.0ms AGX::ClipRectContextGen3<AGX::HAL400::Encoders, AGX::HAL400::Classes, AGX::HAL400::ObjClasses>::updateClipRegions(unsigned long long&)
+  0.20%      3.0ms __psynch_cvsignal
+  0.20%      3.0ms +[NSSet setWithArray:range:copyItems:]
+  0.20%      3.0ms objc_msgSendSuper2
+  0.20%      3.0ms NSControlDelegatesToCell
+  0.20%      3.0ms IOGPUResourceListAddResource
+  0.20%      3.0ms objc_retain
+  0.20%      3.0ms loomtty::app::render::_$LT$impl$u20$loomtty..app..App$GT$::ui_scene_hash
+  0.20%      3.0ms _dispatch_workloop_worker_thread
+  0.20%      3.0ms loom_render::glyph_cache::GlyphCache::ensure_glyph_id_with_class
+  0.20%      3.0ms tokio::runtime::time::Driver::park_internal
+  0.20%      3.0ms mach_continuous_time
+  0.20%      3.0ms hashbrown::raw::RawTableInner::fallible_with_capacity
+  0.20%      3.0ms x_pointer_hash
+  0.20%      3.0ms loomtty::app::render::_$LT$impl$u20$loomtty..app..App$GT$::build_tile
+  0.20%      3.0ms _pthread_wqthread
+  0.20%      3.0ms crossbeam_channel::flavors::list::Channel$LT$T$GT$::try_recv
+  0.20%      3.0ms VectorMap<AGX::EndOfTileProgramKey, AGX::ProgramVariantEntry<AGX::HAL400::EndOfTileProgramVariant>, 4u>::operator[](AGX::EndOfTileProgramKey const&)

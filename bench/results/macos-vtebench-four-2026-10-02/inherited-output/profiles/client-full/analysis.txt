@@ -1,0 +1,143 @@
+Samples 2037 active ms 2037.0
+THREADS
+ 61.61%   1255.0ms Main Thread (0x137db3) (loomtty, pid: 91407)
+ 11.73%    239.0ms loomtty (0x137e14) (loomtty, pid: 91407)
+  7.61%    155.0ms loomtty (0x137ff8) (loomtty, pid: 91407)
+  7.07%    144.0ms loomtty (0x13817a) (loomtty, pid: 91407)
+  5.99%    122.0ms loomtty (0x138179) (loomtty, pid: 91407)
+  2.60%     53.0ms server-io (0x137de4) (loomtty, pid: 91407)
+  1.47%     30.0ms tokio-rt-worker (0x137dee) (loomtty, pid: 91407)
+  1.23%     25.0ms tokio-rt-worker (0x137de7) (loomtty, pid: 91407)
+  0.69%     14.0ms tokio-rt-worker (0x137de6) (loomtty, pid: 91407)
+INCLUSIVE
+ 67.60%   1377.0ms std::sys::backtrace::__rust_begin_short_backtrace
+ 61.61%   1255.0ms std::rt::lang_start::_$u7b$$u7b$closure$u7d$$u7d$
+ 61.61%   1255.0ms -[NSApplication(NSEventRouting) nextEventMatchingMask:untilDate:inMode:dequeue:]
+ 61.61%   1255.0ms winit::platform_impl::macos::event_loop::EventLoop$LT$T$GT$::run
+ 61.61%   1255.0ms _DPSBlockUntilNextEventMatchingListInMode
+ 61.61%   1255.0ms std::rt::lang_start_internal
+ 61.61%   1255.0ms start
+ 61.61%   1255.0ms loomtty::run
+ 61.61%   1255.0ms _CFRunLoopRunSpecificWithOptions
+ 61.61%   1255.0ms RunCurrentEventLoopInMode
+ 61.61%   1255.0ms loomtty::run_gui
+ 61.61%   1255.0ms -[NSApplication(NSEventRouting) _nextEventMatchingEventMask:untilDate:inMode:dequeue:]
+ 61.61%   1255.0ms loomtty::main
+ 61.61%   1255.0ms main
+ 61.61%   1255.0ms __CFRunLoopRun
+ 61.61%   1255.0ms _BlockUntilNextEventMatchingListInMode
+ 61.61%   1255.0ms _DPSNextEvent
+ 61.61%   1255.0ms -[NSApplication run]
+ 61.61%   1255.0ms ReceiveNextEventCommon
+ 59.50%   1212.0ms __CFRunLoopDoObservers
+ 59.01%   1202.0ms __CFRUNLOOP_IS_CALLING_OUT_TO_AN_OBSERVER_CALLBACK_FUNCTION__
+ 57.09%   1163.0ms winit::platform_impl::macos::event_handler::EventHandler::handle_event
+ 57.04%   1162.0ms winit::platform_impl::macos::event_loop::map_user_event::_$u7b$$u7b$closure$u7d$$u7d$
+ 48.55%    989.0ms winit::platform_impl::macos::observer::control_flow_end_handler
+ 48.50%    988.0ms winit::platform_impl::macos::app_state::ApplicationDelegate::cleared
+ 37.56%    765.0ms winit::event_loop::EventLoop$LT$T$GT$::run_app::_$u7b$$u7b$closure$u7d$$u7d$
+ 37.56%    765.0ms _$LT$loomtty..macos..MacApplication$u20$as$u20$winit..application..ApplicationHandler$GT$::window_event
+ 37.41%    762.0ms loomtty::app::render::_$LT$impl$u20$loomtty..app..App$GT$::render
+ 37.41%    762.0ms loomtty::app::event::_$LT$impl$u20$winit..application..ApplicationHandler$u20$for$u20$loomtty..app..App$GT$::window_event
+ 32.35%    659.0ms start_wqthread
+ 24.84%    506.0ms _pthread_wqthread
+ 24.59%    501.0ms _dispatch_workloop_worker_thread
+ 24.01%    489.0ms _dispatch_root_queue_drain_deferred_wlh
+ 24.01%    489.0ms _dispatch_lane_invoke
+ 23.61%    481.0ms _dispatch_lane_serial_drain
+ 19.69%    401.0ms _dispatch_client_callout
+ 15.86%    323.0ms loom_render::terminal::view::update_view_from_grid
+ 14.63%    298.0ms loom_gpu::Renderer::draw_frame
+ 14.63%    298.0ms loom_gpu::blade::Renderer::draw_frame
+ 13.60%    277.0ms _dispatch_source_invoke
+ 13.45%    274.0ms _dispatch_source_latch_and_call
+ 13.45%    274.0ms _dispatch_continuation_pop
+ 10.31%    210.0ms winit::platform_impl::macos::observer::control_flow_begin_handler
+  9.92%    202.0ms winit::platform_impl::macos::app_state::ApplicationDelegate::wakeup
+  9.77%    199.0ms _$LT$loomtty..macos..MacApplication$u20$as$u20$winit..application..ApplicationHandler$GT$::new_events
+  9.57%    195.0ms _$LT$loomtty..macos..MacApplication$u20$as$u20$winit..application..ApplicationHandler$GT$::about_to_wait
+  9.47%    193.0ms loomtty::app::event::_$LT$impl$u20$winit..application..ApplicationHandler$u20$for$u20$loomtty..app..App$GT$::new_events
+  9.47%    193.0ms loom_render::terminal::view::rebuild_row_render_data
+  9.18%    187.0ms loomtty::macos::MacApplication::update_native_state
+  9.13%    186.0ms -[_MTLCommandQueue _submitAvailableCommandBuffers]
+  8.98%    183.0ms loomtty::app::sync::_$LT$impl$u20$loomtty..app..App$GT$::process_server_events
+  8.89%    181.0ms iokit_user_client_trap
+  8.79%    179.0ms -[IOGPUMetalCommandQueue submitCommandBuffers:count:]
+  8.74%    178.0ms -[IOGPUMetalCommandQueue _submitCommandBuffers:count:]
+  8.59%    175.0ms IOGPUCommandQueueSubmitCommandBuffers
+  7.85%    160.0ms loom_app::grid::sync::_$LT$impl$u20$loom_app..grid..ClientPaneGrid$GT$::apply_delta_borrowed
+  7.51%    153.0ms qos_class_main
+  5.99%    122.0ms thread_start
+  5.99%    122.0ms core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$
+  5.99%    122.0ms tokio::runtime::context::runtime::enter_runtime
+  5.99%    122.0ms std::sys::thread::unix::Thread::new::thread_start
+  5.99%    122.0ms _pthread_start
+  4.76%     97.0ms loom_render::terminal::shaping::precompute_row_shaping_into
+  4.42%     90.0ms mach_msg2_internal
+  4.42%     90.0ms mach_msg2_trap
+LEAF
+  8.89%    181.0ms iokit_user_client_trap
+  7.51%    153.0ms start_wqthread
+  7.22%    147.0ms loom_render::terminal::view::rebuild_row_render_data
+  4.42%     90.0ms mach_msg2_trap
+  3.78%     77.0ms loom_render::terminal::shaping::precompute_row_shaping_into
+  3.49%     71.0ms loom_app::grid::sync::_$LT$impl$u20$loom_app..grid..ClientPaneGrid$GT$::apply_delta_borrowed
+  2.65%     54.0ms kevent_id
+  2.55%     52.0ms _$LT$core..hash..sip..Hasher$LT$S$GT$$u20$as$u20$core..hash..Hasher$GT$::write
+  2.06%     42.0ms loom_render::terminal::instances::RowInstances::get
+  2.01%     41.0ms _platform_memmove
+  1.82%     37.0ms hashbrown::raw::RawTable$LT$T$C$A$GT$::remove_entry
+  1.57%     32.0ms _xzm_xzone_malloc_tiny
+  1.13%     23.0ms loom_render::glyph_cache::GlyphCache::ensure_glyph_id_with_class
+  0.98%     20.0ms loom_protocol::codec::state_machine::decode_sm_cells
+  0.93%     19.0ms objc_msgSend
+  0.74%     15.0ms loom_render::shaper::TextShaper::shape_char_with_fallback
+  0.74%     15.0ms _$LT$twox_hash..xxhash64..Hasher$u20$as$u20$core..hash..Hasher$GT$::write
+  0.74%     15.0ms loom_protocol::message::PackedCell::ch
+  0.69%     14.0ms mach_absolute_time
+  0.69%     14.0ms mk_timer_arm
+  0.69%     14.0ms _platform_memset
+  0.64%     13.0ms __sendto
+  0.64%     13.0ms loomtty::macos::accessibility::text::Text::capture
+  0.64%     13.0ms <deduplicated_symbol>
+  0.54%     11.0ms AGX::RenderContext<AGX::HAL400::Encoders, AGX::HAL400::Classes, AGX::HAL400::ObjClasses, AGX::HAL400::CommandEncoding>::encodeAndEmitRenderState(AGX::HAL400::VertexProgramVariant const*, AGX::HAL400::FragmentProgramVariant const*, AGX::HAL400::FixedLayoutUserArgumentTable*, AGX::HAL400::FixedLayoutUserArgumentTable*, AGX::RenderDirtyBits<AGX::HAL400::Classes>&, bool)
+  0.54%     11.0ms _xzm_free_main
+  0.49%     10.0ms __kdebug_trace64
+  0.44%      9.0ms loomtty::macos::MacApplication::update_native_state
+  0.44%      9.0ms _kernelrpc_mach_port_mod_refs_trap
+  0.44%      9.0ms _$LT$std..collections..hash..map..HashMap$LT$K$C$V$C$S$C$A$GT$$u20$as$u20$core..cmp..PartialEq$GT$::eq
+  0.44%      9.0ms -[AGXG18GFamilyRenderContext initWithCommandBuffer:descriptor:subEncoderIndex:framebuffer:]
+  0.39%      8.0ms crossbeam_channel::channel::Receiver$LT$T$GT$::recv
+  0.39%      8.0ms __psynch_cvwait
+  0.39%      8.0ms loom_render::glyph_cache::GlyphCache::ensure_glyph_id
+  0.39%      8.0ms __recvfrom
+  0.39%      8.0ms loom_render::terminal::cell::CellProps::from_packed_cell_fast
+  0.34%      7.0ms loom_config::theme::ThemeConfig::parse_color
+  0.29%      6.0ms kevent
+  0.29%      6.0ms loomtty::macos::accessibility::Bridge::update
+  0.29%      6.0ms semaphore_wait_trap
+  0.29%      6.0ms __psynch_cvsignal
+  0.25%      5.0ms objc_release
+  0.25%      5.0ms objc_retain
+  0.25%      5.0ms _dispatch_lane_invoke
+  0.25%      5.0ms semaphore_signal_trap
+  0.25%      5.0ms swtch_pri
+  0.25%      5.0ms bool objc::DenseMapBase<objc::DenseMap<DisguisedPtr<objc_object>, objc::SmallDenseMap<void const*, objc::ObjcAssociation, 1u, objc::DenseMapValueInfo<objc::ObjcAssociation>, objc::DenseMapInfo<void const*>, objc::detail::DenseMapPair<void const*, objc::ObjcAssociation>>, objc::DenseMapValueInfo<objc::SmallDenseMap<void const*, objc::ObjcAssociation, 1u, objc::DenseMapValueInfo<objc::ObjcAssociation>, objc::DenseMapInfo<void const*>, objc::detail::DenseMapPair<void const*, objc::ObjcAssociation>>>, objc::DenseMapInfo<DisguisedPtr<objc_object>>, objc::detail::DenseMapPair<DisguisedPtr<objc_object>, objc::SmallDenseMap<void const*, objc::ObjcAssociation, 1u, objc::DenseMapValueInfo<objc::ObjcAssociation>, objc::DenseMapInfo<void const*>, objc::detail::DenseMapPair<void const*, objc::ObjcAssociation>>>>, DisguisedPtr<objc_object>, objc::SmallDenseMap<void const*, objc::ObjcAssociation, 1u, objc::DenseMapValueInfo<objc::ObjcAssociation>, objc::DenseMapInfo<void const*>, objc::detail::DenseMapPair<void const*, objc::ObjcAssociation>>, objc::DenseMapValueInfo<objc::SmallDenseMap<void const*, objc::ObjcAssociation, 1u, objc::DenseMapValueInfo<objc::ObjcAssociation>, objc::DenseMapInfo<void const*>, objc::detail::DenseMapPair<void const*, objc::ObjcAssociation>>>, objc::DenseMapInfo<DisguisedPtr<objc_object>>, objc::detail::DenseMapPair<DisguisedPtr<objc_object>, objc::SmallDenseMap<void const*, objc::ObjcAssociation, 1u, objc::DenseMapValueInfo<objc::ObjcAssociation>, objc::DenseMapInfo<void const*>, objc::detail::DenseMapPair<void const*, objc::ObjcAssociation>>>>::LookupBucketFor<DisguisedPtr<objc_object>>(DisguisedPtr<objc_object> const&, objc::detail::DenseMapPair<DisguisedPtr<objc_object>, objc::SmallDenseMap<void const*, objc::ObjcAssociation, 1u, objc::DenseMapValueInfo<objc::ObjcAssociation>, objc::DenseMapInfo<void const*>, objc::detail::DenseMapPair<void const*, objc::ObjcAssociation>>> const*&) const
+  0.25%      5.0ms AGX::RenderContext<AGX::HAL400::Encoders, AGX::HAL400::Classes, AGX::HAL400::ObjClasses, AGX::HAL400::CommandEncoding>::endRenderPassCommon(bool, bool, bool, bool)
+  0.25%      5.0ms core::hash::BuildHasher::hash_one
+  0.25%      5.0ms loom_render::terminal::glyph::color_glyph_cell_span
+  0.25%      5.0ms objc_opt_isKindOfClass
+  0.20%      4.0ms objc_msgSendSuper2
+  0.20%      4.0ms loomtty::macos::menu::MenuBar::update
+  0.20%      4.0ms kdebug_is_enabled
+  0.20%      4.0ms loomtty::app::event::_$LT$impl$u20$winit..application..ApplicationHandler$u20$for$u20$loomtty..app..App$GT$::new_events
+  0.20%      4.0ms AGX::Framebuffer<AGX::HAL400::Encoders, AGX::HAL400::Classes, AGX::HAL400::ObjClasses>::Framebuffer(AGXG18GFamilyDevice*, AGX::HAL400::CommandBuffer*, AGX::HAL400::FramebufferDriverConfig const&, unsigned int, unsigned int, bool)
+  0.20%      4.0ms AGX::RenderContext<AGX::HAL400::Encoders, AGX::HAL400::Classes, AGX::HAL400::ObjClasses, AGX::HAL400::CommandEncoding>::setRenderPipelineStateCommon(AGX::HAL400::RenderPipeline const*)
+  0.20%      4.0ms alloc::raw_vec::RawVecInner$LT$A$GT$::finish_grow
+  0.20%      4.0ms -[_MTLDeviceFeatureQueries familySupportsMTL4LateBoundRenderTargets]
+  0.20%      4.0ms loom_app::app::input_helpers::_$LT$impl$u20$loom_app..app..AppModel$GT$::pane_tab_entries
+  0.20%      4.0ms xzm_malloc_zone_malloc_type_malloc_zone
+  0.20%      4.0ms _kernelrpc_mach_port_insert_member_trap
+  0.20%      4.0ms _kernelrpc_mach_port_extract_member_trap
+  0.20%      4.0ms _pthread_wqthread
+  0.20%      4.0ms core::str::converts::from_utf8

@@ -1,0 +1,9 @@
+{
+  "pid": 89343,
+  "ppid": 89342,
+  "ready_ns": 70825287011833,
+  "columns": 100,
+  "rows": 30,
+  "term": "xterm-ghostty",
+  "term_program": "ghostty"
+}

@@ -1,0 +1,16 @@
+{
+  "before": {
+    "identity": 1579947180717,
+    "cpu_seconds": 0.003744458333333333,
+    "rss_mib": 10.515625,
+    "footprint_mib": 2.9067535400390625,
+    "wakeups": 0
+  },
+  "after": {
+    "identity": 1579947180717,
+    "cpu_seconds": 1.0939891249999998,
+    "rss_mib": 45.65625,
+    "footprint_mib": 36.87559509277344,
+    "wakeups": 329
+  }
+}

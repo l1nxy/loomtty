@@ -1,0 +1,6 @@
+{
+  "chip": "Apple M6",
+  "macos": "27.0",
+  "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+  "desktop": "locked; no GUI processes used by this diagnostic"
+}

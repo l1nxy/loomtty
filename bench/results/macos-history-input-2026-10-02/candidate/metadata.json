@@ -1,0 +1,27 @@
+{
+  "binaries": {
+    "before": {
+      "path": "/private/tmp/loom-history-before/loomtty-server",
+      "sha256": "e70f23856e71ed6c0ed764d91564d1aaf18f65ebd892cc02d180297ae9914188"
+    },
+    "after": {
+      "path": "/private/tmp/loom-history-streaming-after/loomtty-server",
+      "sha256": "02c2fd09790607b18800a780821fae2553be7328ca47bbd53177a6f4941e6abd"
+    },
+    "client": {
+      "path": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/release/examples/history_input_latency",
+      "sha256": "7c1782d2ba1e7dcb1133d16d231f59af290d92f2cc1358f28b91146cc36c3758"
+    }
+  },
+  "rounds": 3,
+  "samples_per_phase": 1000,
+  "input_interval_ms": 2,
+  "resize_interval_ms": 16,
+  "history": 10000,
+  "grid": "100 columns; 29/30 rows",
+  "scope": "input socket write through daemon to PTY worker and Unix datagram reply; no renderer",
+  "phase_order": [
+    "idle",
+    "resize"
+  ]
+}

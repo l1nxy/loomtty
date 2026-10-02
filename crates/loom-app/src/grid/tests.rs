@@ -58,6 +58,9 @@ fn delta_evicts_overwritten_graphemes_without_erasing_other_cells() {
     grid.grapheme_map.insert(0, "s\u{301}".into());
     grid.grapheme_map.insert(base, "e\u{301}".into());
     grid.grapheme_map.insert(base + 1, "a\u{302}".into());
+    grid.hyperlink_cell_map.insert(0, 10);
+    grid.hyperlink_cell_map.insert(1, 11);
+    grid.hyperlink_cell_map.insert(2, 12);
     grid.apply_delta(&CellDelta {
         pane_id: 1,
         generation: 4,
@@ -75,6 +78,9 @@ fn delta_evicts_overwritten_graphemes_without_erasing_other_cells() {
     assert!(!grid.grapheme_map.contains_key(&base));
     assert_eq!(grid.grapheme_map[&0], "s\u{301}");
     assert_eq!(grid.grapheme_map[&(base + 1)], "a\u{302}");
+    assert!(!grid.hyperlink_cell_map.contains_key(&0));
+    assert_eq!(grid.hyperlink_cell_map[&1], 11);
+    assert_eq!(grid.hyperlink_cell_map[&2], 12);
 
     // Exercise the production, borrowed wire decoder too.
     let mut encoder = loom_protocol::codec::StateEncoder::new();
@@ -103,6 +109,8 @@ fn delta_evicts_overwritten_graphemes_without_erasing_other_cells() {
     ));
     assert!(!grid.grapheme_map.contains_key(&(base + 1)));
     assert_eq!(grid.grapheme_map[&0], "s\u{301}");
+    assert!(!grid.hyperlink_cell_map.contains_key(&1));
+    assert_eq!(grid.hyperlink_cell_map[&2], 12);
 }
 
 #[test]

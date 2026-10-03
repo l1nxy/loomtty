@@ -1,0 +1,65 @@
+{
+  "passed": true,
+  "samples": [
+    {
+      "mode": "sleep",
+      "child_process_time_seconds": 2.1000000000000185e-05,
+      "benchmark_cpu_seconds": 0.00012145833333333453,
+      "difference_seconds": 0.00010045833333333434,
+      "tolerance_seconds": 0.005,
+      "passed": true,
+      "hardware_counters": {
+        "instructions": 101018,
+        "cycles": 161578
+      }
+    },
+    {
+      "mode": "busy",
+      "child_process_time_seconds": 1.991494,
+      "benchmark_cpu_seconds": 1.9915861666666663,
+      "difference_seconds": 9.216666666622686e-05,
+      "tolerance_seconds": 0.019914940000000003,
+      "passed": true,
+      "hardware_counters": {
+        "instructions": 57896909756,
+        "cycles": 8746942547
+      }
+    },
+    {
+      "mode": "busy",
+      "child_process_time_seconds": 1.9900959999999999,
+      "benchmark_cpu_seconds": 1.9901577500000003,
+      "difference_seconds": 6.175000000041564e-05,
+      "tolerance_seconds": 0.01990096,
+      "passed": true,
+      "hardware_counters": {
+        "instructions": 57471590624,
+        "cycles": 8806822770
+      }
+    },
+    {
+      "mode": "busy",
+      "child_process_time_seconds": 1.9904859999999998,
+      "benchmark_cpu_seconds": 1.990537916666666,
+      "difference_seconds": 5.191666666615191e-05,
+      "tolerance_seconds": 0.019904859999999996,
+      "passed": true,
+      "hardware_counters": {
+        "instructions": 58461032448,
+        "cycles": 8752050140
+      }
+    },
+    {
+      "mode": "sleep",
+      "child_process_time_seconds": 2.200000000041058e-05,
+      "benchmark_cpu_seconds": 0.0001138333333337016,
+      "difference_seconds": 9.183333333329102e-05,
+      "tolerance_seconds": 0.005,
+      "passed": true,
+      "hardware_counters": {
+        "instructions": 95556,
+        "cycles": 167815
+      }
+    }
+  ]
+}

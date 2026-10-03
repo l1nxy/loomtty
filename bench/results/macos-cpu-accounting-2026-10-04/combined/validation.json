@@ -1,0 +1,377 @@
+{
+  "complete_launches": 6,
+  "foreground_acknowledgements": 18,
+  "unique_client_pids": [
+    6967,
+    7509,
+    7967,
+    8625,
+    9172,
+    9794
+  ],
+  "versions_match": true,
+  "continuous_visibility_monitoring": false,
+  "results_sha256": "d7c0789367df2ff58a70ce00e808a4b10dcbdf0b23aa85a3ee89eda0c29e5782",
+  "cpu_usage_acceptance": false,
+  "pairs": [
+    {
+      "round": 0,
+      "client_full_instructions_percent": -18.60097055979536,
+      "footprint_delta_mib": -12.734352111816406
+    },
+    {
+      "round": 1,
+      "client_full_instructions_percent": -17.40452187368965,
+      "footprint_delta_mib": -11.062454223632812
+    },
+    {
+      "round": 2,
+      "client_full_instructions_percent": -18.43102113235531,
+      "footprint_delta_mib": -13.328125
+    }
+  ],
+  "summary": {
+    "before": {
+      "footprint_mib": 130.45477294921875,
+      "full_cpu_percent": 11.660011027182762,
+      "full_client_instructions": 4081277031
+    },
+    "after": {
+      "footprint_mib": 118.07979583740234,
+      "full_cpu_percent": 13.549465501276291,
+      "full_client_instructions": 3329638253
+    }
+  },
+  "rows": [
+    {
+      "round": 0,
+      "variant": "before",
+      "footprint_mib": 130.81414794921875,
+      "tui_full": {
+        "cpu_percent": 11.465179145597057,
+        "components": {
+          "server": {
+            "cpu_seconds": 0.7215481666666667,
+            "end_rss_mib": 14.21875,
+            "end_footprint_mib": 5.28179931640625,
+            "hardware_counters": {
+              "instructions": 2230299884,
+              "cycles": 979144125
+            }
+          },
+          "client": {
+            "cpu_seconds": 1.6071475416666665,
+            "end_rss_mib": 110.296875,
+            "end_footprint_mib": 85.7042007446289,
+            "hardware_counters": {
+              "instructions": 4081277031,
+              "cycles": 2666829067
+            }
+          }
+        },
+        "p95_ms": 0.580917,
+        "p99_ms": 0.748
+      },
+      "tui_partial": {
+        "cpu_percent": 7.618139699508685,
+        "components": {
+          "server": {
+            "cpu_seconds": 0.3337728333333332,
+            "end_rss_mib": 14.25,
+            "end_footprint_mib": 5.09429931640625,
+            "hardware_counters": {
+              "instructions": 427553722,
+              "cycles": 505994481
+            }
+          },
+          "client": {
+            "cpu_seconds": 1.211576375,
+            "end_rss_mib": 110.265625,
+            "end_footprint_mib": 85.65730285644531,
+            "hardware_counters": {
+              "instructions": 1801167073,
+              "cycles": 2021814450
+            }
+          }
+        },
+        "p95_ms": 0.364833,
+        "p99_ms": 0.654375
+      }
+    },
+    {
+      "round": 0,
+      "variant": "after",
+      "footprint_mib": 118.07979583740234,
+      "tui_full": {
+        "cpu_percent": 13.549465501276291,
+        "components": {
+          "server": {
+            "cpu_seconds": 0.8500042916666666,
+            "end_rss_mib": 14.140625,
+            "end_footprint_mib": 5.20367431640625,
+            "hardware_counters": {
+              "instructions": 2261156198,
+              "cycles": 1106147155
+            }
+          },
+          "client": {
+            "cpu_seconds": 1.8988891666666663,
+            "end_rss_mib": 110.0625,
+            "end_footprint_mib": 83.3135986328125,
+            "hardware_counters": {
+              "instructions": 3322119892,
+              "cycles": 2743921747
+            }
+          }
+        },
+        "p95_ms": 1.134583,
+        "p99_ms": 1.677875
+      },
+      "tui_partial": {
+        "cpu_percent": 9.917656627222664,
+        "components": {
+          "server": {
+            "cpu_seconds": 0.4283039166666667,
+            "end_rss_mib": 14.203125,
+            "end_footprint_mib": 5.26617431640625,
+            "hardware_counters": {
+              "instructions": 428329154,
+              "cycles": 576418536
+            }
+          },
+          "client": {
+            "cpu_seconds": 1.5829337916666666,
+            "end_rss_mib": 110.078125,
+            "end_footprint_mib": 85.3135757446289,
+            "hardware_counters": {
+              "instructions": 1782647371,
+              "cycles": 2351621970
+            }
+          }
+        },
+        "p95_ms": 0.625583,
+        "p99_ms": 1.005166
+      }
+    },
+    {
+      "round": 1,
+      "variant": "after",
+      "footprint_mib": 118.12667083740234,
+      "tui_full": {
+        "cpu_percent": 15.452334623326035,
+        "components": {
+          "server": {
+            "cpu_seconds": 0.8282633749999999,
+            "end_rss_mib": 14.125,
+            "end_footprint_mib": 5.18804931640625,
+            "hardware_counters": {
+              "instructions": 2248425307,
+              "cycles": 1266429328
+            }
+          },
+          "client": {
+            "cpu_seconds": 2.308508125,
+            "end_rss_mib": 110.171875,
+            "end_footprint_mib": 85.2823257446289,
+            "hardware_counters": {
+              "instructions": 3352171277,
+              "cycles": 3106607368
+            }
+          }
+        },
+        "p95_ms": 0.670417,
+        "p99_ms": 0.827208
+      },
+      "tui_partial": {
+        "cpu_percent": 9.006318060181027,
+        "components": {
+          "server": {
+            "cpu_seconds": 0.3744920416666666,
+            "end_rss_mib": 14.203125,
+            "end_footprint_mib": 5.26617431640625,
+            "hardware_counters": {
+              "instructions": 421632503,
+              "cycles": 554093703
+            }
+          },
+          "client": {
+            "cpu_seconds": 1.4521739166666663,
+            "end_rss_mib": 110.21875,
+            "end_footprint_mib": 85.3292007446289,
+            "hardware_counters": {
+              "instructions": 1766536452,
+              "cycles": 2297942650
+            }
+          }
+        },
+        "p95_ms": 0.289875,
+        "p99_ms": 0.338083
+      }
+    },
+    {
+      "round": 1,
+      "variant": "before",
+      "footprint_mib": 129.18912506103516,
+      "tui_full": {
+        "cpu_percent": 11.660011027182762,
+        "components": {
+          "server": {
+            "cpu_seconds": 0.7056233749999998,
+            "end_rss_mib": 14.171875,
+            "end_footprint_mib": 5.01617431640625,
+            "hardware_counters": {
+              "instructions": 2248820330,
+              "cycles": 1069780075
+            }
+          },
+          "client": {
+            "cpu_seconds": 1.6604909166666666,
+            "end_rss_mib": 110.171875,
+            "end_footprint_mib": 83.92290496826172,
+            "hardware_counters": {
+              "instructions": 4058540919,
+              "cycles": 2837992331
+            }
+          }
+        },
+        "p95_ms": 0.796792,
+        "p99_ms": 1.360834
+      },
+      "tui_partial": {
+        "cpu_percent": 11.849619420023505,
+        "components": {
+          "server": {
+            "cpu_seconds": 0.46157775,
+            "end_rss_mib": 14.21875,
+            "end_footprint_mib": 5.06304931640625,
+            "hardware_counters": {
+              "instructions": 425391659,
+              "cycles": 719392961
+            }
+          },
+          "client": {
+            "cpu_seconds": 1.940499,
+            "end_rss_mib": 110.296875,
+            "end_footprint_mib": 83.93852996826172,
+            "hardware_counters": {
+              "instructions": 1804825190,
+              "cycles": 2707744422
+            }
+          }
+        },
+        "p95_ms": 0.311875,
+        "p99_ms": 0.4735
+      }
+    },
+    {
+      "round": 2,
+      "variant": "before",
+      "footprint_mib": 130.45477294921875,
+      "tui_full": {
+        "cpu_percent": 16.90836862172343,
+        "components": {
+          "server": {
+            "cpu_seconds": 0.9893734999999998,
+            "end_rss_mib": 14.109375,
+            "end_footprint_mib": 5.17242431640625,
+            "hardware_counters": {
+              "instructions": 2279904137,
+              "cycles": 1198645158
+            }
+          },
+          "client": {
+            "cpu_seconds": 2.4421049583333327,
+            "end_rss_mib": 109.84375,
+            "end_footprint_mib": 85.15730285644531,
+            "hardware_counters": {
+              "instructions": 4081990849,
+              "cycles": 3214358704
+            }
+          }
+        },
+        "p95_ms": 1.431,
+        "p99_ms": 2.076333
+      },
+      "tui_partial": {
+        "cpu_percent": 9.975186933412443,
+        "components": {
+          "server": {
+            "cpu_seconds": 0.39944545833333334,
+            "end_rss_mib": 14.1875,
+            "end_footprint_mib": 5.25054931640625,
+            "hardware_counters": {
+              "instructions": 430712443,
+              "cycles": 629959547
+            }
+          },
+          "client": {
+            "cpu_seconds": 1.6218715416666662,
+            "end_rss_mib": 109.875,
+            "end_footprint_mib": 85.17292785644531,
+            "hardware_counters": {
+              "instructions": 1812483739,
+              "cycles": 2470339266
+            }
+          }
+        },
+        "p95_ms": 0.354959,
+        "p99_ms": 0.473
+      }
+    },
+    {
+      "round": 2,
+      "variant": "after",
+      "footprint_mib": 117.12664794921875,
+      "tui_full": {
+        "cpu_percent": 9.046535953082557,
+        "components": {
+          "server": {
+            "cpu_seconds": 0.6018390833333331,
+            "end_rss_mib": 14.3125,
+            "end_footprint_mib": 5.37554931640625,
+            "hardware_counters": {
+              "instructions": 2236506572,
+              "cycles": 993557469
+            }
+          },
+          "client": {
+            "cpu_seconds": 1.2336105833333333,
+            "end_rss_mib": 110.109375,
+            "end_footprint_mib": 84.68855285644531,
+            "hardware_counters": {
+              "instructions": 3329638253,
+              "cycles": 2438983996
+            }
+          }
+        },
+        "p95_ms": 0.52425,
+        "p99_ms": 0.674708
+      },
+      "tui_partial": {
+        "cpu_percent": 10.294058601033894,
+        "components": {
+          "server": {
+            "cpu_seconds": 0.4176565833333332,
+            "end_rss_mib": 14.375,
+            "end_footprint_mib": 5.43804931640625,
+            "hardware_counters": {
+              "instructions": 424597164,
+              "cycles": 622690765
+            }
+          },
+          "client": {
+            "cpu_seconds": 1.6694982916666663,
+            "end_rss_mib": 107.375,
+            "end_footprint_mib": 82.28230285644531,
+            "hardware_counters": {
+              "instructions": 1770908497,
+              "cycles": 2596145594
+            }
+          }
+        },
+        "p95_ms": 0.3245,
+        "p99_ms": 0.465541
+      }
+    }
+  ]
+}

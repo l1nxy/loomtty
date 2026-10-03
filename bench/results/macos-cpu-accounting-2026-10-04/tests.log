@@ -1,0 +1,19 @@
+test_cpu_time_agrees_with_python_process_clock (test_macos_bench.ResourceTests) ... ok
+test_background_thread_panic_invalidates_completed_workload (test_macos_bench.ResultValidityTests) ... ok
+test_config_reload_invalidates_measurement (test_macos_bench.ResultValidityTests) ... ok
+test_display_change_is_not_accepted_as_same_grid (test_macos_bench.ResultValidityTests) ... ok
+test_restores_raw_dsr_mode_even_when_upstream_fails (test_macos_bench.UpstreamOutputModeTests) ... ok
+test_keeps_quantized_samples_without_inventing_precision (test_macos_bench.UpstreamResultsTests) ... ok
+test_rejects_silently_skipped_upstream_workload (test_macos_bench.UpstreamResultsTests) ... ok
+test_rejects_truncated_or_multiple_columns (test_macos_bench.UpstreamResultsTests) ... ok
+test_complete_utf8_at_non_aligned_size (test_macos_bench.WorkloadTests) ... ok
+test_fence_accepts_fragmented_response (test_macos_bench.WorkloadTests) ... ok
+test_fence_rejects_wrong_cursor_position (test_macos_bench.WorkloadTests) ... ok
+test_fence_times_out_instead_of_reporting_false_completion (test_macos_bench.WorkloadTests) ... ok
+test_percentile_tail_is_not_an_average (test_macos_bench.WorkloadTests) ... ok
+test_startup_clock_has_same_epoch_in_fresh_process (test_macos_bench.WorkloadTests) ... ok
+
+----------------------------------------------------------------------
+Ran 14 tests in 0.363s
+
+OK

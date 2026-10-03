@@ -1,0 +1,19 @@
+{
+  "passed": true,
+  "sdk_c_values": [
+    296,
+    248,
+    256
+  ],
+  "ctypes_values": [
+    296,
+    248,
+    256
+  ],
+  "fields": [
+    "size",
+    "instructions_offset",
+    "cycles_offset"
+  ],
+  "source": "#include <sys/resource.h>\n#include <stddef.h>\n#include <stdio.h>\nint main(void) { printf(\"%zu %zu %zu\\n\", sizeof(struct rusage_info_v4), offsetof(struct rusage_info_v4, ri_instructions), offsetof(struct rusage_info_v4, ri_cycles)); }\n"
+}

@@ -149,6 +149,18 @@ versions, binary hashes, Git revision/dirty state, power and thermal status are
 captured. Paths in raw results may identify the local checkout/user; inspect
 before publishing them. `bench/results/` may hold selected checked-in reports.
 
+`python3 bench/verify_macos_cpu_clock.py` cross-checks the libproc CPU clock
+against a child process's independent `time.process_time()` for busy and sleeping
+workloads. It does not validate GUI repeatability.
+
+Each phase also records optional per-process `hardware_counters` (instructions
+and cycles) from the public `rusage_info_v4` API. These are sampled immediately
+outside the CPU/memory sampling interval, so their boundaries differ slightly.
+Unsupported, unavailable, or non-monotonic counters are `null`, not zero.
+They help distinguish changes in instruction volume from changes in CPU time,
+but fewer instructions do not by themselves prove lower CPU usage, energy, or
+latency. No CPU frequency/core-placement inference is made from these counters.
+
 ### Primary references
 
 - [Alacritty build/install](https://github.com/alacritty/alacritty/blob/v0.17.0/INSTALL.md)

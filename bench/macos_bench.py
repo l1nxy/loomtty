@@ -47,6 +47,20 @@ class RUsage(ctypes.Structure):
             "wired_size", "resident_size", "phys_footprint", "proc_start_abstime", "proc_exit_abstime")]
 
 
+class RUsageV4(ctypes.Structure):
+    # Public SDK sys/resource.h, rusage_info_v4. Keep the complete ABI layout.
+    _fields_ = RUsage._fields_ + [
+        (field, ctypes.c_uint64) for field in (
+            "child_user_time", "child_system_time", "child_pkg_idle_wkups",
+            "child_interrupt_wkups", "child_pageins", "child_elapsed_abstime",
+            "diskio_bytesread", "diskio_byteswritten", "cpu_time_qos_default",
+            "cpu_time_qos_maintenance", "cpu_time_qos_background", "cpu_time_qos_utility",
+            "cpu_time_qos_legacy", "cpu_time_qos_user_initiated", "cpu_time_qos_user_interactive",
+            "billed_system_time", "serviced_system_time", "logical_writes",
+            "lifetime_max_phys_footprint", "instructions", "cycles", "billed_energy",
+            "serviced_energy", "interval_max_phys_footprint", "runnable_time")]
+
+
 class Process:
     """Sample and signal only a process whose birth identity we have captured."""
     def __init__(self, pid, label):
@@ -75,6 +89,18 @@ class Process:
         return dict(identity=identity, cpu_seconds=(data.user_time + data.system_time) * self.seconds_per_tick,
                     rss_mib=data.resident_size / MIB, footprint_mib=data.phys_footprint / MIB,
                     wakeups=data.pkg_idle_wkups + data.interrupt_wkups)
+
+    def counters(self):
+        """Optional process hardware counts; absence is not zero work."""
+        data = RUsageV4()
+        if self.lib.proc_pid_rusage(self.pid, 4, ctypes.byref(data)):
+            self.read()  # Still reject an exited/reused process.
+            return None
+        if data.proc_exit_abstime or data.proc_start_abstime != self.identity:
+            raise ProcessLookupError(f"PID {self.pid} exited or was reused")
+        if not data.instructions or not data.cycles:
+            return None
+        return dict(instructions=data.instructions, cycles=data.cycles)
 
     def stop(self):
         for sig in (signal.SIGTERM, signal.SIGKILL):
@@ -252,6 +278,7 @@ macos-titlebar-style = native
 
 def measure_phase(directory, processes, sequence, command, timeout):
     check_build_interference()
+    counters_before = {p.label: p.counters() for p in processes}
     before = snapshot(processes)
     start = time.monotonic()
     save_json(directory / "command.json", {"id": sequence, **command})
@@ -266,6 +293,7 @@ def measure_phase(directory, processes, sequence, command, timeout):
         samples.append(snapshot(processes))
     elapsed = time.monotonic() - start
     after = snapshot(processes)
+    counters_after = {p.label: p.counters() for p in processes}
     samples.append(after)
     check_build_interference()
     result = json.loads(path.read_text())
@@ -282,6 +310,10 @@ def measure_phase(directory, processes, sequence, command, timeout):
             "end_footprint_mib": after["components"][p.label]["footprint_mib"],
         } for p in processes},
     )
+    for label, component in result["resources"]["components"].items():
+        first, last = counters_before[label], counters_after[label]
+        valid = first is not None and last is not None and all(last[k] >= first[k] for k in first)
+        component["hardware_counters"] = {k: last[k] - first[k] for k in first} if valid else None
     return result
 
 

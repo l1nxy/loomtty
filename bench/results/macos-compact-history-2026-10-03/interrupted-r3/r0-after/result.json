@@ -1,0 +1,32 @@
+{
+  "app": "loomtty",
+  "round": 0,
+  "phases": [],
+  "config": "[font]\nfamily = \"Menlo\"\nsize = 10.0\ndisable_ligatures = \"always\"\n[window]\nwidth = 600.0\nheight = 400.0\ntitle = \"loom benchmark\"\n[appearance]\npadding = 0.0\nborder_width = 0.0\ncolumn_gap = 0.0\n[statusbar]\npadding_ratio = 0.0\n[terminal]\nshell = \"/private/tmp/loom-compact-history-ab-r3/r0-after/worker.sh\"\ndefault_cols = 100\ndefault_rows = 30\ncursor_blink = false\nscrollback_lines = 10000\n[render]\nbackend = \"blade\"\n",
+  "ready": {
+    "pid": 17508,
+    "ppid": 17503,
+    "ready_ns": 14111578634166,
+    "columns": 100,
+    "rows": 30,
+    "term": "xterm-256color",
+    "term_program": "loomtty"
+  },
+  "startup_clock": "system-wide monotonic nanoseconds",
+  "startup_ms": 2259.969458,
+  "processes": {
+    "server": 17503,
+    "client": 17504
+  },
+  "error": "concurrent Rust build/test processes detected: 17563, 17564; retry when idle",
+  "traceback": "Traceback (most recent call last):\n  File \"/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py\", line 373, in run_one\n    phase = measure_phase(directory, processes, sequence, command, args.timeout)\n  File \"/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py\", line 270, in measure_phase\n    check_build_interference()\n  File \"/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py\", line 112, in check_build_interference\n    raise RuntimeError(f\"concurrent Rust build/test processes detected: {', '.join(builds)}; retry when idle\")\nRuntimeError: concurrent Rust build/test processes detected: 17563, 17564; retry when idle\n",
+  "display": {
+    "cell_width": 6.0,
+    "cell_height": 12.0,
+    "dpi_scale": 1.0
+  },
+  "visibility_confirmation": {
+    "method": "CLI auto-foreground per user instruction; not independently verified by CUA",
+    "continuous_visibility_monitoring": false
+  }
+}

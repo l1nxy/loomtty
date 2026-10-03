@@ -374,7 +374,14 @@ pub fn decode_sm_rows_with<R>(
         rows: Vec::with_capacity(rows),
         transform,
     };
-    decode_cells_into(data, &mut output)?;
+    let decoded = decode_cells_into(data, &mut output)?;
+    if output.rows.len() < rows {
+        // Full rows overwrite every scratch cell. Only a final short row
+        // needs its unwritten tail reset after reusing the preceding row.
+        output.scratch[decoded % columns..].fill(PackedCell::default());
+        output.finish_row();
+        output.scratch.fill(PackedCell::default());
+    }
     while output.rows.len() < rows {
         output.finish_row();
     }
@@ -392,7 +399,6 @@ struct MappedRows<R, F> {
 impl<R, F: FnMut(&[PackedCell]) -> R> MappedRows<R, F> {
     fn finish_row(&mut self) {
         self.rows.push((self.transform)(&self.scratch));
-        self.scratch.fill(PackedCell::default());
     }
 }
 

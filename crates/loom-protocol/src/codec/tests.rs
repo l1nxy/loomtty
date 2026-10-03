@@ -2434,8 +2434,19 @@ fn row_decoder_preserves_runs_attributes_and_padding_across_rows() {
         cells.push(cell);
     }
     let encoded = sm_encode_cells(&cells);
-    for columns in [1, 3, 37, 100, 701] {
-        let rows = cells.len().div_ceil(columns);
+    for (columns, extra_rows) in [
+        (1, 0),
+        (3, 0),
+        (37, 0),
+        (100, 0),
+        (701, 0),
+        (1, 3),
+        (3, 3),
+        (37, 3),
+        (100, 3),
+        (701, 3),
+    ] {
+        let rows = cells.len().div_ceil(columns) + extra_rows;
         let decoded = decode_sm_rows(&encoded, columns, rows).unwrap();
         let mapped = decode_sm_rows_with(&encoded, columns, rows, |row| row.to_vec()).unwrap();
         assert_eq!(mapped, decoded);

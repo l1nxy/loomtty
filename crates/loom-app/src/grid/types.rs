@@ -45,6 +45,31 @@ impl ScrollbackCells {
         }
     }
 
+    /// Append a viewport-width row without allocating an intermediate row.
+    /// Resize gaps are padded with default cells; excess columns are truncated.
+    pub fn append_to(&self, output: &mut Vec<PackedCell>, columns: usize) {
+        let take = match self {
+            Self::Dense(cells) => {
+                let take = cells.len().min(columns);
+                output.extend_from_slice(&cells[..take]);
+                take
+            }
+            Self::Uniform {
+                template,
+                characters,
+            } => {
+                let take = characters.len().min(columns);
+                output.extend(characters[..take].iter().map(|&ch_bytes| {
+                    let mut cell = *template;
+                    cell.ch_bytes = ch_bytes;
+                    cell
+                }));
+                take
+            }
+        };
+        output.resize(output.len() + columns - take, PackedCell::default());
+    }
+
     pub fn cell(&self, index: usize) -> Option<PackedCell> {
         match self {
             Self::Dense(cells) => cells.get(index).copied(),
@@ -208,5 +233,25 @@ mod compact_tests {
         assert!(history.wrapped);
         assert!(matches!(history.cells, ScrollbackCells::Dense(_)));
         assert_eq!(history.cells.as_cells().as_ref(), row);
+    }
+
+    #[test]
+    fn append_preserves_prefix_and_truncates_or_pads_both_representations() {
+        let mut row = vec![PackedCell::with_ch('界'); 100];
+        for mixed in [false, true] {
+            if mixed {
+                row[5].fg = PackedColor::rgb(1, 2, 3);
+            }
+            let stored = ScrollbackCells::from(row.as_slice());
+            for columns in [0, 50, 100, 120] {
+                let prefix = vec![PackedCell::with_ch('p'); 3];
+                let mut actual = prefix.clone();
+                stored.append_to(&mut actual, columns);
+                let mut expected = prefix;
+                expected.extend_from_slice(&row[..columns.min(row.len())]);
+                expected.resize(3 + columns, PackedCell::default());
+                assert_eq!(actual, expected);
+            }
+        }
     }
 }

@@ -21,6 +21,10 @@ impl ClientPaneGrid {
         let mut cells = Vec::with_capacity(rows * cols);
         for r in 0..rows {
             let buf_row = top + r;
+            if let Some(history) = self.scrollback.get(buf_row) {
+                history.cells.append_to(&mut cells, cols);
+                continue;
+            }
             let row = self.row(buf_row);
             // Scrollback rows may have a different column count after a
             // resize/DPI change — truncate or pad to current cols.

@@ -1,0 +1,7 @@
+   Compiling loom-protocol v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-protocol)
+   Compiling loom-render v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-render)
+   Compiling loom-app v0.1.0 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-app)
+   Compiling loom-gpu v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-gpu)
+   Compiling loom-ui v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-ui)
+   Compiling loomtty v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom)
+    Finished `release` profile [optimized] target(s) in 11.91s

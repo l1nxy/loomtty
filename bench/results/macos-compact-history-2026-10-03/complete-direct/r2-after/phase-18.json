@@ -1,0 +1,6 @@
+{
+  "name": "scrollback",
+  "bytes": 1000000,
+  "lines": 10000,
+  "seconds": 0.005495959
+}

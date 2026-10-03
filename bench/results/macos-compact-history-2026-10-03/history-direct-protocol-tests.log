@@ -1,0 +1,108 @@
+   Compiling loom-protocol v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-protocol)
+    Finished `test` profile [optimized + debuginfo] target(s) in 12.62s
+     Running unittests src/lib.rs (/Users/linxy/.codex/worktrees/macos-native/loomtty/target/debug/deps/loom_protocol-d758eddb6e296711)
+
+running 94 tests
+test codec::tests::decode_cell_delta_rejects_truncated_region_data ... ok
+test codec::tests::cell_delta_sm_roundtrip ... ok
+test codec::tests::decode_cell_delta_rejects_inverted_region_bounds ... ok
+test codec::tests::full_pane_sync_rejects_truncated_mandatory_sections ... ok
+test codec::tests::full_pane_sync_rejects_oversized_visible_metadata ... ok
+test codec::tests::full_pane_sync_ignores_truncated_optional_extras ... ok
+test codec::tests::full_pane_sync_roundtrip ... ok
+test codec::tests::frame_roundtrip_cell_delta_lz4 ... ok
+test codec::tests::frame_roundtrip_cell_delta_sm ... ok
+test codec::tests::full_pane_sync_with_scrollback ... ok
+test codec::tests::lz4_below_threshold_stays_uncompressed ... ok
+test codec::tests::lz4_roundtrip_maybe_compress ... ok
+test codec::tests::frame_roundtrip_full_pane_sync_lz4 ... ok
+test codec::tests::mapped_row_decoder_checks_sizes_without_allocating_empty_rows ... ok
+test codec::tests::network_edge_cases::capture_pane_opts_default_wire_shape_pinned ... ok
+test codec::tests::network_edge_cases::client_message_capture_pane_field_order_pinned ... ok
+test codec::tests::network_edge_cases::capture_pane_opts_empty_array_deserialises_to_default ... ok
+test codec::tests::frame_roundtrip_client_msg ... ok
+test codec::tests::network_edge_cases::client_message_capture_pane_omitted_opts_defaults ... ok
+test codec::tests::network_edge_cases::client_message_capture_pane_wire_format_pinned ... ok
+test codec::tests::network_edge_cases::capture_pane_opts_full_payload_round_trips ... ok
+test codec::tests::network_edge_cases::capture_pane_opts_partial_array_defaults_trailing_field ... ok
+test codec::tests::network_edge_cases::client_message_list_prompts_wire_format_pinned ... ok
+test codec::tests::network_edge_cases::client_message_jump_to_prompt_wire_format_pinned ... ok
+test codec::tests::network_edge_cases::codec_detects_eof_via_scripted_io ... ok
+test codec::tests::network_edge_cases::codec_handles_split_reads_via_scripted_io ... ok
+test codec::tests::network_edge_cases::frame_rejects_oversized_control_message ... ok
+test codec::tests::network_edge_cases::frame_rejects_truncated_header ... ok
+test codec::tests::network_edge_cases::frame_rejects_unknown_tag ... ok
+test codec::tests::network_edge_cases::frame_rejects_corrupted_msgpack_payload ... ok
+test codec::tests::network_edge_cases::frame_rejects_truncated_payload ... ok
+test codec::tests::network_edge_cases::full_pane_sync_frame_applies_lz4_for_large_payload ... ok
+test codec::tests::network_edge_cases::handshake_rejects_extreme_cell_size ... ok
+test codec::tests::network_edge_cases::handshake_over_duplex_roundtrip ... ok
+test codec::tests::network_edge_cases::handshake_rejects_invalid_viewport_dims ... ok
+test codec::tests::network_edge_cases::handshake_rejects_oversized_session_name ... ok
+test codec::tests::network_edge_cases::handshake_rejects_wrong_magic ... ok
+test codec::tests::network_edge_cases::handshake_rejects_wrong_wire_protocol_version ... ok
+test codec::tests::frame_roundtrip_client_message_variants ... ok
+test codec::tests::network_edge_cases::multiple_frame_types_in_sequence ... ok
+test codec::tests::network_edge_cases::prompt_mark_info_default_wire_shape_pinned ... ok
+test codec::tests::frame_roundtrip_server_message_variants ... ok
+test codec::tests::network_edge_cases::prompt_mark_info_full_payload_round_trips ... ok
+test codec::tests::network_edge_cases::prompt_mark_info_partial_array_defaults_trailing_fields ... ok
+test codec::tests::network_edge_cases::server_hello_major_mismatch_is_rejected ... ok
+test codec::tests::network_edge_cases::server_hello_minor_mismatch_returns_minor_mismatch ... ok
+test codec::tests::network_edge_cases::codec_handles_large_full_pane_sync_split_reads ... ok
+test codec::tests::network_edge_cases::server_hello_patch_mismatch_returns_patch_mismatch ... ok
+test codec::tests::network_edge_cases::server_hello_roundtrip ... ok
+test codec::tests::network_edge_cases::server_message_pane_capture_field_order_pinned ... ok
+test codec::tests::network_edge_cases::server_message_pane_capture_omitted_truncated_defaults_to_false ... ok
+test codec::tests::network_edge_cases::server_message_pane_capture_wire_format_pinned ... ok
+test codec::tests::network_edge_cases::server_message_prompt_list_reply_wire_format_pinned ... ok
+test codec::tests::network_edge_cases::server_message_set_scroll_offset_wire_format_pinned ... ok
+test codec::tests::read_client_hello_rejects_bad_magic ... ok
+test codec::tests::read_client_hello_rejects_invalid_cell_width ... ok
+test codec::tests::read_client_hello_rejects_invalid_utf8_session_name ... ok
+test codec::tests::read_client_hello_rejects_wrong_wire_version ... ok
+test codec::tests::read_client_hello_rejects_zero_viewport_width ... ok
+test codec::tests::read_frame_rejects_oversized_payload ... ok
+test codec::tests::read_frame_rejects_truncated_header ... ok
+test codec::tests::read_frame_rejects_truncated_payload ... ok
+test codec::tests::proptest_roundtrips::sm_uniform_cells_compress_well ... ok
+test codec::tests::read_frame_rejects_unknown_tag ... ok
+test codec::tests::read_server_hello_rejects_bad_magic ... ok
+test codec::tests::row_decoder_preserves_runs_attributes_and_padding_across_rows ... ok
+test codec::tests::network_edge_cases::sm_encoder_splits_non_ascii_runs_longer_than_u16_max ... ok
+test codec::tests::sm_compression_better_than_shell_line ... ok
+test codec::tests::row_decoder_rejects_overflow_and_truncation_like_contiguous_decoder ... ok
+test codec::tests::sm_compression_ratio_blank ... ok
+test codec::tests::proptest_roundtrips::full_pane_sync_roundtrip_with_varied_cells ... ok
+test codec::tests::sm_reset_opcode ... ok
+test codec::tests::sm_roundtrip_all_color_types ... ok
+test codec::tests::sm_roundtrip_all_flags ... ok
+test codec::tests::sm_roundtrip_blank_line ... ok
+test codec::tests::sm_roundtrip_cjk_wide_char ... ok
+test codec::tests::sm_roundtrip_mixed_attributes ... ok
+test codec::tests::sm_roundtrip_repeat_run ... ok
+test codec::tests::sm_short_run_not_repeated ... ok
+test codec::tests::sm_truncated_opcode ... ok
+test codec::tests::sm_unknown_opcode ... ok
+test message::tests::borrowed_region_cell_count_uses_inclusive_bounds ... ok
+test message::tests::damage_region_cell_count_uses_inclusive_bounds ... ok
+test message::tests::packed_cell_ascii_fast_path_preserves_utf8_validation ... ok
+test message::tests::packed_cell_cjk ... ok
+test codec::tests::sm_repeat_exceeding_u16_max ... ok
+test message::tests::packed_cell_default_layout_stays_stable ... ok
+test message::tests::packed_cell_roundtrip ... ok
+test message::tests::packed_cell_size ... ok
+test message::tests::packed_color_roundtrip ... ok
+test codec::tests::proptest_roundtrips::cell_delta_roundtrip_with_varied_cells ... ok
+test codec::tests::proptest_roundtrips::sm_codec_roundtrip_arbitrary ... ok
+test codec::tests::proptest_roundtrips::sm_encoded_size_bounded ... ok
+test codec::tests::proptest_roundtrips::sm_codec_roundtrip_large_grid ... ok
+
+test result: ok. 94 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+   Doc-tests loom_protocol
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

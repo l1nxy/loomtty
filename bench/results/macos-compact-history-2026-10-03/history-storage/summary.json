@@ -1,0 +1,50 @@
+[
+  {
+    "columns": 100,
+    "style": "uniform",
+    "decode_us": {
+      "dense": 1510.602,
+      "compact": 1880.492
+    },
+    "viewport_us": {
+      "dense": 0.922,
+      "compact": 1.751
+    }
+  },
+  {
+    "columns": 100,
+    "style": "mixed",
+    "decode_us": {
+      "dense": 6014.169,
+      "compact": 6176.177
+    },
+    "viewport_us": {
+      "dense": 0.955,
+      "compact": 1.181
+    }
+  },
+  {
+    "columns": 250,
+    "style": "uniform",
+    "decode_us": {
+      "dense": 2997.073,
+      "compact": 3419.1
+    },
+    "viewport_us": {
+      "dense": 1.493,
+      "compact": 2.964
+    }
+  },
+  {
+    "columns": 250,
+    "style": "mixed",
+    "decode_us": {
+      "dense": 10934.208,
+      "compact": 11752.467
+    },
+    "viewport_us": {
+      "dense": 1.77,
+      "compact": 2.177
+    }
+  }
+]

@@ -1,0 +1,18 @@
+   Compiling serde_core v1.0.228
+   Compiling serde v1.0.228
+   Compiling bitflags v2.11.0
+   Compiling garde v0.22.1
+   Compiling loom-layout v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-layout)
+   Compiling loom-anim v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-anim)
+   Compiling loom-input v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-input)
+   Compiling nix v0.29.0
+   Compiling toml_datetime v0.6.11
+   Compiling serde_spanned v0.6.9
+   Compiling rmp-serde v1.3.1
+   Compiling toml_edit v0.20.2
+   Compiling toml_edit v0.22.27
+   Compiling loom-protocol v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-protocol)
+   Compiling toml v0.8.2
+   Compiling loom-config v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-config)
+   Compiling loom-app v0.1.0 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-app)
+    Finished `release` profile [optimized] target(s) in 10.41s

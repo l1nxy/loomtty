@@ -1,0 +1,12 @@
+Round 1/3: before
+  loomtty: idle 5.010s
+  loomtty: warm_idle 5.010s
+  loomtty: ascii 0.032s
+  loomtty: truecolor 0.027s
+  loomtty: cjk 0.025s
+  loomtty: emoji 0.026s
+  loomtty: scroll 0.037s
+  loomtty: cursor 0.040s
+  loomtty: latency 1.396s
+  loomtty: loaded_latency 0.032s
+FAILED: concurrent Rust build/test processes detected: 21581; retry when idle

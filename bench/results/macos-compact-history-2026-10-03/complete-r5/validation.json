@@ -1,0 +1,80 @@
+{
+  "complete_runs": 6,
+  "unique_workers": 6,
+  "same_server": true,
+  "same_display": true,
+  "build_interference_detected": false,
+  "build_guard_scope": "Before/after phases and between launches; does not prove no short-lived compiler between checks",
+  "visibility": "CLI auto-foreground, no continuous occlusion verification",
+  "metrics": {
+    "post_idle": {
+      "values": {
+        "before": [
+          132.20479583740234,
+          132.17352294921875,
+          131.98600006103516
+        ],
+        "after": [
+          119.47042083740234,
+          119.62664794921875,
+          118.84544372558594
+        ]
+      },
+      "median": {
+        "before": 132.17352294921875,
+        "after": 119.47042083740234
+      },
+      "paired_percent": [
+        -9.632309417626505,
+        -9.49272949683011,
+        -9.956022858009595
+      ]
+    },
+    "tui_full": {
+      "values": {
+        "before": [
+          11.7635751081139,
+          14.322598075703203,
+          14.02151190623492
+        ],
+        "after": [
+          12.529533943582244,
+          13.497496709586454,
+          14.792801241133175
+        ]
+      },
+      "median": {
+        "before": 14.02151190623492,
+        "after": 13.497496709586454
+      },
+      "paired_percent": [
+        6.511275938043926,
+        -5.7608358606142,
+        5.500757265379397
+      ]
+    },
+    "tui_partial": {
+      "values": {
+        "before": [
+          7.632250328153055,
+          9.443248672815308,
+          9.301183169245906
+        ],
+        "after": [
+          7.713527779839124,
+          8.627548006623673,
+          9.597397665105541
+        ]
+      },
+      "median": {
+        "before": 9.301183169245906,
+        "after": 8.627548006623673
+      },
+      "paired_percent": [
+        1.0649211987487028,
+        -8.637924240413453,
+        3.1846969409124126
+      ]
+    }
+  }
+}

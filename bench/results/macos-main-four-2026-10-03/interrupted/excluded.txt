@@ -1,0 +1,1 @@
+Interrupted because unrelated Rust compilation overlapped Kitty sampling. Whole cohort excluded. Controller received SIGINT so owned terminals/worker/server and caffeinate could clean up in finally blocks.

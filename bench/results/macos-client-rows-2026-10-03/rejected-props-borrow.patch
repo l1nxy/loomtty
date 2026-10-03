@@ -1,0 +1,68 @@
+diff --git a/crates/loom-render/src/terminal/cell.rs b/crates/loom-render/src/terminal/cell.rs
+index 740d0ba..a6c0982 100644
+--- a/crates/loom-render/src/terminal/cell.rs
++++ b/crates/loom-render/src/terminal/cell.rs
+@@ -58,17 +58,17 @@ impl<'a> CellPropsCache<'a> {
+     }
+ 
+     #[inline]
+-    pub(super) fn get(&mut self, cell: &PackedCell) -> Option<CellProps> {
++    pub(super) fn get(&mut self, cell: &PackedCell) -> Option<&CellProps> {
+         let key = ([cell.fg, cell.bg], cell.flags);
+         if self.key != Some(key) {
+             self.key = Some(key);
+             self.props = CellProps::from_packed_cell_fast(cell, self.colors);
+-            return self.props;
+-        }
+-        self.props.map(|mut props| {
++        } else if let Some(props) = self.props.as_mut() {
+             props.ch = cell.ch();
+-            props
+-        })
++        }
++        // Keep the decoded attribute run in place: the renderer only borrows it
++        // until the next cell, rather than copying both RGBA arrays per glyph.
++        self.props.as_ref()
+     }
+ }
+ 
+@@ -257,7 +257,7 @@ mod tests {
+                     for ch in ['a', '中', '😀', '\0'] {
+                         cell.set_ch(ch);
+                         assert_eq!(
+-                            cache.get(&cell),
++                            cache.get(&cell).copied(),
+                             CellProps::from_packed_cell_fast(&cell, &colors)
+                         );
+                     }
+@@ -269,7 +269,7 @@ mod tests {
+         for bg in palette {
+             cell.bg = bg;
+             assert_eq!(
+-                cache.get(&cell),
++                cache.get(&cell).copied(),
+                 CellProps::from_packed_cell_fast(&cell, &colors)
+             );
+         }
+diff --git a/crates/loom-render/src/terminal/view.rs b/crates/loom-render/src/terminal/view.rs
+index 637f60e..e990298 100644
+--- a/crates/loom-render/src/terminal/view.rs
++++ b/crates/loom-render/src/terminal/view.rs
+@@ -530,7 +530,7 @@ fn rebuild_row_render_data(
+         }
+ 
+         if props.underline != UnderlineStyle::None || props.is_strikeout {
+-            render_cell_decorations(row, col, &props, grid.metrics, bg_rects);
++            render_cell_decorations(row, col, props, grid.metrics, bg_rects);
+         }
+ 
+         if props.is_hidden || props.ch == ' ' || props.ch == '\0' || props.ch.is_control() {
+@@ -686,7 +686,7 @@ fn rebuild_row_render_data(
+         }
+ 
+         // Fallback: crossfont character-based path
+-        emit_glyph(col, row, &props, grid.metrics, atlas, glyphs, color_glyphs);
++        emit_glyph(col, row, props, grid.metrics, atlas, glyphs, color_glyphs);
+     }
+     if let Some(sc) = strip_color {
+         flush_bg_strip(

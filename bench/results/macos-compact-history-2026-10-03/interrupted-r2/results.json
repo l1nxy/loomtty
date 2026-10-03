@@ -1,0 +1,506 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-10-03T14:47:00.733932+00:00",
+  "machine": {
+    "chip": "Apple M6",
+    "macos": "27.0",
+    "architecture": "arm64",
+    "memory_bytes": 34359738368,
+    "power": "Now drawing from 'AC Power'",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded"
+  },
+  "settings": {
+    "apps": [
+      "before",
+      "after"
+    ],
+    "rounds": 3,
+    "mib": 8,
+    "columns": 100,
+    "rows": 30,
+    "frames": 1200,
+    "latency_samples": 200,
+    "idle_seconds": 5,
+    "seed": 5306,
+    "timeout": 120,
+    "output": "/private/tmp/loom-compact-history-ab-r2",
+    "loom": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/compact-history-20261003/loomtty.app/Contents/MacOS/loomtty",
+    "loom_server": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/main-bench-20261003/loomtty.app/Contents/Helpers/loomtty-server.app/Contents/MacOS/loomtty-server",
+    "loom_width": 600.0,
+    "loom_height": 400.0,
+    "vtebench": null,
+    "vtebench_seconds": 3,
+    "vtebench_output_mode": "original",
+    "confirm_visible": false,
+    "probe": false,
+    "before": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/main-bench-20261003/loomtty.app/Contents/MacOS"
+  },
+  "versions": {
+    "before": {
+      "text": "loomtty 0.2.1",
+      "sha256": "e467ffb2a2659a1a347461ae969cf5270393bb5091b2e1e55da7e1e59afc52af",
+      "server_sha256": "2b69ee4c17b103718ff746e872a5ea77bb624712bc72a3885dd3cc851ff6c331"
+    },
+    "after": {
+      "text": "loomtty 0.2.1",
+      "sha256": "dc7669639f6444bd423610fca963097a9365aff02399ef7338af6474c83e9a8f",
+      "server_sha256": "2b69ee4c17b103718ff746e872a5ea77bb624712bc72a3885dd3cc851ff6c331"
+    }
+  },
+  "git_head": "fa34f0c7b77b9fcb3e78a9aa2b9d21c2566591cd",
+  "git_status": "M bench/results/macos-scroll-one-probe-2026-10-03/validation.zh-CN.md\n?? bench/results/macos-client-rows-2026-10-03/\n?? bench/results/macos-compact-history-2026-10-03/\n?? bench/results/macos-main-four-complete-2026-10-03/",
+  "benchmark_sha256": {
+    "macos_bench.py": "37b4d50ef655e25e9aa2de324187df7de055278fa407963417a7845d08749602",
+    "terminal_workload.py": "3b7eaf35cc767a2b8f01e952b8b7f7184b26fb0d0c97ef97d9b2f5444c4525fb",
+    "compare_loom.py": "bfc8b0052001c6d93eb3397b23299028b1c25ee9ca155e38aba50d5f19ef0307"
+  },
+  "runs": [
+    {
+      "app": "before",
+      "round": 0,
+      "phases": [
+        {
+          "name": "idle",
+          "seconds": 5.005058,
+          "resources": {
+            "sample_seconds": 5.281404582999997,
+            "cpu_seconds": 0.002983708333333307,
+            "cpu_percent_one_core": 0.056494598859882665,
+            "peak_rss_mib": 115.3125,
+            "peak_footprint_mib": 68.47035217285156,
+            "end_rss_mib": 115.09375,
+            "end_footprint_mib": 68.23597717285156,
+            "wakeups": 13,
+            "components": {
+              "server": {
+                "cpu_seconds": 0.00040462500000000047,
+                "end_rss_mib": 13.140625,
+                "end_footprint_mib": 4.250572204589844
+              },
+              "client": {
+                "cpu_seconds": 0.002579083333333315,
+                "end_rss_mib": 101.953125,
+                "end_footprint_mib": 63.98540496826172
+              }
+            }
+          },
+          "warmup": false
+        },
+        {
+          "name": "ascii",
+          "bytes": 65549,
+          "sha256": "185947b23231006364b6b63c627a861e1a54b5e0a8713d4c25b14604f7251dce",
+          "mib_per_second": 137.79357494839448,
+          "seconds": 0.000453667,
+          "resources": {
+            "sample_seconds": 0.26306066699999775,
+            "cpu_seconds": 0.0041532083333333525,
+            "cpu_percent_one_core": 1.5788024795563178,
+            "peak_rss_mib": 115.984375,
+            "peak_footprint_mib": 101.17347717285156,
+            "end_rss_mib": 115.984375,
+            "end_footprint_mib": 101.17347717285156,
+            "wakeups": 2,
+            "components": {
+              "server": {
+                "cpu_seconds": 0.0008785833333333319,
+                "end_rss_mib": 13.21875,
+                "end_footprint_mib": 4.313072204589844
+              },
+              "client": {
+                "cpu_seconds": 0.0032746250000000032,
+                "end_rss_mib": 102.765625,
+                "end_footprint_mib": 96.86040496826172
+              }
+            }
+          },
+          "warmup": true
+        },
+        {
+          "name": "truecolor",
+          "bytes": 66804,
+          "sha256": "cb1febaebb07afdb015b431e086111e71542aa21afd6eb0443b4a4e778aec8e2",
+          "mib_per_second": 165.69378162081435,
+          "seconds": 0.0003845,
+          "resources": {
+            "sample_seconds": 0.26621983300000096,
+            "cpu_seconds": 0.0024004583333333274,
+            "cpu_percent_one_core": 0.9016827582989727,
+            "peak_rss_mib": 116.21875,
+            "peak_footprint_mib": 101.39222717285156,
+            "end_rss_mib": 116.21875,
+            "end_footprint_mib": 99.39222717285156,
+            "wakeups": 3,
+            "components": {
+              "server": {
+                "cpu_seconds": 0.0008419166666666679,
+                "end_rss_mib": 13.390625,
+                "end_footprint_mib": 4.484947204589844
+              },
+              "client": {
+                "cpu_seconds": 0.001558541666666663,
+                "end_rss_mib": 102.828125,
+                "end_footprint_mib": 94.90727996826172
+              }
+            }
+          },
+          "warmup": true
+        },
+        {
+          "name": "cjk",
+          "bytes": 65560,
+          "sha256": "0736355a3277dfb30dcbd59f98bbe23e07571de7b125d4f62876a4f0190dff21",
+          "mib_per_second": 173.81567322270774,
+          "seconds": 0.000359708,
+          "resources": {
+            "sample_seconds": 0.2638974999999988,
+            "cpu_seconds": 0.003482541666666672,
+            "cpu_percent_one_core": 1.3196569375104683,
+            "peak_rss_mib": 120.25,
+            "peak_footprint_mib": 101.78287506103516,
+            "end_rss_mib": 120.25,
+            "end_footprint_mib": 101.78287506103516,
+            "wakeups": 2,
+            "components": {
+              "server": {
+                "cpu_seconds": 0.00070775,
+                "end_rss_mib": 13.4375,
+                "end_footprint_mib": 4.516197204589844
+              },
+              "client": {
+                "cpu_seconds": 0.002774791666666665,
+                "end_rss_mib": 106.8125,
+                "end_footprint_mib": 97.26667785644531
+              }
+            }
+          },
+          "warmup": true
+        },
+        {
+          "name": "emoji",
+          "bytes": 65538,
+          "sha256": "ff9f8249e81d5ff126fd6248fe9384f1aed19262f848eef4b497b54ae3be98a4",
+          "mib_per_second": 128.32986822183926,
+          "seconds": 0.000487041,
+          "resources": {
+            "sample_seconds": 0.26827320799999654,
+            "cpu_seconds": 0.004566583333333318,
+            "cpu_percent_one_core": 1.702213712423112,
+            "peak_rss_mib": 122.015625,
+            "peak_footprint_mib": 104.43912506103516,
+            "end_rss_mib": 122.015625,
+            "end_footprint_mib": 104.43912506103516,
+            "wakeups": 5,
+            "components": {
+              "server": {
+                "cpu_seconds": 0.000962958333333333,
+                "end_rss_mib": 13.4375,
+                "end_footprint_mib": 4.516197204589844
+              },
+              "client": {
+                "cpu_seconds": 0.003603624999999999,
+                "end_rss_mib": 108.578125,
+                "end_footprint_mib": 99.92292785644531
+              }
+            }
+          },
+          "warmup": true
+        },
+        {
+          "name": "scroll",
+          "bytes": 66048,
+          "sha256": "f0471da69e2b60fe1f8633a2572874d4d6952d9da164197994eb069d7bc5ddb7",
+          "mib_per_second": 139.29019822692604,
+          "seconds": 0.000452209,
+          "resources": {
+            "sample_seconds": 0.26977479200000687,
+            "cpu_seconds": 0.0019441250000000188,
+            "cpu_percent_one_core": 0.7206473909541442,
+            "peak_rss_mib": 122.0625,
+            "peak_footprint_mib": 104.48600006103516,
+            "end_rss_mib": 122.0625,
+            "end_footprint_mib": 104.48600006103516,
+            "wakeups": 2,
+            "components": {
+              "server": {
+                "cpu_seconds": 0.0008177916666666663,
+                "end_rss_mib": 13.484375,
+                "end_footprint_mib": 4.563072204589844
+              },
+              "client": {
+                "cpu_seconds": 0.0011263333333333403,
+                "end_rss_mib": 108.578125,
+                "end_footprint_mib": 99.92292785644531
+              }
+            }
+          },
+          "warmup": true
+        },
+        {
+          "name": "cursor",
+          "bytes": 65820,
+          "sha256": "04947cf4ddc069f8e2ac663ff135a2ab96efff9505517f8b5582b984f22e9622",
+          "mib_per_second": 147.5513284750242,
+          "seconds": 0.000425417,
+          "resources": {
+            "sample_seconds": 0.27416008299999817,
+            "cpu_seconds": 0.0019500833333333245,
+            "cpu_percent_one_core": 0.7112936763056559,
+            "peak_rss_mib": 122.09375,
+            "peak_footprint_mib": 104.51725006103516,
+            "end_rss_mib": 122.09375,
+            "end_footprint_mib": 104.51725006103516,
+            "wakeups": 3,
+            "components": {
+              "server": {
+                "cpu_seconds": 0.0008064166666666671,
+                "end_rss_mib": 13.484375,
+                "end_footprint_mib": 4.563072204589844
+              },
+              "client": {
+                "cpu_seconds": 0.0011436666666666817,
+                "end_rss_mib": 108.609375,
+                "end_footprint_mib": 99.95417785644531
+              }
+            }
+          },
+          "warmup": true
+        },
+        {
+          "name": "warm_idle",
+          "seconds": 5.005054209,
+          "resources": {
+            "sample_seconds": 5.285640542000003,
+            "cpu_seconds": 0.00032299999999998996,
+            "cpu_percent_one_core": 0.006110896067059677,
+            "peak_rss_mib": 122.09375,
+            "peak_footprint_mib": 94.43912506103516,
+            "end_rss_mib": 122.09375,
+            "end_footprint_mib": 70.20475006103516,
+            "wakeups": 3,
+            "components": {
+              "server": {
+                "cpu_seconds": 7.291666666666557e-05,
+                "end_rss_mib": 13.484375,
+                "end_footprint_mib": 4.563072204589844
+              },
+              "client": {
+                "cpu_seconds": 0.00025008333333331745,
+                "end_rss_mib": 108.609375,
+                "end_footprint_mib": 65.64167785644531
+              }
+            }
+          },
+          "warmup": false
+        },
+        {
+          "name": "ascii",
+          "bytes": 8388656,
+          "sha256": "2bdf9c247aebd067304a55b61d3d720b41c82b53f66315b57d35b2a29d1ecd7e",
+          "mib_per_second": 247.6043725805226,
+          "seconds": 0.032309792,
+          "resources": {
+            "sample_seconds": 0.3066444170000011,
+            "cpu_seconds": 0.047524750000000004,
+            "cpu_percent_one_core": 15.498325541012486,
+            "peak_rss_mib": 122.21875,
+            "peak_footprint_mib": 91.43912506103516,
+            "end_rss_mib": 122.21875,
+            "end_footprint_mib": 91.43912506103516,
+            "wakeups": 7,
+            "components": {
+              "server": {
+                "cpu_seconds": 0.04527945833333333,
+                "end_rss_mib": 13.609375,
+                "end_footprint_mib": 4.688072204589844
+              },
+              "client": {
+                "cpu_seconds": 0.0022452916666666767,
+                "end_rss_mib": 108.609375,
+                "end_footprint_mib": 86.75105285644531
+              }
+            }
+          },
+          "warmup": false
+        },
+        {
+          "name": "truecolor",
+          "bytes": 8389176,
+          "sha256": "5e5ccfff8a3f7675855ea0bb689a2b090341e449b02640e267d199fb77741598",
+          "mib_per_second": 301.42903053354934,
+          "seconds": 0.026542041,
+          "resources": {
+            "sample_seconds": 0.28693562500000525,
+            "cpu_seconds": 0.04081400000000002,
+            "cpu_percent_one_core": 14.224096432779747,
+            "peak_rss_mib": 122.25,
+            "peak_footprint_mib": 91.47037506103516,
+            "end_rss_mib": 122.25,
+            "end_footprint_mib": 91.47037506103516,
+            "wakeups": 7,
+            "components": {
+              "server": {
+                "cpu_seconds": 0.03957549999999999,
+                "end_rss_mib": 13.640625,
+                "end_footprint_mib": 4.719322204589844
+              },
+              "client": {
+                "cpu_seconds": 0.0012385000000000035,
+                "end_rss_mib": 108.609375,
+                "end_footprint_mib": 86.75105285644531
+              }
+            }
+          },
+          "warmup": false
+        },
+        {
+          "name": "cjk",
+          "bytes": 8388700,
+          "sha256": "7f83847bf8cb916e4ccb1b6356a4a5cfdf395e868d4e5fb4f1cb8fc91b4b9c3f",
+          "mib_per_second": 310.95170537793274,
+          "seconds": 0.02572775,
+          "resources": {
+            "sample_seconds": 0.3191303750000003,
+            "cpu_seconds": 0.0400625,
+            "cpu_percent_one_core": 12.55364676583981,
+            "peak_rss_mib": 122.265625,
+            "peak_footprint_mib": 91.48600006103516,
+            "end_rss_mib": 122.265625,
+            "end_footprint_mib": 91.48600006103516,
+            "wakeups": 8,
+            "components": {
+              "server": {
+                "cpu_seconds": 0.03871720833333332,
+                "end_rss_mib": 13.65625,
+                "end_footprint_mib": 4.734947204589844
+              },
+              "client": {
+                "cpu_seconds": 0.0013452916666666648,
+                "end_rss_mib": 108.609375,
+                "end_footprint_mib": 86.75105285644531
+              }
+            }
+          },
+          "warmup": false
+        },
+        {
+          "name": "emoji",
+          "bytes": 8388666,
+          "sha256": "52223d9de9be4a378f572afac356cd12019fe29fb981b321f43debbe9dc08add",
+          "mib_per_second": 281.08380927029606,
+          "seconds": 0.028461459,
+          "resources": {
+            "sample_seconds": 0.3092669999999984,
+            "cpu_seconds": 0.04502079166666667,
+            "cpu_percent_one_core": 14.557256890216838,
+            "peak_rss_mib": 122.265625,
+            "peak_footprint_mib": 91.48600006103516,
+            "end_rss_mib": 122.265625,
+            "end_footprint_mib": 91.48600006103516,
+            "wakeups": 12,
+            "components": {
+              "server": {
+                "cpu_seconds": 0.043440124999999996,
+                "end_rss_mib": 13.65625,
+                "end_footprint_mib": 4.734947204589844
+              },
+              "client": {
+                "cpu_seconds": 0.0015806666666666747,
+                "end_rss_mib": 108.609375,
+                "end_footprint_mib": 86.75105285644531
+              }
+            }
+          },
+          "warmup": false
+        },
+        {
+          "name": "scroll",
+          "bytes": 8388864,
+          "sha256": "25ca2744ac174ee4ee28755a002b7e9092a25b2855b5214b543aacd24f5dfe03",
+          "mib_per_second": 200.60855608561963,
+          "seconds": 0.039879875,
+          "resources": {
+            "sample_seconds": 0.3323914160000001,
+            "cpu_seconds": 0.05958879166666664,
+            "cpu_percent_one_core": 17.927295591371898,
+            "peak_rss_mib": 122.265625,
+            "peak_footprint_mib": 91.48600006103516,
+            "end_rss_mib": 122.265625,
+            "end_footprint_mib": 91.48600006103516,
+            "wakeups": 8,
+            "components": {
+              "server": {
+                "cpu_seconds": 0.058102125000000004,
+                "end_rss_mib": 13.65625,
+                "end_footprint_mib": 4.734947204589844
+              },
+              "client": {
+                "cpu_seconds": 0.001486666666666664,
+                "end_rss_mib": 108.609375,
+                "end_footprint_mib": 86.75105285644531
+              }
+            }
+          },
+          "warmup": false
+        },
+        {
+          "name": "cursor",
+          "bytes": 8388759,
+          "sha256": "7c6382b8704f47f53ac1270f06320fff78fc4d4f287f4333114c384e18e213f9",
+          "mib_per_second": 234.58654849880443,
+          "seconds": 0.034103166,
+          "resources": {
+            "sample_seconds": 0.3124237910000005,
+            "cpu_seconds": 0.049733666666666676,
+            "cpu_percent_one_core": 15.91865539672252,
+            "peak_rss_mib": 122.3125,
+            "peak_footprint_mib": 91.53287506103516,
+            "end_rss_mib": 122.3125,
+            "end_footprint_mib": 91.53287506103516,
+            "wakeups": 9,
+            "components": {
+              "server": {
+                "cpu_seconds": 0.04782658333333331,
+                "end_rss_mib": 13.703125,
+                "end_footprint_mib": 4.781822204589844
+              },
+              "client": {
+                "cpu_seconds": 0.001907083333333337,
+                "end_rss_mib": 108.609375,
+                "end_footprint_mib": 86.75105285644531
+              }
+            }
+          },
+          "warmup": false
+        }
+      ],
+      "config": "[font]\nfamily = \"Menlo\"\nsize = 10.0\ndisable_ligatures = \"always\"\n[window]\nwidth = 600.0\nheight = 400.0\ntitle = \"loom benchmark\"\n[appearance]\npadding = 0.0\nborder_width = 0.0\ncolumn_gap = 0.0\n[statusbar]\npadding_ratio = 0.0\n[terminal]\nshell = \"/private/tmp/loom-compact-history-ab-r2/r0-before/worker.sh\"\ndefault_cols = 100\ndefault_rows = 30\ncursor_blink = false\nscrollback_lines = 10000\n[render]\nbackend = \"blade\"\n",
+      "ready": {
+        "pid": 16832,
+        "ppid": 16829,
+        "ready_ns": 13932620594833,
+        "columns": 100,
+        "rows": 30,
+        "term": "xterm-256color",
+        "term_program": "loomtty"
+      },
+      "startup_clock": "system-wide monotonic nanoseconds",
+      "startup_ms": 1216.954292,
+      "processes": {
+        "server": 16829,
+        "client": 16830
+      },
+      "error": "concurrent Rust build/test processes detected: 16926; retry when idle",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py\", line 373, in run_one\n    phase = measure_phase(directory, processes, sequence, command, args.timeout)\n  File \"/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py\", line 270, in measure_phase\n    check_build_interference()\n  File \"/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py\", line 112, in check_build_interference\n    raise RuntimeError(f\"concurrent Rust build/test processes detected: {', '.join(builds)}; retry when idle\")\nRuntimeError: concurrent Rust build/test processes detected: 16926; retry when idle\n",
+      "display": {
+        "cell_width": 6.0,
+        "cell_height": 12.0,
+        "dpi_scale": 1.0
+      },
+      "visibility_confirmation": {
+        "method": "CLI auto-foreground per user instruction; not independently verified by CUA",
+        "continuous_visibility_monitoring": false
+      }
+    }
+  ]
+}

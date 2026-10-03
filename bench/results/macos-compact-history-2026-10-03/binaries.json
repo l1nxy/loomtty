@@ -1,0 +1,12 @@
+{
+  "source_worktree": "/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty",
+  "base_commit": "d60c18a",
+  "before_client": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/main-bench-20261003/loomtty.app/Contents/MacOS/loomtty",
+  "after_client": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/compact-history-20261003/loomtty.app/Contents/MacOS/loomtty",
+  "common_server": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/main-bench-20261003/loomtty.app/Contents/Helpers/loomtty-server.app/Contents/MacOS/loomtty-server",
+  "build_command": "cargo build --release -p loomtty --features loomtty/macos-app-intents --target-dir /Users/linxy/.codex/worktrees/macos-native/loomtty/target",
+  "before_client_sha256": "e467ffb2a2659a1a347461ae969cf5270393bb5091b2e1e55da7e1e59afc52af",
+  "after_client_sha256": "dc7669639f6444bd423610fca963097a9365aff02399ef7338af6474c83e9a8f",
+  "common_server_sha256": "2b69ee4c17b103718ff746e872a5ea77bb624712bc72a3885dd3cc851ff6c331",
+  "candidate_commit": "eef91f5a607e7618d8e4451d03b5cf9306dcb060"
+}

@@ -1,0 +1,11 @@
+Round 1/3: before
+Traceback (most recent call last):
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/extras-bench-20261003/compare-compact-history.py", line 19, in <module>
+    try:code=c.main()
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/compare_loom.py", line 74, in main
+    run = run_one("loomtty", round_index, args.output / f"r{round_index}-{name}", variants[name])
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/extras-bench-20261003/compare-compact-history.py", line 11, in run_one
+    b.check_build_interference()
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py", line 112, in check_build_interference
+    raise RuntimeError(f"concurrent Rust build/test processes detected: {', '.join(builds)}; retry when idle")
+RuntimeError: concurrent Rust build/test processes detected: 8355, 8359; retry when idle

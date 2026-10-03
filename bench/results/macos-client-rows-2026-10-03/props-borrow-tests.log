@@ -1,0 +1,130 @@
+   Compiling loom-protocol v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-protocol)
+   Compiling loom-config v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-config)
+   Compiling loom-input v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-input)
+   Compiling loom-anim v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-anim)
+   Compiling loom-layout v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-layout)
+   Compiling loom-app v0.1.0 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-app)
+   Compiling loom-render v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-render)
+    Finished `test` profile [optimized + debuginfo] target(s) in 11.12s
+     Running unittests src/lib.rs (/Users/linxy/.codex/worktrees/macos-native/loomtty/target/debug/deps/loom_render-e5ec80ed1f2fff05)
+
+running 84 tests
+test font_size_tests::point_sizes_use_platform_dpi_and_backing_scale ... ok
+test glyph_cache::atlas::tests::make_glyph_entry_atlas_origin ... ok
+test glyph_cache::atlas::tests::make_glyph_entry_color_flag ... ok
+test glyph_cache::atlas::tests::shelf_packer_basic ... ok
+test glyph_cache::atlas::tests::make_glyph_entry_uv_coordinates ... ok
+test glyph_cache::atlas::tests::shelf_packer_mixed_heights_tallest_sets_shelf ... ok
+test glyph_cache::atlas::tests::shelf_packer_full ... ok
+test font_resolver::cmap::tests::emoji_presentation_basic ... ok
+test glyph_cache::atlas::tests::shelf_packer_oversized ... ok
+test glyph_cache::atlas::tests::shelf_packer_wrap ... ok
+test glyph_cache::atlas::tests::shelf_packer_zero_size_does_not_advance_cursor ... ok
+test glyph_cache::types::tests::font_style_from_bold_italic ... ok
+test glyph_cache::types::tests::font_style_hash_distinct ... ok
+test glyph_cache::types::tests::glyph_key_preserves_all_discriminators_and_full_glyph_id ... ok
+test sdf_rect::tests::is_bytemuck_pod ... ok
+test sdf_rect::tests::size_matches_shader_struct ... ok
+test glyph_cache::id_cache::tests::collisions_preserve_every_glyph_face_style_and_width ... ok
+test sdf_rect::tests::vec4_fields_are_16_aligned ... ok
+test terminal::box_drawing::tests::cross_emits_full_horizontal_and_vertical ... ok
+test terminal::box_drawing::tests::adjacent_horizontals_touch_with_no_gap_or_overlap ... ok
+test terminal::box_drawing::tests::diagonals_fall_through ... ok
+test terminal::box_drawing::tests::full_block_fills_cell ... ok
+test terminal::box_drawing::tests::horizontal_line_covers_full_cell_width ... ok
+test terminal::box_drawing::tests::out_of_range_returns_false ... ok
+test terminal::box_drawing::tests::quadrant_top_right_only_fills_top_right ... ok
+test terminal::box_drawing::tests::shaded_blocks_attenuate_alpha ... ok
+test terminal::color::tests::color_table_foreground_background_differ ... ok
+test terminal::color::tests::color_table_has_16_named_colors ... ok
+test terminal::color::tests::dim_colors_are_67_percent_of_named ... ok
+test terminal::color::tests::dim_foreground_is_67_percent_of_foreground ... ok
+test terminal::color::tests::indexed_color_216_cube_corners ... ok
+test terminal::color::tests::indexed_color_first_16_match_named ... ok
+test terminal::color::tests::indexed_color_grayscale_ramp ... ok
+test terminal::color::tests::resolve_packed_named_0_through_15 ... ok
+test terminal::color::tests::resolve_packed_named_background ... ok
+test terminal::color::tests::resolve_packed_named_dim_colors ... ok
+test terminal::color::tests::resolve_packed_named_dim_foreground ... ok
+test terminal::color::tests::resolve_packed_named_foreground_variants ... ok
+test terminal::color::tests::resolve_packed_rgb_color ... ok
+test terminal::color::tests::resolve_packed_unknown_tag_returns_white ... ok
+test terminal::glyph::tests::color_glyph_cell_span_uses_unicode_width_for_emoji ... ok
+test terminal::glyph::tests::constrain_wide_glyph_centers_in_double_cell ... ok
+test terminal::glyph::tests::constrain_wide_glyph_fits_to_double_cell ... ok
+test terminal::glyph::tests::constrain_wide_glyph_preserves_aspect_ratio ... ok
+test terminal::glyph::tests::constrain_wide_text_glyph_clamps_overwide ... ok
+test terminal::glyph::tests::constrain_wide_text_glyph_uses_bearing_not_centering ... ok
+test terminal::glyph::tests::glyph_entry_empty_is_zero ... ok
+test terminal::glyph::tests::make_relative_glyph_applies_bearing_offset ... ok
+test terminal::glyph::tests::make_relative_glyph_centers_when_cell_wider_than_face ... ok
+test terminal::instances::tests::placement_focus_theme_and_content_changes_refresh_instances ... ok
+test terminal::shaping::tests::cell_grapheme_collects_all_zwj_members_and_wide_spacers ... ok
+test terminal::shaping::tests::cell_grapheme_does_not_consume_hidden_or_differently_styled_cells ... ok
+test terminal::shaping::tests::cell_grapheme_keeps_regional_indicator_pairs_separate ... ok
+test terminal::shaping::tests::cell_grapheme_retains_single_cell_accents_and_keycaps ... ok
+test terminal::shaping::tests::grapheme_display_cols_keeps_emoji_clusters_wide ... ok
+test terminal::shaping::tests::grapheme_display_cols_respects_fallback_wide_flag ... ok
+test terminal::cell::tests::attribute_runs_match_uncached_decoding_for_all_flags ... ok
+test font_list::tests::all_is_superset_of_monospaced ... ok
+test font_list::tests::cache_returns_stable_reference ... ok
+test shaper::tests::coretext_file_loading_preserves_collection_faces ... ok
+test glyph_cache::tests::atlas_full_sets_needs_clear_without_queueing_uploads ... ok
+test glyph_cache::tests::clear_cache_resets_packers_and_marks_pending_clear ... ok
+test glyph_cache::rasterize_coretext::tests::styled_shaped_glyph_matches_character_rasterization ... ok
+test shaper::tests::shaper_new_empty ... ok
+test shaper::tests::shape_grapheme_no_font ... ok
+test terminal::tests::scrollbar_hidden_without_scrollback ... ok
+test terminal::tests::scrollbar_thumb_geometry_tracks_scroll_extent ... ok
+test terminal::tests::scrollbar_thumb_visual_state_changes_color_and_alpha ... ok
+test ui_shaper::tests::fallback_measure_matches_sum_of_advances ... ok
+test ui_shaper::tests::fallback_prefix_fit_respects_max_width ... ok
+test ui_shaper::tests::lru_evicts_oldest ... ok
+test ui_shaper::tests::lru_touches_on_get ... ok
+test ui_shaper::tests::measure_empty_is_zero ... ok
+test shaper::tests::detect_ligatures_no_font ... ok
+test terminal::tests::cursor_on_wide_spacer_anchors_to_leading_cell ... ok
+test terminal::tests::box_drawing_lines_stay_above_colored_bg_strip ... ok
+test terminal::tests::coretext_shapes_complete_emoji_across_terminal_cells ... ok
+test terminal::tests::incremental_update_only_recomputes_dirty_row_shaping ... ok
+test terminal::tests::coretext_keycap_uses_font_that_owns_the_glyph ... ok
+test shaper::tests::coretext_resolver_and_rasterizer_preserve_text_and_color_glyphs ... ok
+test terminal::tests::packed_cursor_shapes_map_to_expected_rect_geometry ... ok
+test terminal::tests::incremental_update_matches_full_rebuild_for_same_final_grid ... ok
+test terminal::tests::packed_hidden_and_wide_spacer_cells_do_not_render_text_or_decorations ... ok
+test terminal::tests::scroll_shift_rotates_row_cache_and_rebuilds_only_exposed_rows ... ok
+
+test result: ok. 84 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.95s
+
+     Running tests/box_drawing_probe.rs (/Users/linxy/.codex/worktrees/macos-native/loomtty/target/debug/deps/box_drawing_probe-a63f26b97c0639ed)
+
+running 1 test
+test inspect_box_drawing_metrics ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cross_layer_visible_grid.rs (/Users/linxy/.codex/worktrees/macos-native/loomtty/target/debug/deps/cross_layer_visible_grid-1094ef92aab079ac)
+
+running 1 test
+test protocol_client_render_visible_grid_invariants_stay_aligned ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
+
+     Running tests/ligature_smoke.rs (/Users/linxy/.codex/worktrees/macos-native/loomtty/target/debug/deps/ligature_smoke-2953db6dfbb67a65)
+
+running 6 tests
+test cjk_glyph_metrics_do_not_change_when_ascii_follows ... ok
+test render_ascii_before_cjk_stays_in_own_cells ... ok
+test run_shape_substitutes_double_equals_glyphs ... ok
+test run_shape_substitutes_double_plus_glyphs ... ok
+test render_cjk_before_ascii_keeps_cjk_double_cell_size ... ok
+test render_double_plus_does_not_fall_back_to_bare_plus ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests loom_render
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

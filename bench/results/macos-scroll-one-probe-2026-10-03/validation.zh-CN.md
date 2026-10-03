@@ -50,3 +50,5 @@ v3 将完整快路径保持为独立函数。相同三场景中底部代价缩�
 v3 的 scrolling_fullscreen、scrolling_top_region 已各完成三对，原始结果归档于 v3。scrolling_top_small_region 的 r1 批次最后一次遇到并发 Rust 构建，r2 在首个运行遇到并发构建；失败批次单独保存，未混入中位数。r3 批次随后完成该场景完整三对，吞吐约 -0.94%、CPU/MiB 约 +0.28%，不将其称为性能收益。还需完成三轮完整四终端（Loomtty / Alacritty / Kitty / Ghostty）对照。不得用 v1 的数据冒充 v3，也不得把这些定向 A/B 算成已完成四终端对比。对已观察到的区域/TUI 延迟代价，最终选择时必须如实保留，不只筛选获益场景。
 
 本次归档检查：Python 控制器语法检查、cargo fmt --check 通过；workspace all-targets clippy 首次遇到共享 target 中旧协议产物（源文件实际有相应导出），触发 loom-protocol 重编译后通过，保留现有 warnings。没有修改 Rust 源码内容或测量用冻结二进制。
+
+2026-10-03 后续：四终端 main 基线已完成每款三次唯一完整启动，见 ../macos-main-four-complete-2026-10-03/summary.zh-CN.md。v3 本身仍是单独的服务端滚屏候选，没有因此自动合入 main。

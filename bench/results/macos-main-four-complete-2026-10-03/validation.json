@@ -1,0 +1,14 @@
+{
+  "complete_unique_launches": 12,
+  "phases_per_launch": 32,
+  "official_scenes_per_launch": 12,
+  "grid": [
+    100,
+    30
+  ],
+  "pty_output_flags": 3,
+  "unique_source_directories": 12,
+  "result_sha256": "b676bdfc5751b20dfcb342f8e56753a7a439f3cd3586a124e54beafba284f97b",
+  "visibility": "CLI auto-foreground per user, not continuously monitored",
+  "provenance": "r0-kitty from batch f; other 11 launches from batch i; intervening failures excluded and retained in macos-main-four-2026-10-03"
+}

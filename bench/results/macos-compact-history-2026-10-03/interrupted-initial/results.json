@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-10-03T14:43:17.940691+00:00",
+  "machine": {
+    "chip": "Apple M6",
+    "macos": "27.0",
+    "architecture": "arm64",
+    "memory_bytes": 34359738368,
+    "power": "Now drawing from 'AC Power'",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded"
+  },
+  "settings": {
+    "apps": [
+      "before",
+      "after"
+    ],
+    "rounds": 3,
+    "mib": 8,
+    "columns": 100,
+    "rows": 30,
+    "frames": 1200,
+    "latency_samples": 200,
+    "idle_seconds": 5,
+    "seed": 5306,
+    "timeout": 120,
+    "output": "/private/tmp/loom-compact-history-ab",
+    "loom": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/compact-history-20261003/loomtty.app/Contents/MacOS/loomtty",
+    "loom_server": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/main-bench-20261003/loomtty.app/Contents/Helpers/loomtty-server.app/Contents/MacOS/loomtty-server",
+    "loom_width": 600.0,
+    "loom_height": 400.0,
+    "vtebench": null,
+    "vtebench_seconds": 3,
+    "vtebench_output_mode": "original",
+    "confirm_visible": false,
+    "probe": false,
+    "before": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/main-bench-20261003/loomtty.app/Contents/MacOS"
+  },
+  "versions": {
+    "before": {
+      "text": "loomtty 0.2.1",
+      "sha256": "e467ffb2a2659a1a347461ae969cf5270393bb5091b2e1e55da7e1e59afc52af",
+      "server_sha256": "2b69ee4c17b103718ff746e872a5ea77bb624712bc72a3885dd3cc851ff6c331"
+    },
+    "after": {
+      "text": "loomtty 0.2.1",
+      "sha256": "dc7669639f6444bd423610fca963097a9365aff02399ef7338af6474c83e9a8f",
+      "server_sha256": "2b69ee4c17b103718ff746e872a5ea77bb624712bc72a3885dd3cc851ff6c331"
+    }
+  },
+  "git_head": "fa34f0c7b77b9fcb3e78a9aa2b9d21c2566591cd",
+  "git_status": "M bench/results/macos-scroll-one-probe-2026-10-03/validation.zh-CN.md\n?? bench/results/macos-client-rows-2026-10-03/\n?? bench/results/macos-compact-history-2026-10-03/\n?? bench/results/macos-main-four-complete-2026-10-03/",
+  "benchmark_sha256": {
+    "macos_bench.py": "37b4d50ef655e25e9aa2de324187df7de055278fa407963417a7845d08749602",
+    "terminal_workload.py": "3b7eaf35cc767a2b8f01e952b8b7f7184b26fb0d0c97ef97d9b2f5444c4525fb",
+    "compare_loom.py": "bfc8b0052001c6d93eb3397b23299028b1c25ee9ca155e38aba50d5f19ef0307"
+  },
+  "runs": []
+}

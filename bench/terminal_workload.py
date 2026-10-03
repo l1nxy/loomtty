@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import select
+import sys
 import termios
 import time
 import traceback
@@ -22,6 +23,28 @@ import tty
 CSI = b"\x1b["
 CPR = re.compile(rb"\x1b\[(\d+);(\d+)R")
 BULK = ("ascii", "truecolor", "cjk", "emoji", "scroll", "cursor")
+
+
+def shared_clock_ns():
+    """A system-wide epoch for timestamps exchanged between processes.
+
+    Some macOS Python builds offset monotonic() at process initialization.
+    Local durations still work, but subtracting a worker timestamp from the
+    controller's timestamp can produce a negative startup duration.
+    """
+    if sys.platform != "darwin":
+        return time.monotonic_ns()
+    import ctypes
+
+    class Timebase(ctypes.Structure):
+        _fields_ = [("numer", ctypes.c_uint32), ("denom", ctypes.c_uint32)]
+
+    system = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+    system.mach_absolute_time.restype = ctypes.c_uint64
+    base = Timebase()
+    if system.mach_timebase_info(ctypes.byref(base)) or not base.denom:
+        raise RuntimeError("cannot determine shared Mach clock timebase")
+    return system.mach_absolute_time() * base.numer // base.denom
 
 
 def save_json(path, value):
@@ -214,7 +237,7 @@ def worker(directory):
     try:
         with Terminal() as terminal:
             terminal.fence()
-            ready_ns = time.monotonic_ns()
+            ready_ns = shared_clock_ns()
             # Allow asynchronous initial window -> PTY resize to arrive.
             time.sleep(.75)
             size = os.get_terminal_size(terminal.fd)

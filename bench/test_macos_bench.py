@@ -3,15 +3,28 @@
 import os
 import platform
 import pty
+import subprocess
+import sys
 import threading
 import time
 import tty
 import unittest
 
-from terminal_workload import BULK, Terminal, distribution, payload
+from terminal_workload import BULK, Terminal, distribution, payload, shared_clock_ns
 
 
 class WorkloadTests(unittest.TestCase):
+    def test_startup_clock_has_same_epoch_in_fresh_process(self):
+        from pathlib import Path
+        before = shared_clock_ns()
+        child = int(subprocess.check_output(
+            [sys.executable, "-c", "from terminal_workload import shared_clock_ns; print(shared_clock_ns())"],
+            cwd=Path(__file__).resolve().parent,
+        ))
+        after = shared_clock_ns()
+        self.assertLessEqual(before, child)
+        self.assertLessEqual(child, after)
+
     def test_complete_utf8_at_non_aligned_size(self):
         for name in BULK:
             with self.subTest(name=name):

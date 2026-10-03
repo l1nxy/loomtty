@@ -23,7 +23,7 @@ import sys
 import time
 import traceback
 
-from terminal_workload import BULK, save_json
+from terminal_workload import BULK, save_json, shared_clock_ns
 
 ROOT = Path(__file__).resolve().parents[1]
 APPS = {
@@ -303,7 +303,7 @@ def run_one(app, round_index, directory, args):
     result = dict(app=app, round=round_index, phases=phase_results, config=config.read_text())
     log = (directory / "terminal.log").open("w")
     try:
-        start = time.monotonic_ns()
+        start = shared_clock_ns()
         if app == "loomtty":
             runtime = directory / "tmp"
             runtime.mkdir()
@@ -339,7 +339,8 @@ def run_one(app, round_index, directory, args):
         worker_process = Process(ready["pid"], "worker")
         if app == "ghostty":
             processes.append(Process(terminal_ancestor(ready["pid"], APPS[app]), app))
-        result.update(ready=ready, startup_ms=(ready["ready_ns"] - start) / 1e6,
+        result.update(ready=ready, startup_clock="system-wide monotonic nanoseconds",
+                      startup_ms=(ready["ready_ns"] - start) / 1e6,
                       processes={p.label: p.pid for p in processes})
         if (ready["columns"], ready["rows"]) != (args.columns, args.rows):
             raise RuntimeError(f"{app} grid is {ready['columns']}x{ready['rows']}; expected {args.columns}x{args.rows}")

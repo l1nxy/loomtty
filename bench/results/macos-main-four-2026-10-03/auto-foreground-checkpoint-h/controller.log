@@ -1,0 +1,12 @@
+Round 1/3: kitty
+  Reusing complete verified launch from /private/tmp/loom-four-auto-1003f/r0-kitty
+  ready 1060.4ms, grid 100x30
+Round 1/3: alacritty
+Traceback (most recent call last):
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/extras-bench-20261003/resume-four-auto.py", line 98, in <module>
+    code = b.main()
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py", line 580, in main
+    run = run_one(app, round_index, args.output / f"r{round_index}-{app}", args)
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/extras-bench-20261003/resume-four-auto.py", line 66, in run_one
+    raise RuntimeError('No stable idle interval within 180 seconds')
+RuntimeError: No stable idle interval within 180 seconds

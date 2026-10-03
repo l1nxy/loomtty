@@ -31,22 +31,6 @@ fn rebase_grapheme_lookup(
 }
 
 impl ClientPaneGrid {
-    /// Most updates have no links or combining sequences to evict. Check each
-    /// sparse table once per region instead of hashing every overwritten cell.
-    fn evict_cell_extras(&mut self, range: std::ops::Range<usize>) {
-        if !self.hyperlink_cell_map.is_empty() {
-            for idx in range.clone() {
-                self.hyperlink_cell_map.remove(&(idx as u32));
-            }
-        }
-        if !self.grapheme_map.is_empty() {
-            let history_cells = self.scrollback.len() * self.cols as usize;
-            for idx in range {
-                self.grapheme_map.remove(&((history_cells + idx) as u32));
-            }
-        }
-    }
-
     /// Convenience wrapper for tests: encode a `FullPaneSync` and apply the borrowed version.
     pub fn apply_full_sync_owned(&mut self, sync: &FullPaneSync) {
         match loom_protocol::codec::full_pane_sync_to_borrowed(sync) {
@@ -245,7 +229,12 @@ impl ClientPaneGrid {
             if copy_len > 0 {
                 let dst_start = line * cols + col_start;
                 let dst_end = line * cols + col_end;
-                self.evict_cell_extras(dst_start..dst_end);
+                // Evict stale side-table entries for overwritten cells
+                for idx in dst_start..dst_end {
+                    self.hyperlink_cell_map.remove(&(idx as u32));
+                    self.grapheme_map
+                        .remove(&((self.scrollback.len() * cols + idx) as u32));
+                }
                 self.viewport[dst_start..dst_end].copy_from_slice(&region.cells[..copy_len]);
                 self.mark_row_dirty(line);
             }
@@ -284,7 +273,12 @@ impl ClientPaneGrid {
             if copy_len > 0 {
                 let dst_start = line * cols + col_start;
                 let dst_end = dst_start + copy_len;
-                self.evict_cell_extras(dst_start..dst_end);
+                // Evict stale side-table entries for overwritten cells
+                for idx in dst_start..dst_end {
+                    self.hyperlink_cell_map.remove(&(idx as u32));
+                    self.grapheme_map
+                        .remove(&((self.scrollback.len() * cols + idx) as u32));
+                }
                 let sm_data = delta.sm_data(i);
                 match loom_protocol::codec::decode_sm_cells(
                     sm_data,

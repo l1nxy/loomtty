@@ -1,0 +1,149 @@
+    Checking loom-render v0.2.1 (/Users/linxy/.codex/worktrees/macos-native/loomtty/crates/loom-render)
+    Checking loom-term v0.2.1 (/Users/linxy/.codex/worktrees/macos-native/loomtty/crates/loom-term)
+    Checking loom-protocol v0.2.1 (/Users/linxy/.codex/worktrees/macos-native/loomtty/crates/loom-protocol)
+warning: doc list item without indentation
+    --> crates/loom-protocol/src/codec/tests.rs:1944:9
+     |
+1944 |     /// This test pins both the name bytes and the payload shape.
+     |         ^
+     |
+     = help: if this is supposed to be its own paragraph, add a blank line
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#doc_lazy_continuation
+     = note: `#[warn(clippy::doc_lazy_continuation)]` on by default
+help: indent this line
+     |
+1944 |     ///     This test pins both the name bytes and the payload shape.
+     |         ++++
+
+warning: `loom-protocol` (lib test) generated 1 warning
+warning: the loop variable `i` is only used to index `cells`
+    --> crates/loom-app/src/grid/tests.rs:1822:14
+     |
+1822 |     for i in 0..5 {
+     |              ^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#needless_range_loop
+     = note: `#[warn(clippy::needless_range_loop)]` on by default
+help: consider using an iterator
+     |
+1822 -     for i in 0..5 {
+1822 +     for <item> in cells.iter_mut().take(5) {
+     |
+
+warning: this `if` statement can be collapsed
+    --> crates/loom-app/src/prediction/tests.rs:1397:5
+     |
+1397 | /     if let Some(o) = overlay {
+1398 | |         if let Some(cell) = o.get_cell(0, 1) {
+1399 | |             assert_eq!(cell.replacement.fg, PackedColor::rgb(255, 0, 0));
+1400 | |         }
+1401 | |     }
+     | |_____^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#collapsible_if
+     = note: `#[warn(clippy::collapsible_if)]` on by default
+help: collapse nested if block
+     |
+1397 ~     if let Some(o) = overlay
+1398 ~         && let Some(cell) = o.get_cell(0, 1) {
+1399 |             assert_eq!(cell.replacement.fg, PackedColor::rgb(255, 0, 0));
+1400 ~         }
+     |
+
+warning: manual `RangeInclusive::contains` implementation
+   --> crates/loom-motion/src/transition.rs:182:21
+    |
+182 |                     v >= 0.0 && v <= 1.0,
+    |                     ^^^^^^^^^^^^^^^^^^^^ help: use: `(0.0..=1.0).contains(&v)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#manual_range_contains
+    = note: `#[warn(clippy::manual_range_contains)]` on by default
+
+warning: very complex type used. Consider factoring parts into `type` definitions
+   --> crates/loom-config/src/config.rs:207:20
+    |
+207 |         let cases: &[(&str, fn(&mut LoomConfig))] = &[
+    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#type_complexity
+    = note: `#[warn(clippy::type_complexity)]` on by default
+
+warning: `loom-app` (lib test) generated 2 warnings (run `cargo clippy --fix --lib -p loom-app --tests` to apply 1 suggestion)
+warning: `loom-motion` (lib test) generated 1 warning (run `cargo clippy --fix --lib -p loom-motion --tests` to apply 1 suggestion)
+warning: `loom-config` (lib test) generated 1 warning
+error[E0432]: unresolved import `loom_protocol::codec::PreparedPaneSync`
+ --> crates/loom-term/src/pane/snapshot.rs:3:28
+  |
+3 | use loom_protocol::codec::{PreparedPaneSync, StateEncoder};
+  |                            ^^^^^^^^^^^^^^^^ no `PreparedPaneSync` in `codec`
+
+error[E0432]: unresolved import `loom_protocol::codec::frame_prepared_pane_sync`
+    --> crates/loom-term/src/pane/tests.rs:1111:54
+     |
+1111 |     use loom_protocol::codec::{frame_full_pane_sync, frame_prepared_pane_sync};
+     |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^
+     |                                                      |
+     |                                                      no `frame_prepared_pane_sync` in `codec`
+     |                                                      help: a similar name exists in the module: `frame_full_pane_sync`
+
+error[E0425]: cannot find type `EncodedCells` in module `loom_protocol::codec`
+   --> crates/loom-term/src/pane/snapshot.rs:222:29
+    |
+222 | ) -> (loom_protocol::codec::EncodedCells, GraphemeExtras) {
+    |                             ^^^^^^^^^^^^ not found in `loom_protocol::codec`
+
+error[E0107]: struct takes 0 generic arguments but 1 generic argument was supplied
+  --> crates/loom-term/src/pane/snapshot.rs:70:10
+   |
+70 |     ) -> FullPaneSync<S> {
+   |          ^^^^^^^^^^^^--- help: remove the unnecessary generics
+   |          |
+   |          expected 0 generic arguments
+
+warning: unnecessary `>= y + 1` or `x - 1 >=`
+   --> crates/loom-term/src/pane/tests.rs:946:9
+    |
+946 |         p.prompt_marks.len() >= marks_before + 1
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: change it to: `p.prompt_marks.len() > marks_before`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#int_plus_one
+    = note: `#[warn(clippy::int_plus_one)]` on by default
+
+error[E0308]: mismatched types
+   --> crates/loom-term/src/pane/snapshot.rs:102:25
+    |
+ 60 |     fn build_snapshot<S>(
+    |                       - found this type parameter
+...
+102 |             scrollback: sb_cells,
+    |                         ^^^^^^^^ expected `Vec<PackedCell>`, found type parameter `S`
+    |
+    = note:      expected struct `std::vec::Vec<loom_protocol::message::PackedCell>`
+            found type parameter `S`
+
+error[E0599]: no method named `into_encoded_cells` found for struct `loom_protocol::codec::StateEncoder` in the current scope
+   --> crates/loom-term/src/pane/snapshot.rs:225:14
+    |
+225 |     (encoder.into_encoded_cells(), extras)
+    |              ^^^^^^^^^^^^^^^^^^ method not found in `loom_protocol::codec::StateEncoder`
+
+Some errors have detailed explanations: E0107, E0308, E0425, E0432, E0599.
+For more information about an error, try `rustc --explain E0107`.
+error: could not compile `loom-term` (lib) due to 5 previous errors
+warning: build failed, waiting for other jobs to finish...
+warning: items after a test module
+  --> crates/loom-render/src/lib.rs:31:1
+   |
+31 | mod font_size_tests {
+   | ^^^^^^^^^^^^^^^^^^^
+...
+49 | pub struct FrameScene<'a> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#items_after_test_module
+   = note: `#[warn(clippy::items_after_test_module)]` on by default
+   = help: move the items to before the test module was defined
+
+warning: `loom-term` (lib test) generated 1 warning
+error: could not compile `loom-term` (lib test) due to 6 previous errors; 1 warning emitted
+warning: `loom-render` (lib test) generated 1 warning (run `cargo clippy --fix --lib -p loom-render --tests` to apply 1 suggestion)

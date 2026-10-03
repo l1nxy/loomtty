@@ -10,6 +10,9 @@
 
 | 场景 | 吞吐 before → after MiB/s | CPU before → after ms/MiB |
 |---|---:|---:|
+| scrolling_fullscreen | 172.06 → 175.84 | 8.16 → 8.09 |
+| scrolling_top_region | 49.08 → 48.93 | 25.30 → 25.29 |
+| scrolling_top_small_region | 76.19 → 75.47 | 17.26 → 17.31 |
 | scrolling | 82.69 → 100.00 | 16.54 → 14.34 |
 | scrolling_bottom_region | 96.39 → 95.24 | 14.32 → 14.47 |
 | scrolling_bottom_small_region | 55.36 → 54.79 | 22.70 → 23.00 |
@@ -38,10 +41,12 @@ v1（1b584fcb）把完整快路径放进 Grid::scroll_up 的可内联入口：�
 
 v2（37f53bf3）把判断移到 Term 的区域处理处，Grid 通用入口恢复原样，但编译器仍把快路径内联进公共调用者；底部区域约 2.4% 吞吐代价仍在。三种场景每项三对保存于 v2。
 
-v3 将完整快路径保持为独立函数。相同三场景中底部代价缩小至约 1%，并保留普通滚屏收益。暂时保留为候选，完整四终端比较和剩余 v3 上游场景还未完成，因此尚未合入或发布。候选并未解决所有 TUI/内存问题。
+v3 将完整快路径保持为独立函数。相同三场景中底部代价缩小至约 1%，并保留普通滚屏收益。暂时保留为候选，六种 v3 上游滚屏场景已各完成三对，完整四终端比较尚未完成，因此尚未合入或发布。候选并未解决所有 TUI/内存问题。
 
 ## 正确性与剩余工作
 
 终端库差分测试比较整屏单行快路径与原始通用算法，覆盖历史增长、回绕、模板变化、视口滚动和计数饱和。终端库 137 项测试通过；Loom 终端、协议、数据模型和跨 crate 集成测试共 549 项通过、3 项忽略。workspace clippy、release 构建完成；变更保持在独立 worktree，主工作区 Cargo 依赖未改。
 
-还需完成 v3 的 scrolling_fullscreen、scrolling_top_region、scrolling_top_small_region 回归，以及三轮完整四终端（Loomtty / Alacritty / Kitty / Ghostty）对照。不得用 v1 的数据冒充 v3，也不得把这些定向 A/B 算成已完成四终端对比。对已观察到的区域/TUI 延迟代价，最终选择时必须如实保留，不只筛选获益场景。
+v3 的 scrolling_fullscreen、scrolling_top_region 已各完成三对，原始结果归档于 v3。scrolling_top_small_region 的 r1 批次最后一次遇到并发 Rust 构建，r2 在首个运行遇到并发构建；失败批次单独保存，未混入中位数。r3 批次随后完成该场景完整三对，吞吐约 -0.94%、CPU/MiB 约 +0.28%，不将其称为性能收益。还需完成三轮完整四终端（Loomtty / Alacritty / Kitty / Ghostty）对照。不得用 v1 的数据冒充 v3，也不得把这些定向 A/B 算成已完成四终端对比。对已观察到的区域/TUI 延迟代价，最终选择时必须如实保留，不只筛选获益场景。
+
+本次归档检查：Python 控制器语法检查、cargo fmt --check 通过；workspace all-targets clippy 首次遇到共享 target 中旧协议产物（源文件实际有相应导出），触发 loom-protocol 重编译后通过，保留现有 warnings。没有修改 Rust 源码内容或测量用冻结二进制。

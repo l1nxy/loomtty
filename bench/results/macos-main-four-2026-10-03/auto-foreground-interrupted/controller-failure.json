@@ -1,0 +1,6 @@
+{
+  "app": "kitty",
+  "round": 0,
+  "result_directory": "/private/tmp/loom-four-auto-1003d/r0-kitty",
+  "error": "concurrent Rust build/test processes detected: 41600, 41604; retry when idle"
+}

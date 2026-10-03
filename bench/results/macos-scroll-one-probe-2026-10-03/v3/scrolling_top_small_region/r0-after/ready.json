@@ -1,0 +1,9 @@
+{
+  "pid": 42941,
+  "ppid": 42937,
+  "ready_ns": 8479506719500,
+  "columns": 100,
+  "rows": 30,
+  "term": "xterm-256color",
+  "term_program": "loomtty"
+}

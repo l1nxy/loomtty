@@ -1,0 +1,20 @@
+Round 1/3: kitty
+  Waiting for unrelated Rust builds to finish before launch
+  kitty: idle 5.007s
+  kitty: warm_idle 5.010s
+  kitty: ascii 0.038s
+  kitty: truecolor 0.047s
+  kitty: cjk 0.046s
+  kitty: emoji 0.042s
+  kitty: scroll 0.129s
+  kitty: cursor 0.043s
+  kitty: latency 2.039s
+  kitty: loaded_latency 0.705s
+Traceback (most recent call last):
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/extras-bench-20261003/run-four-auto-retry.py", line 43, in <module>
+    code=b.main()
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py", line 580, in main
+    run = run_one(app, round_index, args.output / f"r{round_index}-{app}", args)
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/extras-bench-20261003/run-four-auto-retry.py", line 36, in run_one
+    raise RuntimeError(f"{app}: {result['error']}; result retained in {directory}")
+RuntimeError: kitty: concurrent Rust build/test processes detected: 48274, 48276; retry when idle; result retained in /private/tmp/loom-four-auto-1003e/r0-kitty

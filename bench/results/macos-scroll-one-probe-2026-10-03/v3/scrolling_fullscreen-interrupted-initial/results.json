@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-10-03T13:00:05.312799+00:00",
+  "binaries": {
+    "loom_base_commit": "d60c18a",
+    "alacritty_base_commit": "867784628f619fc2f58c55d271ad5f6014d722c6",
+    "alacritty_candidate_commit": "15f9b6f159864d2d93bc70753e4633e1219d61ec",
+    "candidate_server": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/scroll-server-ab-v3-20261003/loomtty-server.app/Contents/MacOS/loomtty-server",
+    "candidate_server_sha256": "cfba8d029b164b476f6caefe2d17fc5c212a764e10844898f1a4a990ef835f78",
+    "common_client": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/main-bench-20261003/loomtty.app/Contents/MacOS/loomtty",
+    "baseline_server": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/main-bench-20261003/loomtty.app/Contents/Helpers/loomtty-server.app/Contents/MacOS/loomtty-server",
+    "build_command": "cargo build --release -p loomtty -p loomtty-server --features loomtty/macos-app-intents --target-dir /Users/linxy/.codex/worktrees/macos-native/loomtty/target",
+    "status": "v3 targeted scrolling and three-pair full Loom A/B completed; small regional/TUI latency tradeoffs; remaining scenes/four-terminal comparison pending",
+    "common_client_sha256": "e467ffb2a2659a1a347461ae969cf5270393bb5091b2e1e55da7e1e59afc52af",
+    "baseline_server_sha256": "2b69ee4c17b103718ff746e872a5ea77bb624712bc72a3885dd3cc851ff6c331"
+  },
+  "diagnostic_scope": "targeted upstream scrolling_fullscreen only; no full-suite or TUI/memory safety claim",
+  "visibility": "CLI auto-foreground per user instruction; not continuously monitored",
+  "runs": [],
+  "machine": {
+    "chip": "Apple M6",
+    "macos": "27.0",
+    "power": "Now drawing from 'AC Power'",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded"
+  },
+  "controller_error": "concurrent Rust build/test processes detected: 14883, 15314; retry when idle"
+}

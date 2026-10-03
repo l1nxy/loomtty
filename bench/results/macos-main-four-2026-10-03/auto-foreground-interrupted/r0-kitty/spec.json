@@ -1,0 +1,7 @@
+{
+  "columns": 100,
+  "rows": 30,
+  "bytes": 8388608,
+  "worker_timeout": 1800,
+  "vtebench": "/Users/linxy/.codex/worktrees/macos-native/vtebench-extras-20261003"
+}

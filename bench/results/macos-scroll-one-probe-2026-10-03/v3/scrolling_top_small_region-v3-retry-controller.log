@@ -1,0 +1,15 @@
+0 before
+  MiB/s 75.82938388625593 CPU s 4.446413124999999
+0 after
+  MiB/s 75.82938388625593 CPU s 4.417336
+1 after
+  MiB/s 75.47169811320755 CPU s 4.434374416666666
+1 before
+  MiB/s 75.82938388625593 CPU s 4.391606374999999
+2 before
+  MiB/s 76.19047619047619 CPU s 4.415020541666666
+2 after
+Traceback (most recent call last):
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/extras-bench-20261003/compare-selected-v3-retry.py", line 54, in <module>
+    if 'error' in result:raise RuntimeError(result['error'])
+RuntimeError: concurrent Rust build/test processes detected: 38270, 38326; retry when idle

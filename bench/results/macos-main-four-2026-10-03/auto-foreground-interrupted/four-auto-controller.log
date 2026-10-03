@@ -1,0 +1,35 @@
+Round 1/3: kitty
+  Waiting for unrelated Rust builds to finish before launch
+  kitty: idle 5.010s
+  kitty: warm_idle 5.010s
+  kitty: ascii 0.038s
+  kitty: truecolor 0.052s
+  kitty: cjk 0.046s
+  kitty: emoji 0.043s
+  kitty: scroll 0.133s
+  kitty: cursor 0.043s
+  kitty: latency 2.050s
+  kitty: loaded_latency 0.678s
+  kitty: tui_full 10.002s
+  kitty: tui_partial 10.000s
+  kitty: scrollback 0.006s
+  kitty: post_idle 5.010s
+  kitty: vtebench/cursor_motion 4.904s
+  kitty: vtebench/dense_cells 4.497s
+  kitty: vtebench/light_cells 6.285s
+  kitty: vtebench/medium_cells 3.572s
+  kitty: vtebench/scrolling 7.640s
+  kitty: vtebench/scrolling_bottom_region 4.815s
+  kitty: vtebench/scrolling_bottom_small_region 4.182s
+  kitty: vtebench/scrolling_fullscreen 4.189s
+  kitty: vtebench/scrolling_top_region 4.312s
+  kitty: vtebench/scrolling_top_small_region 4.114s
+  kitty: vtebench/sync_medium_cells 4.197s
+Traceback (most recent call last):
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/extras-bench-20261003/run-four-auto.py", line 43, in <module>
+    code=b.main()
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py", line 580, in main
+    run = run_one(app, round_index, args.output / f"r{round_index}-{app}", args)
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/extras-bench-20261003/run-four-auto.py", line 36, in run_one
+    raise RuntimeError(f"{app}: {result['error']}; result retained in {directory}")
+RuntimeError: kitty: concurrent Rust build/test processes detected: 41600, 41604; retry when idle; result retained in /private/tmp/loom-four-auto-1003d/r0-kitty

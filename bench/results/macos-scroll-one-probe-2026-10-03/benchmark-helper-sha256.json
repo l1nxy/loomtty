@@ -1,0 +1,6 @@
+{
+  "macos_bench.py": "37b4d50ef655e25e9aa2de324187df7de055278fa407963417a7845d08749602",
+  "terminal_workload.py": "3b7eaf35cc767a2b8f01e952b8b7f7184b26fb0d0c97ef97d9b2f5444c4525fb",
+  "vtebench_workload.py": "6fb98eefe7fbc5a821539e9624ed307dccf39d9b2836420859cdcdc920af0b14",
+  "compare_loom.py": "bfc8b0052001c6d93eb3397b23299028b1c25ee9ca155e38aba50d5f19ef0307"
+}

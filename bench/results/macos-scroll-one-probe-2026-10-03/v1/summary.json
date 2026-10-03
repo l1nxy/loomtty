@@ -1,0 +1,68 @@
+[
+  {
+    "scene": "scrolling",
+    "before": {
+      "mib_per_second_median": 81.21827411167513,
+      "cpu_ms_per_mib_median": 17.160977701822915
+    },
+    "after": {
+      "mib_per_second_median": 98.76543209876543,
+      "cpu_ms_per_mib_median": 15.029324088541662
+    }
+  },
+  {
+    "scene": "scrolling_top_region",
+    "before": {
+      "mib_per_second_median": 48.78048780487805,
+      "cpu_ms_per_mib_median": 25.985876420454534
+    },
+    "after": {
+      "mib_per_second_median": 48.6322188449848,
+      "cpu_ms_per_mib_median": 26.04248224431818
+    }
+  },
+  {
+    "scene": "scrolling_fullscreen",
+    "before": {
+      "mib_per_second_median": 173.9263741866402,
+      "cpu_ms_per_mib_median": 8.435908712867612
+    },
+    "after": {
+      "mib_per_second_median": 175.83765302385603,
+      "cpu_ms_per_mib_median": 8.164356196829258
+    }
+  },
+  {
+    "scene": "scrolling_bottom_region",
+    "before": {
+      "mib_per_second_median": 96.38554216867469,
+      "cpu_ms_per_mib_median": 14.412573190789473
+    },
+    "after": {
+      "mib_per_second_median": 93.56725146198829,
+      "cpu_ms_per_mib_median": 14.89557648026316
+    }
+  },
+  {
+    "scene": "scrolling_top_small_region",
+    "before": {
+      "mib_per_second_median": 76.19047619047619,
+      "cpu_ms_per_mib_median": 17.327932779947915
+    },
+    "after": {
+      "mib_per_second_median": 76.19047619047619,
+      "cpu_ms_per_mib_median": 17.231723795572915
+    }
+  },
+  {
+    "scene": "scrolling_bottom_small_region",
+    "before": {
+      "mib_per_second_median": 55.36332179930796,
+      "cpu_ms_per_mib_median": 22.760022786458332
+    },
+    "after": {
+      "mib_per_second_median": 54.054054054054056,
+      "cpu_ms_per_mib_median": 23.170240885416664
+    }
+  }
+]

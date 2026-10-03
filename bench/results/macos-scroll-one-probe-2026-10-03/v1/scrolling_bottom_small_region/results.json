@@ -1,0 +1,1383 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-10-03T12:28:21.895374+00:00",
+  "binaries": {
+    "loom_base_commit": "d60c18a",
+    "alacritty_base_commit": "867784628f619fc2f58c55d271ad5f6014d722c6",
+    "alacritty_candidate_commit": "1b584fcb74df9261d27d8ac87fe3c934b2c43d8f",
+    "candidate_server": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/scroll-server-ab-20261003/loomtty-server.app/Contents/MacOS/loomtty-server",
+    "candidate_server_sha256": "7426d15aa3f258c97f0bb79d9f1bd9b746f6cb80617b30f46b10286d2c0ff694",
+    "common_client": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/main-bench-20261003/loomtty.app/Contents/MacOS/loomtty",
+    "baseline_server": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/main-bench-20261003/loomtty.app/Contents/Helpers/loomtty-server.app/Contents/MacOS/loomtty-server",
+    "build_command": "cargo build --release -p loomtty -p loomtty-server --features loomtty/macos-app-intents --target-dir /Users/linxy/.codex/worktrees/macos-native/loomtty/target",
+    "status": "correctness checked; performance A/B pending",
+    "common_client_sha256": "e467ffb2a2659a1a347461ae969cf5270393bb5091b2e1e55da7e1e59afc52af",
+    "baseline_server_sha256": "2b69ee4c17b103718ff746e872a5ea77bb624712bc72a3885dd3cc851ff6c331"
+  },
+  "diagnostic_scope": "targeted upstream scrolling_bottom_small_region only; no full-suite or TUI/memory safety claim",
+  "visibility": "CLI auto-foreground per user instruction; not continuously monitored",
+  "runs": [
+    {
+      "app": "loomtty",
+      "round": 0,
+      "phases": [
+        {
+          "name": "vtebench/scrolling_bottom_small_region",
+          "benchmark": "scrolling_bottom_small_region",
+          "seconds": 4.267966875,
+          "argv": [
+            "/Users/linxy/.codex/worktrees/macos-native/vtebench-extras-20261003/target/release/vtebench",
+            "--benchmarks",
+            "/tmp/loom-sab-scrolling_bottom_small_region-1003/r0-before/vtebench/scrolling_bottom_small_region",
+            "--min-bytes",
+            "16777216",
+            "--warmup",
+            "1",
+            "--max-secs",
+            "3",
+            "--silent",
+            "--dat",
+            "/tmp/loom-sab-scrolling_bottom_small_region-1003/r0-before/vtebench/scrolling_bottom_small_region.dat"
+          ],
+          "output_mode": {
+            "mode": "original",
+            "flags": 3,
+            "opost": true,
+            "onlcr": true
+          },
+          "samples_ms": [
+            291,
+            292,
+            289,
+            290,
+            291,
+            289,
+            289,
+            290,
+            289,
+            290,
+            290
+          ],
+          "sample_bytes": 16777216,
+          "warmup_samples": 1,
+          "payload": {
+            "name": "scrolling_bottom_small_region",
+            "benchmark": {
+              "bytes": 2,
+              "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+            },
+            "setup": {
+              "bytes": 15,
+              "sha256": "7c557dd62996c7e130f997966d106c428886cde535e67af6aac2e0d9d48de6fa"
+            }
+          },
+          "median_ms": 290,
+          "mib_per_second": 55.17241379310345,
+          "payload_bytes_written": 201326592,
+          "resources": {
+            "sample_seconds": 4.565563708,
+            "cpu_seconds": 4.360967291666666,
+            "cpu_percent_one_core": 95.51870416407004,
+            "peak_rss_mib": 115.578125,
+            "peak_footprint_mib": 100.86095428466797,
+            "end_rss_mib": 115.46875,
+            "end_footprint_mib": 90.72030639648438,
+            "wakeups": 88,
+            "components": {
+              "server": {
+                "cpu_seconds": 4.355172291666666,
+                "end_rss_mib": 13.375,
+                "end_footprint_mib": 4.45367431640625
+              },
+              "client": {
+                "cpu_seconds": 0.005794999999999995,
+                "end_rss_mib": 102.09375,
+                "end_footprint_mib": 86.26663208007812
+              }
+            }
+          },
+          "warmup": false
+        }
+      ],
+      "config": "[font]\nfamily = \"Menlo\"\nsize = 10.0\ndisable_ligatures = \"always\"\n[window]\nwidth = 600.0\nheight = 400.0\ntitle = \"loom benchmark\"\n[appearance]\npadding = 0.0\nborder_width = 0.0\ncolumn_gap = 0.0\n[statusbar]\npadding_ratio = 0.0\n[terminal]\nshell = \"/tmp/loom-sab-scrolling_bottom_small_region-1003/r0-before/worker.sh\"\ndefault_cols = 100\ndefault_rows = 30\ncursor_blink = false\nscrollback_lines = 10000\n[render]\nbackend = \"blade\"\n",
+      "ready": {
+        "pid": 75928,
+        "ppid": 75925,
+        "ready_ns": 5569743922125,
+        "columns": 100,
+        "rows": 30,
+        "term": "xterm-256color",
+        "term_program": "loomtty"
+      },
+      "startup_clock": "system-wide monotonic nanoseconds",
+      "startup_ms": 430.316334,
+      "processes": {
+        "server": 75925,
+        "client": 75926
+      },
+      "vtebench_manifest": [
+        {
+          "name": "cursor_motion",
+          "benchmark": {
+            "bytes": 424944,
+            "sha256": "45c7cc4b9f221ba97e525194265f924c7d182e7230ac8ab002677e86ee4f3c00"
+          }
+        },
+        {
+          "name": "dense_cells",
+          "benchmark": {
+            "bytes": 1347918,
+            "sha256": "14867588a715fabfe9a0b8295517f36197862b9bca853064f8d8788658088b93"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        },
+        {
+          "name": "light_cells",
+          "benchmark": {
+            "bytes": 49998,
+            "sha256": "a71d9c7281ebf4deb2f5f126506b8ce5524d4220ac929ff32b510de3e4deea46"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        },
+        {
+          "name": "medium_cells",
+          "benchmark": {
+            "bytes": 178345,
+            "sha256": "eb71cdb2c6255725288535f759c7177b3d601a0fe92dde114443462c4a7db727"
+          }
+        },
+        {
+          "name": "scrolling",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 200002,
+            "sha256": "4377ba180b1a908816151943507e62b07ff71b9c044a3f620976701b45c20210"
+          }
+        },
+        {
+          "name": "scrolling_bottom_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "10a4d5afec1238e958f37d161a2c709554f210965bb4737c24a8e18067097226"
+          }
+        },
+        {
+          "name": "scrolling_bottom_small_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "7c557dd62996c7e130f997966d106c428886cde535e67af6aac2e0d9d48de6fa"
+          }
+        },
+        {
+          "name": "scrolling_fullscreen",
+          "benchmark": {
+            "bytes": 2106,
+            "sha256": "b247c42735889bd02cd746cd03a8b331c94b773199897f6956d11219742fea0f"
+          },
+          "setup": {
+            "bytes": 200002,
+            "sha256": "4377ba180b1a908816151943507e62b07ff71b9c044a3f620976701b45c20210"
+          }
+        },
+        {
+          "name": "scrolling_top_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "f1fbd57d492db5429eab9779471ce36676072744b746bd7f68f8f61936dc2a26"
+          }
+        },
+        {
+          "name": "scrolling_top_small_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 16,
+            "sha256": "0cf828fca4f9639dfd11ff4350ed33927b66e24a3a3fddaceb113a4416589614"
+          }
+        },
+        {
+          "name": "sync_medium_cells",
+          "benchmark": {
+            "bytes": 185737,
+            "sha256": "f3b8a3dfdec88620539faaf53f12ef5f5a051886ddbd508086ede685fa9e6227"
+          }
+        },
+        {
+          "name": "unicode",
+          "benchmark": {
+            "bytes": 138296,
+            "sha256": "0650c4a97837d04d459492b601ea1d0d563517853525a8657a11a4bdd2d60fea"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        }
+      ],
+      "display": {
+        "cell_width": 6.0,
+        "cell_height": 12.0,
+        "dpi_scale": 1.0
+      },
+      "variant": "before"
+    },
+    {
+      "app": "loomtty",
+      "round": 0,
+      "phases": [
+        {
+          "name": "vtebench/scrolling_bottom_small_region",
+          "benchmark": "scrolling_bottom_small_region",
+          "seconds": 4.334876292,
+          "argv": [
+            "/Users/linxy/.codex/worktrees/macos-native/vtebench-extras-20261003/target/release/vtebench",
+            "--benchmarks",
+            "/tmp/loom-sab-scrolling_bottom_small_region-1003/r0-after/vtebench/scrolling_bottom_small_region",
+            "--min-bytes",
+            "16777216",
+            "--warmup",
+            "1",
+            "--max-secs",
+            "3",
+            "--silent",
+            "--dat",
+            "/tmp/loom-sab-scrolling_bottom_small_region-1003/r0-after/vtebench/scrolling_bottom_small_region.dat"
+          ],
+          "output_mode": {
+            "mode": "original",
+            "flags": 3,
+            "opost": true,
+            "onlcr": true
+          },
+          "samples_ms": [
+            296,
+            296,
+            296,
+            296,
+            298,
+            295,
+            296,
+            296,
+            296,
+            296,
+            295
+          ],
+          "sample_bytes": 16777216,
+          "warmup_samples": 1,
+          "payload": {
+            "name": "scrolling_bottom_small_region",
+            "benchmark": {
+              "bytes": 2,
+              "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+            },
+            "setup": {
+              "bytes": 15,
+              "sha256": "7c557dd62996c7e130f997966d106c428886cde535e67af6aac2e0d9d48de6fa"
+            }
+          },
+          "median_ms": 296,
+          "mib_per_second": 54.054054054054056,
+          "payload_bytes_written": 201326592,
+          "resources": {
+            "sample_seconds": 4.6025726670000005,
+            "cpu_seconds": 4.415151333333332,
+            "cpu_percent_one_core": 95.92790060631826,
+            "peak_rss_mib": 115.59375,
+            "peak_footprint_mib": 101.01727294921875,
+            "end_rss_mib": 115.53125,
+            "end_footprint_mib": 88.82977294921875,
+            "wakeups": 89,
+            "components": {
+              "server": {
+                "cpu_seconds": 4.409275166666666,
+                "end_rss_mib": 13.375,
+                "end_footprint_mib": 4.469322204589844
+              },
+              "client": {
+                "cpu_seconds": 0.005876166666666682,
+                "end_rss_mib": 102.15625,
+                "end_footprint_mib": 84.3604507446289
+              }
+            }
+          },
+          "warmup": false
+        }
+      ],
+      "config": "[font]\nfamily = \"Menlo\"\nsize = 10.0\ndisable_ligatures = \"always\"\n[window]\nwidth = 600.0\nheight = 400.0\ntitle = \"loom benchmark\"\n[appearance]\npadding = 0.0\nborder_width = 0.0\ncolumn_gap = 0.0\n[statusbar]\npadding_ratio = 0.0\n[terminal]\nshell = \"/tmp/loom-sab-scrolling_bottom_small_region-1003/r0-after/worker.sh\"\ndefault_cols = 100\ndefault_rows = 30\ncursor_blink = false\nscrollback_lines = 10000\n[render]\nbackend = \"blade\"\n",
+      "ready": {
+        "pid": 76773,
+        "ppid": 76770,
+        "ready_ns": 5578916928875,
+        "columns": 100,
+        "rows": 30,
+        "term": "xterm-256color",
+        "term_program": "loomtty"
+      },
+      "startup_clock": "system-wide monotonic nanoseconds",
+      "startup_ms": 492.63475,
+      "processes": {
+        "server": 76770,
+        "client": 76771
+      },
+      "vtebench_manifest": [
+        {
+          "name": "cursor_motion",
+          "benchmark": {
+            "bytes": 424944,
+            "sha256": "45c7cc4b9f221ba97e525194265f924c7d182e7230ac8ab002677e86ee4f3c00"
+          }
+        },
+        {
+          "name": "dense_cells",
+          "benchmark": {
+            "bytes": 1347918,
+            "sha256": "14867588a715fabfe9a0b8295517f36197862b9bca853064f8d8788658088b93"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        },
+        {
+          "name": "light_cells",
+          "benchmark": {
+            "bytes": 49998,
+            "sha256": "a71d9c7281ebf4deb2f5f126506b8ce5524d4220ac929ff32b510de3e4deea46"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        },
+        {
+          "name": "medium_cells",
+          "benchmark": {
+            "bytes": 178345,
+            "sha256": "eb71cdb2c6255725288535f759c7177b3d601a0fe92dde114443462c4a7db727"
+          }
+        },
+        {
+          "name": "scrolling",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 200002,
+            "sha256": "4377ba180b1a908816151943507e62b07ff71b9c044a3f620976701b45c20210"
+          }
+        },
+        {
+          "name": "scrolling_bottom_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "10a4d5afec1238e958f37d161a2c709554f210965bb4737c24a8e18067097226"
+          }
+        },
+        {
+          "name": "scrolling_bottom_small_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "7c557dd62996c7e130f997966d106c428886cde535e67af6aac2e0d9d48de6fa"
+          }
+        },
+        {
+          "name": "scrolling_fullscreen",
+          "benchmark": {
+            "bytes": 2106,
+            "sha256": "b247c42735889bd02cd746cd03a8b331c94b773199897f6956d11219742fea0f"
+          },
+          "setup": {
+            "bytes": 200002,
+            "sha256": "4377ba180b1a908816151943507e62b07ff71b9c044a3f620976701b45c20210"
+          }
+        },
+        {
+          "name": "scrolling_top_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "f1fbd57d492db5429eab9779471ce36676072744b746bd7f68f8f61936dc2a26"
+          }
+        },
+        {
+          "name": "scrolling_top_small_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 16,
+            "sha256": "0cf828fca4f9639dfd11ff4350ed33927b66e24a3a3fddaceb113a4416589614"
+          }
+        },
+        {
+          "name": "sync_medium_cells",
+          "benchmark": {
+            "bytes": 185737,
+            "sha256": "f3b8a3dfdec88620539faaf53f12ef5f5a051886ddbd508086ede685fa9e6227"
+          }
+        },
+        {
+          "name": "unicode",
+          "benchmark": {
+            "bytes": 138296,
+            "sha256": "0650c4a97837d04d459492b601ea1d0d563517853525a8657a11a4bdd2d60fea"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        }
+      ],
+      "display": {
+        "cell_width": 6.0,
+        "cell_height": 12.0,
+        "dpi_scale": 1.0
+      },
+      "variant": "after"
+    },
+    {
+      "app": "loomtty",
+      "round": 1,
+      "phases": [
+        {
+          "name": "vtebench/scrolling_bottom_small_region",
+          "benchmark": "scrolling_bottom_small_region",
+          "seconds": 4.314622792,
+          "argv": [
+            "/Users/linxy/.codex/worktrees/macos-native/vtebench-extras-20261003/target/release/vtebench",
+            "--benchmarks",
+            "/tmp/loom-sab-scrolling_bottom_small_region-1003/r1-after/vtebench/scrolling_bottom_small_region",
+            "--min-bytes",
+            "16777216",
+            "--warmup",
+            "1",
+            "--max-secs",
+            "3",
+            "--silent",
+            "--dat",
+            "/tmp/loom-sab-scrolling_bottom_small_region-1003/r1-after/vtebench/scrolling_bottom_small_region.dat"
+          ],
+          "output_mode": {
+            "mode": "original",
+            "flags": 3,
+            "opost": true,
+            "onlcr": true
+          },
+          "samples_ms": [
+            296,
+            295,
+            296,
+            295,
+            295,
+            295,
+            297,
+            295,
+            295,
+            295,
+            296
+          ],
+          "sample_bytes": 16777216,
+          "warmup_samples": 1,
+          "payload": {
+            "name": "scrolling_bottom_small_region",
+            "benchmark": {
+              "bytes": 2,
+              "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+            },
+            "setup": {
+              "bytes": 15,
+              "sha256": "7c557dd62996c7e130f997966d106c428886cde535e67af6aac2e0d9d48de6fa"
+            }
+          },
+          "median_ms": 295,
+          "mib_per_second": 54.237288135593225,
+          "payload_bytes_written": 201326592,
+          "resources": {
+            "sample_seconds": 4.60113625,
+            "cpu_seconds": 4.44868625,
+            "cpu_percent_one_core": 96.68668798929829,
+            "peak_rss_mib": 115.5,
+            "peak_footprint_mib": 100.90789794921875,
+            "end_rss_mib": 115.4375,
+            "end_footprint_mib": 90.76727294921875,
+            "wakeups": 89,
+            "components": {
+              "server": {
+                "cpu_seconds": 4.443023749999999,
+                "end_rss_mib": 13.328125,
+                "end_footprint_mib": 4.422447204589844
+              },
+              "client": {
+                "cpu_seconds": 0.005662500000000015,
+                "end_rss_mib": 102.109375,
+                "end_footprint_mib": 86.3448257446289
+              }
+            }
+          },
+          "warmup": false
+        }
+      ],
+      "config": "[font]\nfamily = \"Menlo\"\nsize = 10.0\ndisable_ligatures = \"always\"\n[window]\nwidth = 600.0\nheight = 400.0\ntitle = \"loom benchmark\"\n[appearance]\npadding = 0.0\nborder_width = 0.0\ncolumn_gap = 0.0\n[statusbar]\npadding_ratio = 0.0\n[terminal]\nshell = \"/tmp/loom-sab-scrolling_bottom_small_region-1003/r1-after/worker.sh\"\ndefault_cols = 100\ndefault_rows = 30\ncursor_blink = false\nscrollback_lines = 10000\n[render]\nbackend = \"blade\"\n",
+      "ready": {
+        "pid": 77609,
+        "ppid": 77606,
+        "ready_ns": 5588401647000,
+        "columns": 100,
+        "rows": 30,
+        "term": "xterm-256color",
+        "term_program": "loomtty"
+      },
+      "startup_clock": "system-wide monotonic nanoseconds",
+      "startup_ms": 730.517709,
+      "processes": {
+        "server": 77606,
+        "client": 77607
+      },
+      "vtebench_manifest": [
+        {
+          "name": "cursor_motion",
+          "benchmark": {
+            "bytes": 424944,
+            "sha256": "45c7cc4b9f221ba97e525194265f924c7d182e7230ac8ab002677e86ee4f3c00"
+          }
+        },
+        {
+          "name": "dense_cells",
+          "benchmark": {
+            "bytes": 1347918,
+            "sha256": "14867588a715fabfe9a0b8295517f36197862b9bca853064f8d8788658088b93"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        },
+        {
+          "name": "light_cells",
+          "benchmark": {
+            "bytes": 49998,
+            "sha256": "a71d9c7281ebf4deb2f5f126506b8ce5524d4220ac929ff32b510de3e4deea46"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        },
+        {
+          "name": "medium_cells",
+          "benchmark": {
+            "bytes": 178345,
+            "sha256": "eb71cdb2c6255725288535f759c7177b3d601a0fe92dde114443462c4a7db727"
+          }
+        },
+        {
+          "name": "scrolling",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 200002,
+            "sha256": "4377ba180b1a908816151943507e62b07ff71b9c044a3f620976701b45c20210"
+          }
+        },
+        {
+          "name": "scrolling_bottom_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "10a4d5afec1238e958f37d161a2c709554f210965bb4737c24a8e18067097226"
+          }
+        },
+        {
+          "name": "scrolling_bottom_small_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "7c557dd62996c7e130f997966d106c428886cde535e67af6aac2e0d9d48de6fa"
+          }
+        },
+        {
+          "name": "scrolling_fullscreen",
+          "benchmark": {
+            "bytes": 2106,
+            "sha256": "b247c42735889bd02cd746cd03a8b331c94b773199897f6956d11219742fea0f"
+          },
+          "setup": {
+            "bytes": 200002,
+            "sha256": "4377ba180b1a908816151943507e62b07ff71b9c044a3f620976701b45c20210"
+          }
+        },
+        {
+          "name": "scrolling_top_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "f1fbd57d492db5429eab9779471ce36676072744b746bd7f68f8f61936dc2a26"
+          }
+        },
+        {
+          "name": "scrolling_top_small_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 16,
+            "sha256": "0cf828fca4f9639dfd11ff4350ed33927b66e24a3a3fddaceb113a4416589614"
+          }
+        },
+        {
+          "name": "sync_medium_cells",
+          "benchmark": {
+            "bytes": 185737,
+            "sha256": "f3b8a3dfdec88620539faaf53f12ef5f5a051886ddbd508086ede685fa9e6227"
+          }
+        },
+        {
+          "name": "unicode",
+          "benchmark": {
+            "bytes": 138296,
+            "sha256": "0650c4a97837d04d459492b601ea1d0d563517853525a8657a11a4bdd2d60fea"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        }
+      ],
+      "display": {
+        "cell_width": 6.0,
+        "cell_height": 12.0,
+        "dpi_scale": 1.0
+      },
+      "variant": "after"
+    },
+    {
+      "app": "loomtty",
+      "round": 1,
+      "phases": [
+        {
+          "name": "vtebench/scrolling_bottom_small_region",
+          "benchmark": "scrolling_bottom_small_region",
+          "seconds": 4.244271667,
+          "argv": [
+            "/Users/linxy/.codex/worktrees/macos-native/vtebench-extras-20261003/target/release/vtebench",
+            "--benchmarks",
+            "/tmp/loom-sab-scrolling_bottom_small_region-1003/r1-before/vtebench/scrolling_bottom_small_region",
+            "--min-bytes",
+            "16777216",
+            "--warmup",
+            "1",
+            "--max-secs",
+            "3",
+            "--silent",
+            "--dat",
+            "/tmp/loom-sab-scrolling_bottom_small_region-1003/r1-before/vtebench/scrolling_bottom_small_region.dat"
+          ],
+          "output_mode": {
+            "mode": "original",
+            "flags": 3,
+            "opost": true,
+            "onlcr": true
+          },
+          "samples_ms": [
+            294,
+            288,
+            288,
+            289,
+            289,
+            289,
+            289,
+            288,
+            291,
+            290,
+            289
+          ],
+          "sample_bytes": 16777216,
+          "warmup_samples": 1,
+          "payload": {
+            "name": "scrolling_bottom_small_region",
+            "benchmark": {
+              "bytes": 2,
+              "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+            },
+            "setup": {
+              "bytes": 15,
+              "sha256": "7c557dd62996c7e130f997966d106c428886cde535e67af6aac2e0d9d48de6fa"
+            }
+          },
+          "median_ms": 289,
+          "mib_per_second": 55.36332179930796,
+          "payload_bytes_written": 201326592,
+          "resources": {
+            "sample_seconds": 4.515953166999999,
+            "cpu_seconds": 4.390730208333333,
+            "cpu_percent_one_core": 97.22709793401482,
+            "peak_rss_mib": 115.8125,
+            "peak_footprint_mib": 101.06410217285156,
+            "end_rss_mib": 115.734375,
+            "end_footprint_mib": 90.84535217285156,
+            "wakeups": 90,
+            "components": {
+              "server": {
+                "cpu_seconds": 4.383994333333333,
+                "end_rss_mib": 13.421875,
+                "end_footprint_mib": 4.516197204589844
+              },
+              "client": {
+                "cpu_seconds": 0.006735875000000002,
+                "end_rss_mib": 102.3125,
+                "end_footprint_mib": 86.32915496826172
+              }
+            }
+          },
+          "warmup": false
+        }
+      ],
+      "config": "[font]\nfamily = \"Menlo\"\nsize = 10.0\ndisable_ligatures = \"always\"\n[window]\nwidth = 600.0\nheight = 400.0\ntitle = \"loom benchmark\"\n[appearance]\npadding = 0.0\nborder_width = 0.0\ncolumn_gap = 0.0\n[statusbar]\npadding_ratio = 0.0\n[terminal]\nshell = \"/tmp/loom-sab-scrolling_bottom_small_region-1003/r1-before/worker.sh\"\ndefault_cols = 100\ndefault_rows = 30\ncursor_blink = false\nscrollback_lines = 10000\n[render]\nbackend = \"blade\"\n",
+      "ready": {
+        "pid": 78455,
+        "ppid": 78452,
+        "ready_ns": 5597557061666,
+        "columns": 100,
+        "rows": 30,
+        "term": "xterm-256color",
+        "term_program": "loomtty"
+      },
+      "startup_clock": "system-wide monotonic nanoseconds",
+      "startup_ms": 439.026833,
+      "processes": {
+        "server": 78452,
+        "client": 78453
+      },
+      "vtebench_manifest": [
+        {
+          "name": "cursor_motion",
+          "benchmark": {
+            "bytes": 424944,
+            "sha256": "45c7cc4b9f221ba97e525194265f924c7d182e7230ac8ab002677e86ee4f3c00"
+          }
+        },
+        {
+          "name": "dense_cells",
+          "benchmark": {
+            "bytes": 1347918,
+            "sha256": "14867588a715fabfe9a0b8295517f36197862b9bca853064f8d8788658088b93"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        },
+        {
+          "name": "light_cells",
+          "benchmark": {
+            "bytes": 49998,
+            "sha256": "a71d9c7281ebf4deb2f5f126506b8ce5524d4220ac929ff32b510de3e4deea46"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        },
+        {
+          "name": "medium_cells",
+          "benchmark": {
+            "bytes": 178345,
+            "sha256": "eb71cdb2c6255725288535f759c7177b3d601a0fe92dde114443462c4a7db727"
+          }
+        },
+        {
+          "name": "scrolling",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 200002,
+            "sha256": "4377ba180b1a908816151943507e62b07ff71b9c044a3f620976701b45c20210"
+          }
+        },
+        {
+          "name": "scrolling_bottom_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "10a4d5afec1238e958f37d161a2c709554f210965bb4737c24a8e18067097226"
+          }
+        },
+        {
+          "name": "scrolling_bottom_small_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "7c557dd62996c7e130f997966d106c428886cde535e67af6aac2e0d9d48de6fa"
+          }
+        },
+        {
+          "name": "scrolling_fullscreen",
+          "benchmark": {
+            "bytes": 2106,
+            "sha256": "b247c42735889bd02cd746cd03a8b331c94b773199897f6956d11219742fea0f"
+          },
+          "setup": {
+            "bytes": 200002,
+            "sha256": "4377ba180b1a908816151943507e62b07ff71b9c044a3f620976701b45c20210"
+          }
+        },
+        {
+          "name": "scrolling_top_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "f1fbd57d492db5429eab9779471ce36676072744b746bd7f68f8f61936dc2a26"
+          }
+        },
+        {
+          "name": "scrolling_top_small_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 16,
+            "sha256": "0cf828fca4f9639dfd11ff4350ed33927b66e24a3a3fddaceb113a4416589614"
+          }
+        },
+        {
+          "name": "sync_medium_cells",
+          "benchmark": {
+            "bytes": 185737,
+            "sha256": "f3b8a3dfdec88620539faaf53f12ef5f5a051886ddbd508086ede685fa9e6227"
+          }
+        },
+        {
+          "name": "unicode",
+          "benchmark": {
+            "bytes": 138296,
+            "sha256": "0650c4a97837d04d459492b601ea1d0d563517853525a8657a11a4bdd2d60fea"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        }
+      ],
+      "display": {
+        "cell_width": 6.0,
+        "cell_height": 12.0,
+        "dpi_scale": 1.0
+      },
+      "variant": "before"
+    },
+    {
+      "app": "loomtty",
+      "round": 2,
+      "phases": [
+        {
+          "name": "vtebench/scrolling_bottom_small_region",
+          "benchmark": "scrolling_bottom_small_region",
+          "seconds": 4.543178375,
+          "argv": [
+            "/Users/linxy/.codex/worktrees/macos-native/vtebench-extras-20261003/target/release/vtebench",
+            "--benchmarks",
+            "/tmp/loom-sab-scrolling_bottom_small_region-1003/r2-before/vtebench/scrolling_bottom_small_region",
+            "--min-bytes",
+            "16777216",
+            "--warmup",
+            "1",
+            "--max-secs",
+            "3",
+            "--silent",
+            "--dat",
+            "/tmp/loom-sab-scrolling_bottom_small_region-1003/r2-before/vtebench/scrolling_bottom_small_region.dat"
+          ],
+          "output_mode": {
+            "mode": "original",
+            "flags": 3,
+            "opost": true,
+            "onlcr": true
+          },
+          "samples_ms": [
+            289,
+            288,
+            293,
+            288,
+            289,
+            289,
+            290,
+            289,
+            290,
+            289,
+            290
+          ],
+          "sample_bytes": 16777216,
+          "warmup_samples": 1,
+          "payload": {
+            "name": "scrolling_bottom_small_region",
+            "benchmark": {
+              "bytes": 2,
+              "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+            },
+            "setup": {
+              "bytes": 15,
+              "sha256": "7c557dd62996c7e130f997966d106c428886cde535e67af6aac2e0d9d48de6fa"
+            }
+          },
+          "median_ms": 289,
+          "mib_per_second": 55.36332179930796,
+          "payload_bytes_written": 201326592,
+          "resources": {
+            "sample_seconds": 4.831248959,
+            "cpu_seconds": 4.369924374999999,
+            "cpu_percent_one_core": 90.45123553112262,
+            "peak_rss_mib": 115.84375,
+            "peak_footprint_mib": 101.15782928466797,
+            "end_rss_mib": 115.828125,
+            "end_footprint_mib": 89.04845428466797,
+            "wakeups": 92,
+            "components": {
+              "server": {
+                "cpu_seconds": 4.3638389166666665,
+                "end_rss_mib": 13.421875,
+                "end_footprint_mib": 4.50054931640625
+              },
+              "client": {
+                "cpu_seconds": 0.006085458333333321,
+                "end_rss_mib": 102.40625,
+                "end_footprint_mib": 84.54790496826172
+              }
+            }
+          },
+          "warmup": false
+        }
+      ],
+      "config": "[font]\nfamily = \"Menlo\"\nsize = 10.0\ndisable_ligatures = \"always\"\n[window]\nwidth = 600.0\nheight = 400.0\ntitle = \"loom benchmark\"\n[appearance]\npadding = 0.0\nborder_width = 0.0\ncolumn_gap = 0.0\n[statusbar]\npadding_ratio = 0.0\n[terminal]\nshell = \"/tmp/loom-sab-scrolling_bottom_small_region-1003/r2-before/worker.sh\"\ndefault_cols = 100\ndefault_rows = 30\ncursor_blink = false\nscrollback_lines = 10000\n[render]\nbackend = \"blade\"\n",
+      "ready": {
+        "pid": 79297,
+        "ppid": 79294,
+        "ready_ns": 5606870924500,
+        "columns": 100,
+        "rows": 30,
+        "term": "xterm-256color",
+        "term_program": "loomtty"
+      },
+      "startup_clock": "system-wide monotonic nanoseconds",
+      "startup_ms": 439.887084,
+      "processes": {
+        "server": 79294,
+        "client": 79295
+      },
+      "vtebench_manifest": [
+        {
+          "name": "cursor_motion",
+          "benchmark": {
+            "bytes": 424944,
+            "sha256": "45c7cc4b9f221ba97e525194265f924c7d182e7230ac8ab002677e86ee4f3c00"
+          }
+        },
+        {
+          "name": "dense_cells",
+          "benchmark": {
+            "bytes": 1347918,
+            "sha256": "14867588a715fabfe9a0b8295517f36197862b9bca853064f8d8788658088b93"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        },
+        {
+          "name": "light_cells",
+          "benchmark": {
+            "bytes": 49998,
+            "sha256": "a71d9c7281ebf4deb2f5f126506b8ce5524d4220ac929ff32b510de3e4deea46"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        },
+        {
+          "name": "medium_cells",
+          "benchmark": {
+            "bytes": 178345,
+            "sha256": "eb71cdb2c6255725288535f759c7177b3d601a0fe92dde114443462c4a7db727"
+          }
+        },
+        {
+          "name": "scrolling",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 200002,
+            "sha256": "4377ba180b1a908816151943507e62b07ff71b9c044a3f620976701b45c20210"
+          }
+        },
+        {
+          "name": "scrolling_bottom_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "10a4d5afec1238e958f37d161a2c709554f210965bb4737c24a8e18067097226"
+          }
+        },
+        {
+          "name": "scrolling_bottom_small_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "7c557dd62996c7e130f997966d106c428886cde535e67af6aac2e0d9d48de6fa"
+          }
+        },
+        {
+          "name": "scrolling_fullscreen",
+          "benchmark": {
+            "bytes": 2106,
+            "sha256": "b247c42735889bd02cd746cd03a8b331c94b773199897f6956d11219742fea0f"
+          },
+          "setup": {
+            "bytes": 200002,
+            "sha256": "4377ba180b1a908816151943507e62b07ff71b9c044a3f620976701b45c20210"
+          }
+        },
+        {
+          "name": "scrolling_top_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "f1fbd57d492db5429eab9779471ce36676072744b746bd7f68f8f61936dc2a26"
+          }
+        },
+        {
+          "name": "scrolling_top_small_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 16,
+            "sha256": "0cf828fca4f9639dfd11ff4350ed33927b66e24a3a3fddaceb113a4416589614"
+          }
+        },
+        {
+          "name": "sync_medium_cells",
+          "benchmark": {
+            "bytes": 185737,
+            "sha256": "f3b8a3dfdec88620539faaf53f12ef5f5a051886ddbd508086ede685fa9e6227"
+          }
+        },
+        {
+          "name": "unicode",
+          "benchmark": {
+            "bytes": 138296,
+            "sha256": "0650c4a97837d04d459492b601ea1d0d563517853525a8657a11a4bdd2d60fea"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        }
+      ],
+      "display": {
+        "cell_width": 6.0,
+        "cell_height": 12.0,
+        "dpi_scale": 1.0
+      },
+      "variant": "before"
+    },
+    {
+      "app": "loomtty",
+      "round": 2,
+      "phases": [
+        {
+          "name": "vtebench/scrolling_bottom_small_region",
+          "benchmark": "scrolling_bottom_small_region",
+          "seconds": 4.636494708,
+          "argv": [
+            "/Users/linxy/.codex/worktrees/macos-native/vtebench-extras-20261003/target/release/vtebench",
+            "--benchmarks",
+            "/tmp/loom-sab-scrolling_bottom_small_region-1003/r2-after/vtebench/scrolling_bottom_small_region",
+            "--min-bytes",
+            "16777216",
+            "--warmup",
+            "1",
+            "--max-secs",
+            "3",
+            "--silent",
+            "--dat",
+            "/tmp/loom-sab-scrolling_bottom_small_region-1003/r2-after/vtebench/scrolling_bottom_small_region.dat"
+          ],
+          "output_mode": {
+            "mode": "original",
+            "flags": 3,
+            "opost": true,
+            "onlcr": true
+          },
+          "samples_ms": [
+            298,
+            295,
+            295,
+            295,
+            294,
+            296,
+            303,
+            299,
+            297,
+            298,
+            318
+          ],
+          "sample_bytes": 16777216,
+          "warmup_samples": 1,
+          "payload": {
+            "name": "scrolling_bottom_small_region",
+            "benchmark": {
+              "bytes": 2,
+              "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+            },
+            "setup": {
+              "bytes": 15,
+              "sha256": "7c557dd62996c7e130f997966d106c428886cde535e67af6aac2e0d9d48de6fa"
+            }
+          },
+          "median_ms": 297,
+          "mib_per_second": 53.872053872053876,
+          "payload_bytes_written": 201326592,
+          "resources": {
+            "sample_seconds": 4.915377874999997,
+            "cpu_seconds": 4.550145,
+            "cpu_percent_one_core": 92.56958703302138,
+            "peak_rss_mib": 115.421875,
+            "peak_footprint_mib": 100.75160217285156,
+            "end_rss_mib": 115.375,
+            "end_footprint_mib": 90.65785217285156,
+            "wakeups": 92,
+            "components": {
+              "server": {
+                "cpu_seconds": 4.544125916666666,
+                "end_rss_mib": 13.40625,
+                "end_footprint_mib": 4.500572204589844
+              },
+              "client": {
+                "cpu_seconds": 0.0060190833333333416,
+                "end_rss_mib": 101.96875,
+                "end_footprint_mib": 86.15727996826172
+              }
+            }
+          },
+          "warmup": false
+        }
+      ],
+      "config": "[font]\nfamily = \"Menlo\"\nsize = 10.0\ndisable_ligatures = \"always\"\n[window]\nwidth = 600.0\nheight = 400.0\ntitle = \"loom benchmark\"\n[appearance]\npadding = 0.0\nborder_width = 0.0\ncolumn_gap = 0.0\n[statusbar]\npadding_ratio = 0.0\n[terminal]\nshell = \"/tmp/loom-sab-scrolling_bottom_small_region-1003/r2-after/worker.sh\"\ndefault_cols = 100\ndefault_rows = 30\ncursor_blink = false\nscrollback_lines = 10000\n[render]\nbackend = \"blade\"\n",
+      "ready": {
+        "pid": 80141,
+        "ppid": 80138,
+        "ready_ns": 5616266198958,
+        "columns": 100,
+        "rows": 30,
+        "term": "xterm-256color",
+        "term_program": "loomtty"
+      },
+      "startup_clock": "system-wide monotonic nanoseconds",
+      "startup_ms": 433.486625,
+      "processes": {
+        "server": 80138,
+        "client": 80139
+      },
+      "vtebench_manifest": [
+        {
+          "name": "cursor_motion",
+          "benchmark": {
+            "bytes": 424944,
+            "sha256": "45c7cc4b9f221ba97e525194265f924c7d182e7230ac8ab002677e86ee4f3c00"
+          }
+        },
+        {
+          "name": "dense_cells",
+          "benchmark": {
+            "bytes": 1347918,
+            "sha256": "14867588a715fabfe9a0b8295517f36197862b9bca853064f8d8788658088b93"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        },
+        {
+          "name": "light_cells",
+          "benchmark": {
+            "bytes": 49998,
+            "sha256": "a71d9c7281ebf4deb2f5f126506b8ce5524d4220ac929ff32b510de3e4deea46"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        },
+        {
+          "name": "medium_cells",
+          "benchmark": {
+            "bytes": 178345,
+            "sha256": "eb71cdb2c6255725288535f759c7177b3d601a0fe92dde114443462c4a7db727"
+          }
+        },
+        {
+          "name": "scrolling",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 200002,
+            "sha256": "4377ba180b1a908816151943507e62b07ff71b9c044a3f620976701b45c20210"
+          }
+        },
+        {
+          "name": "scrolling_bottom_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "10a4d5afec1238e958f37d161a2c709554f210965bb4737c24a8e18067097226"
+          }
+        },
+        {
+          "name": "scrolling_bottom_small_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "7c557dd62996c7e130f997966d106c428886cde535e67af6aac2e0d9d48de6fa"
+          }
+        },
+        {
+          "name": "scrolling_fullscreen",
+          "benchmark": {
+            "bytes": 2106,
+            "sha256": "b247c42735889bd02cd746cd03a8b331c94b773199897f6956d11219742fea0f"
+          },
+          "setup": {
+            "bytes": 200002,
+            "sha256": "4377ba180b1a908816151943507e62b07ff71b9c044a3f620976701b45c20210"
+          }
+        },
+        {
+          "name": "scrolling_top_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 15,
+            "sha256": "f1fbd57d492db5429eab9779471ce36676072744b746bd7f68f8f61936dc2a26"
+          }
+        },
+        {
+          "name": "scrolling_top_small_region",
+          "benchmark": {
+            "bytes": 2,
+            "sha256": "3bb2abb69ebb27fbfe63c7639624c6ec5e331b841a5bc8c3ebc10b9285e90877"
+          },
+          "setup": {
+            "bytes": 16,
+            "sha256": "0cf828fca4f9639dfd11ff4350ed33927b66e24a3a3fddaceb113a4416589614"
+          }
+        },
+        {
+          "name": "sync_medium_cells",
+          "benchmark": {
+            "bytes": 185737,
+            "sha256": "f3b8a3dfdec88620539faaf53f12ef5f5a051886ddbd508086ede685fa9e6227"
+          }
+        },
+        {
+          "name": "unicode",
+          "benchmark": {
+            "bytes": 138296,
+            "sha256": "0650c4a97837d04d459492b601ea1d0d563517853525a8657a11a4bdd2d60fea"
+          },
+          "setup": {
+            "bytes": 8,
+            "sha256": "b7c9b6f9082bb2a92f63566d8800008f96b5dee9d380c2d460b2466ad1496440"
+          }
+        }
+      ],
+      "display": {
+        "cell_width": 6.0,
+        "cell_height": 12.0,
+        "dpi_scale": 1.0
+      },
+      "variant": "after"
+    }
+  ]
+}

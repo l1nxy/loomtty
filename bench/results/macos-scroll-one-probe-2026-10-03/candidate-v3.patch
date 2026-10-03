@@ -1,0 +1,126 @@
+diff --git a/alacritty_terminal/src/grid/mod.rs b/alacritty_terminal/src/grid/mod.rs
+index 38ff2018..dfe1a3c8 100644
+--- a/alacritty_terminal/src/grid/mod.rs
++++ b/alacritty_terminal/src/grid/mod.rs
+@@ -264,6 +264,27 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
+         }
+     }
+ 
++    /// Scroll the entire screen by one row without recomputing the bottom index.
++    /// Keep this separate so region scrolling does not inherit its register spills.
++    #[inline(never)]
++    pub(crate) fn scroll_up_full_one<D>(&mut self)
++    where
++        T: ResetDiscriminant<D>,
++        D: PartialEq,
++    {
++        if self.display_offset != 0 {
++            self.display_offset = min(self.display_offset + 1, self.max_scroll_limit);
++        }
++
++        if self.history_size() < self.max_scroll_limit {
++            self.raw.initialize(1, self.columns);
++        } else {
++            self.scrolled_past_limit = self.scrolled_past_limit.saturating_add(1);
++        }
++
++        self.raw.rotate_up_one().reset(&self.cursor.template);
++    }
++
+     /// Move lines at the bottom toward the top.
+     ///
+     /// This is the performance-sensitive part of scrolling.
+diff --git a/alacritty_terminal/src/grid/storage.rs b/alacritty_terminal/src/grid/storage.rs
+index 6d7984d4..bc48bc6b 100644
+--- a/alacritty_terminal/src/grid/storage.rs
++++ b/alacritty_terminal/src/grid/storage.rs
+@@ -184,6 +184,16 @@ impl<T> Storage<T> {
+         self.zero = (self.zero as isize + count + len as isize) as usize % len;
+     }
+ 
++    /// Rotate up by one row and return the newly exposed bottom row.
++    ///
++    /// `zero` already denotes the bottommost visible row. Returning it directly
++    /// avoids recomputing its logical index after a full-screen linefeed.
++    #[inline]
++    pub(super) fn rotate_up_one(&mut self) -> &mut Row<T> {
++        self.zero = if self.zero == 0 { self.inner.len() - 1 } else { self.zero - 1 };
++        &mut self.inner[self.zero]
++    }
++
+     /// Rotate all existing lines down in history.
+     ///
+     /// This is a faster, specialized version of [`rotate_left`].
+diff --git a/alacritty_terminal/src/grid/tests.rs b/alacritty_terminal/src/grid/tests.rs
+index f56b896f..edd0f8ae 100644
+--- a/alacritty_terminal/src/grid/tests.rs
++++ b/alacritty_terminal/src/grid/tests.rs
+@@ -47,6 +47,51 @@ fn scrolled_past_limit_counts_only_evictions() {
+     assert_eq!(grid.scrolled_past_limit(), 6, "five more rows evicted");
+ }
+ 
++// Compare the fast path with the original algorithm, including ring growth and reuse.
++#[test]
++fn single_line_scroll_matches_general_path_through_history_wraps() {
++    for lines in [1, 2, 30] {
++        for history in [0, 1, 3, 1001] {
++            let mut fast = Grid::<usize>::new(lines, 4, history);
++            let mut reference = fast.clone();
++            for step in 0..2200 {
++                for grid in [&mut fast, &mut reference] {
++                    grid[Line(lines as i32 - 1)][Column(step % 4)] = step + 1;
++                    grid.cursor.template = if step % 13 == 0 { 7 } else { 0 };
++                    if step % 29 == 0 {
++                        grid.scroll_display(Scroll::Delta(1));
++                    }
++                    if step % 43 == 0 {
++                        grid.scroll_display(Scroll::Bottom);
++                    }
++                    if step == 100 {
++                        grid.scrolled_past_limit = usize::MAX - 2;
++                    }
++                }
++                let start = if lines > 1 && step % 31 == 0 { 1 } else { 0 };
++                let positions = if step % 47 == 0 { (lines - start).min(2) } else { 1 };
++                let region = Line(start as i32)..Line(lines as i32);
++                if start == 0 && positions == 1 {
++                    fast.scroll_up_full_one::<usize>();
++                } else {
++                    fast.scroll_up::<usize>(&region, positions);
++                }
++                reference.scroll_up::<usize>(&region, positions);
++                assert_eq!(fast.history_size(), reference.history_size());
++                assert_eq!(fast.display_offset(), reference.display_offset());
++                assert_eq!(fast.scrolled_past_limit(), reference.scrolled_past_limit());
++                for row in fast.topmost_line().0..lines as i32 {
++                    assert_eq!(
++                        fast[Line(row)],
++                        reference[Line(row)],
++                        "lines={lines} history={history} step={step} row={row}"
++                    );
++                }
++            }
++        }
++    }
++}
++
+ // Scroll up moves lines upward.
+ #[test]
+ fn scroll_up() {
+diff --git a/alacritty_terminal/src/term/mod.rs b/alacritty_terminal/src/term/mod.rs
+index e1ebb6c8..e6926773 100644
+--- a/alacritty_terminal/src/term/mod.rs
++++ b/alacritty_terminal/src/term/mod.rs
+@@ -858,7 +858,11 @@ impl<T> Term<T> {
+             .take()
+             .and_then(|s| s.rotate(self, &region, lines as i32));
+ 
+-        self.grid.scroll_up(&region, lines);
++        if region.start == 0 && lines == 1 && region.end.0 as usize == self.screen_lines() {
++            self.grid.scroll_up_full_one();
++        } else {
++            self.grid.scroll_up(&region, lines);
++        }
+ 
+         // Scroll vi mode cursor.
+         let viewport_top = Line(-(self.grid.display_offset() as i32));

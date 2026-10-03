@@ -1,0 +1,8 @@
+   Compiling alacritty_terminal v0.25.1 (/Users/linxy/.codex/worktrees/macos-native/loomtty/target/scroll-one-probe/alacritty_terminal)
+   Compiling loom-render v0.2.1 (/Users/linxy/.codex/worktrees/extras-benchmark-control/loomtty/crates/loom-render)
+   Compiling loom-term v0.2.1 (/Users/linxy/.codex/worktrees/extras-benchmark-control/loomtty/crates/loom-term)
+   Compiling loom-gpu v0.2.1 (/Users/linxy/.codex/worktrees/extras-benchmark-control/loomtty/crates/loom-gpu)
+   Compiling loom-ui v0.2.1 (/Users/linxy/.codex/worktrees/extras-benchmark-control/loomtty/crates/loom-ui)
+   Compiling loomtty v0.2.1 (/Users/linxy/.codex/worktrees/extras-benchmark-control/loomtty/crates/loom)
+   Compiling loomtty-server v0.2.1 (/Users/linxy/.codex/worktrees/extras-benchmark-control/loomtty/crates/loom-server)
+    Finished `release` profile [optimized] target(s) in 9.24s

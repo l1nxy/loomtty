@@ -1,0 +1,13 @@
+{
+  "loom_base_commit": "d60c18a",
+  "alacritty_base_commit": "867784628f619fc2f58c55d271ad5f6014d722c6",
+  "alacritty_candidate_commit": "37f53bf3b766e1f4fafcbc69dcdd163616427c79",
+  "candidate_server": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/scroll-server-ab-v2-20261003/loomtty-server.app/Contents/MacOS/loomtty-server",
+  "candidate_server_sha256": "67fb63ad264bba32cbcf3bad0f466069bc85c6f84c7ecc8cc3bae357ad32d398",
+  "common_client": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/main-bench-20261003/loomtty.app/Contents/MacOS/loomtty",
+  "baseline_server": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/main-bench-20261003/loomtty.app/Contents/Helpers/loomtty-server.app/Contents/MacOS/loomtty-server",
+  "build_command": "cargo build --release -p loomtty -p loomtty-server --features loomtty/macos-app-intents --target-dir /Users/linxy/.codex/worktrees/macos-native/loomtty/target",
+  "status": "v2 targeted A/B completed; bottom region regression remained; superseded by v3",
+  "common_client_sha256": "e467ffb2a2659a1a347461ae969cf5270393bb5091b2e1e55da7e1e59afc52af",
+  "baseline_server_sha256": "2b69ee4c17b103718ff746e872a5ea77bb624712bc72a3885dd3cc851ff6c331"
+}

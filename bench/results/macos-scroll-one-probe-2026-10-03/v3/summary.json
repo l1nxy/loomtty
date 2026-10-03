@@ -1,0 +1,35 @@
+[
+  {
+    "scene": "scrolling",
+    "before": {
+      "mib_per_second_median": 82.68733850129199,
+      "cpu_ms_per_mib_median": 16.536055300245096
+    },
+    "after": {
+      "mib_per_second_median": 100.0,
+      "cpu_ms_per_mib_median": 14.34004114583333
+    }
+  },
+  {
+    "scene": "scrolling_bottom_region",
+    "before": {
+      "mib_per_second_median": 96.38554216867469,
+      "cpu_ms_per_mib_median": 14.323816276041663
+    },
+    "after": {
+      "mib_per_second_median": 95.23809523809523,
+      "cpu_ms_per_mib_median": 14.472197368421051
+    }
+  },
+  {
+    "scene": "scrolling_bottom_small_region",
+    "before": {
+      "mib_per_second_median": 55.36332179930796,
+      "cpu_ms_per_mib_median": 22.703440104166663
+    },
+    "after": {
+      "mib_per_second_median": 54.79452054794521,
+      "cpu_ms_per_mib_median": 22.999731770833325
+    }
+  }
+]

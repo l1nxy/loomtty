@@ -1,0 +1,21 @@
+   Compiling loom-app v0.1.0 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-app)
+error[E0425]: cannot find function `decode_sm_rows_with` in module `loom_protocol::codec`
+   --> crates/loom-app/src/grid/sync.rs:115:41
+    |
+115 |             match loom_protocol::codec::decode_sm_rows_with(
+    |                                         ^^^^^^^^^^^^^^^^^^^
+    |
+   --> crates/loom-protocol/src/codec/state_machine.rs:330:0
+   ::: crates/loom-protocol/src/codec/state_machine.rs:334:37
+    |
+    = note: similarly named function `decode_sm_rows` defined here
+help: a function with a similar name exists
+    |
+115 -             match loom_protocol::codec::decode_sm_rows_with(
+115 +             match loom_protocol::codec::decode_sm_rows(
+    |
+
+For more information about this error, try `rustc --explain E0425`.
+error: could not compile `loom-app` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `loom-app` (lib test) due to 1 previous error

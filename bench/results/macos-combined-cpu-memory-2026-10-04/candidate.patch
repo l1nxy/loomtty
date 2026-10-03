@@ -1,0 +1,940 @@
+diff --git a/crates/loom-app/examples/history_storage_bench.rs b/crates/loom-app/examples/history_storage_bench.rs
+new file mode 100644
+index 0000000..2abd307
+--- /dev/null
++++ b/crates/loom-app/examples/history_storage_bench.rs
+@@ -0,0 +1,95 @@
++//! Storage-only diagnostic, not a terminal/rendering benchmark.
++//! Build first, then run the executable without concurrent compilation.
++use loom_app::grid::ScrollbackCells;
++use loom_protocol::codec::{StateEncoder, decode_sm_rows, decode_sm_rows_with};
++use loom_protocol::message::{PackedCell, PackedColor};
++use std::hint::black_box;
++use std::time::Instant;
++
++fn measure(mut operation: impl FnMut(), iterations: usize) -> f64 {
++    let start = Instant::now();
++    for _ in 0..iterations {
++        operation();
++    }
++    start.elapsed().as_secs_f64() * 1e6 / iterations as f64
++}
++
++fn main() {
++    const ROWS: usize = 10_000;
++    println!("columns,style,round,variant,decode_us,viewport_us");
++    for columns in [100, 250] {
++        for mixed in [false, true] {
++            let source: Vec<_> = (0..ROWS * columns)
++                .map(|i| {
++                    let mut cell = PackedCell::with_ch((b'!' + (i % 90) as u8) as char);
++                    if mixed {
++                        cell.fg = PackedColor::indexed((i % 251) as u8);
++                    }
++                    cell
++                })
++                .collect();
++            let mut encoder = StateEncoder::new();
++            for cell in &source {
++                encoder.push_cell(cell);
++            }
++            let encoded = encoder.finish();
++            let dense = decode_sm_rows(encoded, columns, ROWS).unwrap();
++            let compact =
++                decode_sm_rows_with(encoded, columns, ROWS, |row| ScrollbackCells::from(row))
++                    .unwrap();
++            for (i, row) in compact.iter().enumerate() {
++                assert_eq!(row.as_cells().as_ref(), dense[i]);
++                assert_eq!(matches!(row, ScrollbackCells::Dense(_)), mixed);
++            }
++            // Each viewport copies 30 rows, just as visible_cells does when
++            // scrolled. Rotate through the entire history to include cache misses.
++            for round in 0..5 {
++                let order = if round % 2 == 0 {
++                    [false, true]
++                } else {
++                    [true, false]
++                };
++                for use_compact in order {
++                    let decode_us = measure(
++                        || {
++                            if use_compact {
++                                black_box(
++                                    decode_sm_rows_with(black_box(encoded), columns, ROWS, |row| {
++                                        ScrollbackCells::from(row)
++                                    })
++                                    .unwrap(),
++                                );
++                            } else {
++                                black_box(
++                                    decode_sm_rows(black_box(encoded), columns, ROWS).unwrap(),
++                                );
++                            }
++                        },
++                        20,
++                    );
++                    let mut offset = 0;
++                    let viewport_us = measure(
++                        || {
++                            let mut cells = Vec::with_capacity(columns * 30);
++                            for r in offset..offset + 30 {
++                                if use_compact {
++                                    compact[r].append_to(&mut cells, columns);
++                                } else {
++                                    cells.extend_from_slice(&dense[r]);
++                                }
++                            }
++                            black_box(cells);
++                            offset = (offset + 17) % (ROWS - 30);
++                        },
++                        10_000,
++                    );
++                    println!(
++                        "{columns},{},{round},{},{decode_us:.3},{viewport_us:.3}",
++                        if mixed { "mixed" } else { "uniform" },
++                        if use_compact { "compact" } else { "dense" }
++                    );
++                }
++            }
++        }
++    }
++}
+diff --git a/crates/loom-app/src/grid/cell_ops.rs b/crates/loom-app/src/grid/cell_ops.rs
+index b0cb155..9530fc8 100644
+--- a/crates/loom-app/src/grid/cell_ops.rs
++++ b/crates/loom-app/src/grid/cell_ops.rs
+@@ -21,6 +21,10 @@ impl ClientPaneGrid {
+         let mut cells = Vec::with_capacity(rows * cols);
+         for r in 0..rows {
+             let buf_row = top + r;
++            if let Some(history) = self.scrollback.get(buf_row) {
++                history.cells.append_to(&mut cells, cols);
++                continue;
++            }
+             let row = self.row(buf_row);
+             // Scrollback rows may have a different column count after a
+             // resize/DPI change — truncate or pad to current cols.
+@@ -84,11 +88,11 @@ impl ClientPaneGrid {
+         }
+ 
+         let mut idx = (col as usize).min(row.len().saturating_sub(1));
+-        idx = self.normalize_cell_start(row, idx);
++        idx = self.normalize_cell_start(&row, idx);
+ 
+         let class = classify_word_cell(row.get(idx)?);
+         let mut left = idx;
+-        while let Some(prev) = self.prev_cell_start(row, left) {
++        while let Some(prev) = self.prev_cell_start(&row, left) {
+             if classify_word_cell(&row[prev]) != class {
+                 break;
+             }
+@@ -96,14 +100,14 @@ impl ClientPaneGrid {
+         }
+ 
+         let mut right = idx;
+-        while let Some(next) = self.next_cell_start(row, right) {
++        while let Some(next) = self.next_cell_start(&row, right) {
+             if classify_word_cell(&row[next]) != class {
+                 break;
+             }
+             right = next;
+         }
+ 
+-        Some((left as u16, self.cell_end(row, right) as u16))
++        Some((left as u16, self.cell_end(&row, right) as u16))
+     }
+ 
+     /// Extract text from a buffer range (absolute buffer_rows).
+@@ -136,10 +140,10 @@ impl ClientPaneGrid {
+             // the `FLAG_WIDE_CHAR_SPACER` skip below, this means a half-cell
+             // visual selection still copies the full underlying character.
+             if left < row_data.len() {
+-                left = self.normalize_cell_start(row_data, left);
++                left = self.normalize_cell_start(&row_data, left);
+             }
+             if right < row_data.len() {
+-                right = self.cell_end(row_data, right);
++                right = self.cell_end(&row_data, right);
+             }
+             let mut line = String::new();
+             for col in left..=right {
+@@ -188,8 +192,8 @@ impl ClientPaneGrid {
+         let row = self.row(buf_row);
+         let l = (left as usize).min(row.len().saturating_sub(1));
+         let r = (right as usize).min(row.len().saturating_sub(1));
+-        let l = self.normalize_cell_start(row, l);
+-        let r = self.cell_end(row, r);
++        let l = self.normalize_cell_start(&row, l);
++        let r = self.cell_end(&row, r);
+         (l as u16, r as u16)
+     }
+ 
+@@ -212,7 +216,7 @@ impl ClientPaneGrid {
+     }
+ 
+     pub(super) fn next_cell_start(&self, row: &[PackedCell], idx: usize) -> Option<usize> {
+-        let next = self.cell_end(row, idx) + 1;
++        let next = self.cell_end(&row, idx) + 1;
+         if next < row.len() { Some(next) } else { None }
+     }
+ 
+@@ -224,7 +228,7 @@ impl ClientPaneGrid {
+                 idx += 1;
+                 continue;
+             }
+-            let end = self.cell_end(row, idx);
++            let end = self.cell_end(&row, idx);
+             let ch = row[idx].ch();
+             if ch != '\0' {
+                 chars.push(RowChar {
+diff --git a/crates/loom-app/src/grid/link.rs b/crates/loom-app/src/grid/link.rs
+index 19fc0ed..bebd773 100644
+--- a/crates/loom-app/src/grid/link.rs
++++ b/crates/loom-app/src/grid/link.rs
+@@ -123,7 +123,7 @@ impl ClientPaneGrid {
+             if r == buffer_row {
+                 target_offset = out.len();
+             }
+-            for rc in self.row_chars(self.row(r)) {
++            for rc in self.row_chars(&self.row(r)) {
+                 out.push(LineChar {
+                     row: r,
+                     start_col: rc.start_col,
+diff --git a/crates/loom-app/src/grid/mod.rs b/crates/loom-app/src/grid/mod.rs
+index 08d4317..226250c 100644
+--- a/crates/loom-app/src/grid/mod.rs
++++ b/crates/loom-app/src/grid/mod.rs
+@@ -11,11 +11,11 @@ mod types;
+ mod tests;
+ 
+ pub use link::looks_like_file_path;
+-pub use types::{LinkMatch, ScrollbackRow};
++pub use types::{LinkMatch, ScrollbackCells, ScrollbackRow};
+ 
+ /// Client-side pane grid with split storage: scrollback VecDeque + flat viewport.
+ ///
+-/// `scrollback` holds history rows as a VecDeque of Vec<PackedCell>.
++/// `scrollback` holds immutable rows with shared attributes where possible.
+ /// `viewport` is a contiguous `Vec<PackedCell>` of size `rows * cols`,
+ /// enabling direct memcpy for delta applies and fast clone for visible_cells.
+ ///
+@@ -96,28 +96,28 @@ impl ClientPaneGrid {
+ 
+     /// Access a row by absolute buffer index (0 = oldest scrollback row).
+     /// Returns the row slice from either scrollback or viewport.
+-    pub(super) fn row(&self, buf_row: usize) -> &[PackedCell] {
++    pub(super) fn row(&self, buf_row: usize) -> std::borrow::Cow<'_, [PackedCell]> {
+         let sb_len = self.scrollback.len();
+         if buf_row < sb_len {
+-            &self.scrollback[buf_row].cells
++            self.scrollback[buf_row].cells.as_cells()
+         } else {
+             let vp_line = buf_row - sb_len;
+             let cols = self.cols as usize;
+             let start = vp_line * cols;
+             let end = start + cols;
+             if end <= self.viewport.len() {
+-                &self.viewport[start..end]
++                std::borrow::Cow::Borrowed(&self.viewport[start..end])
+             } else {
+-                &[]
++                std::borrow::Cow::Borrowed(&[])
+             }
+         }
+     }
+ 
+     /// Read one absolute buffer row for native text/accessibility adapters.
+     /// Out-of-range indices return an empty slice.
+-    pub fn buffer_row(&self, buf_row: usize) -> &[PackedCell] {
++    pub fn buffer_row(&self, buf_row: usize) -> std::borrow::Cow<'_, [PackedCell]> {
+         if buf_row >= self.buffer_len() {
+-            return &[];
++            return std::borrow::Cow::Borrowed(&[]);
+         }
+         self.row(buf_row)
+     }
+diff --git a/crates/loom-app/src/grid/scrollback.rs b/crates/loom-app/src/grid/scrollback.rs
+index 9fb3489..55872eb 100644
+--- a/crates/loom-app/src/grid/scrollback.rs
++++ b/crates/loom-app/src/grid/scrollback.rs
+@@ -77,7 +77,7 @@ impl ClientPaneGrid {
+ 
+         for row in self.scrollback.drain(..) {
+             // Strip trailing default cells (blank padding) before joining
+-            let mut cells = row.cells;
++            let mut cells = row.cells.into_cells();
+             if row.wrapped {
+                 // For wrapped rows, keep all cells (they filled the full width)
+                 current_line.append(&mut cells);
+@@ -103,7 +103,7 @@ impl ClientPaneGrid {
+             if logical.is_empty() {
+                 // Preserve empty lines
+                 self.scrollback.push_back(ScrollbackRow {
+-                    cells: vec![PackedCell::default(); new_cols],
++                    cells: vec![PackedCell::default(); new_cols].into(),
+                     wrapped: false,
+                 });
+                 continue;
+@@ -144,7 +144,7 @@ impl ClientPaneGrid {
+                 let mut cells = logical[pos..end].to_vec();
+                 cells.resize(new_cols, PackedCell::default());
+                 self.scrollback.push_back(ScrollbackRow {
+-                    cells,
++                    cells: cells.into(),
+                     wrapped: !is_last,
+                 });
+                 pos = end;
+diff --git a/crates/loom-app/src/grid/sync.rs b/crates/loom-app/src/grid/sync.rs
+index e0ac0a1..dc451bd 100644
+--- a/crates/loom-app/src/grid/sync.rs
++++ b/crates/loom-app/src/grid/sync.rs
+@@ -31,6 +31,23 @@ fn rebase_grapheme_lookup(
+ }
+ 
+ impl ClientPaneGrid {
++    fn evict_overwritten_metadata(&mut self, start: usize, end: usize) {
++        // Most terminal output has neither OSC 8 links nor combining extras.
++        // An empty HashMap can retain its allocation after earlier content;
++        // avoid hashing every overwritten cell just to discover no entries.
++        if !self.hyperlink_cell_map.is_empty() {
++            for idx in start..end {
++                self.hyperlink_cell_map.remove(&(idx as u32));
++            }
++        }
++        if !self.grapheme_map.is_empty() {
++            let history_base = self.scrollback.len() * self.cols as usize;
++            for idx in start..end {
++                self.grapheme_map.remove(&((history_base + idx) as u32));
++            }
++        }
++    }
++
+     /// Convenience wrapper for tests: encode a `FullPaneSync` and apply the borrowed version.
+     pub fn apply_full_sync_owned(&mut self, sync: &FullPaneSync) {
+         match loom_protocol::codec::full_pane_sync_to_borrowed(sync) {
+@@ -95,10 +112,11 @@ impl ClientPaneGrid {
+ 
+         let sb_expected = appended_scrollback_rows * new_cols;
+         if sb_expected > 0 {
+-            match loom_protocol::codec::decode_sm_rows(
++            match loom_protocol::codec::decode_sm_rows_with(
+                 sync.scrollback_sm_data(),
+                 new_cols,
+                 appended_scrollback_rows,
++                ScrollbackRow::from_slice,
+             ) {
+                 Ok(rows) => {
+                     let scrollback_base = self.scrollback.len();
+@@ -109,14 +127,19 @@ impl ClientPaneGrid {
+                         let buffer_idx = scrollback_base * new_cols + idx;
+                         if idx < sb_expected && buffer_idx >= trim_count * new_cols {
+                             let mut grapheme = String::new();
+-                            grapheme.push(rows[idx / new_cols][idx % new_cols].ch());
++                            grapheme.push(
++                                rows[idx / new_cols]
++                                    .cells
++                                    .cell(idx % new_cols)
++                                    .unwrap()
++                                    .ch(),
++                            );
+                             grapheme.push_str(extra);
+                             rebased_grapheme_map
+                                 .insert((buffer_idx - trim_count * new_cols) as u32, grapheme);
+                         }
+                     }
+-                    self.scrollback
+-                        .extend(rows.into_iter().map(ScrollbackRow::from_vec));
++                    self.scrollback.extend(rows);
+                 }
+                 Err(e) => log::warn!("scrollback SM decode error: {e}"),
+             }
+@@ -229,12 +252,7 @@ impl ClientPaneGrid {
+             if copy_len > 0 {
+                 let dst_start = line * cols + col_start;
+                 let dst_end = line * cols + col_end;
+-                // Evict stale side-table entries for overwritten cells
+-                for idx in dst_start..dst_end {
+-                    self.hyperlink_cell_map.remove(&(idx as u32));
+-                    self.grapheme_map
+-                        .remove(&((self.scrollback.len() * cols + idx) as u32));
+-                }
++                self.evict_overwritten_metadata(dst_start, dst_end);
+                 self.viewport[dst_start..dst_end].copy_from_slice(&region.cells[..copy_len]);
+                 self.mark_row_dirty(line);
+             }
+@@ -273,12 +291,7 @@ impl ClientPaneGrid {
+             if copy_len > 0 {
+                 let dst_start = line * cols + col_start;
+                 let dst_end = dst_start + copy_len;
+-                // Evict stale side-table entries for overwritten cells
+-                for idx in dst_start..dst_end {
+-                    self.hyperlink_cell_map.remove(&(idx as u32));
+-                    self.grapheme_map
+-                        .remove(&((self.scrollback.len() * cols + idx) as u32));
+-                }
++                self.evict_overwritten_metadata(dst_start, dst_end);
+                 let sm_data = delta.sm_data(i);
+                 match loom_protocol::codec::decode_sm_cells(
+                     sm_data,
+diff --git a/crates/loom-app/src/grid/tests.rs b/crates/loom-app/src/grid/tests.rs
+index f8b4cf0..0f97dcd 100644
+--- a/crates/loom-app/src/grid/tests.rs
++++ b/crates/loom-app/src/grid/tests.rs
+@@ -515,8 +515,8 @@ fn full_sync_scrollback_trimmed_to_max() {
+     // Should keep only the last 3 scrollback rows
+     assert_eq!(grid.scrollback.len(), 3);
+     // Oldest surviving = '7', then '8', then '9'
+-    assert_eq!(grid.scrollback[0].cells[0].ch(), '7');
+-    assert_eq!(grid.scrollback[2].cells[0].ch(), '9');
++    assert_eq!(grid.scrollback[0].cells.cell(0).unwrap().ch(), '7');
++    assert_eq!(grid.scrollback[2].cells.cell(0).unwrap().ch(), '9');
+ }
+ 
+ #[test]
+@@ -606,8 +606,8 @@ fn full_sync_same_width_trim_rebases_grapheme_indices() {
+     grid.apply_full_sync_owned(&trim_sync);
+ 
+     assert_eq!(grid.scrollback.len(), 2);
+-    assert_eq!(grid.scrollback[0].cells[0].ch(), 'q');
+-    assert_eq!(grid.scrollback[1].cells[0].ch(), 'm');
++    assert_eq!(grid.scrollback[0].cells.cell(0).unwrap().ch(), 'q');
++    assert_eq!(grid.scrollback[1].cells.cell(0).unwrap().ch(), 'm');
+     assert!(!grid.grapheme_map.contains_key(&0));
+ }
+ 
+@@ -758,7 +758,7 @@ fn scrollback_replace_clears_and_repopulates() {
+         });
+     }
+     assert_eq!(grid.scrollback.len(), 3);
+-    assert_eq!(grid.scrollback[0].cells[0].ch(), 'a');
++    assert_eq!(grid.scrollback[0].cells.cell(0).unwrap().ch(), 'a');
+ 
+     // Now apply a replace sync with 2 rows: 'X', 'Y'
+     grid.apply_full_sync_owned(&FullPaneSync {
+@@ -794,8 +794,8 @@ fn scrollback_replace_clears_and_repopulates() {
+     });
+     // Old scrollback cleared, replaced with 2 new rows
+     assert_eq!(grid.scrollback.len(), 2);
+-    assert_eq!(grid.scrollback[0].cells[0].ch(), 'X');
+-    assert_eq!(grid.scrollback[1].cells[0].ch(), 'Y');
++    assert_eq!(grid.scrollback[0].cells.cell(0).unwrap().ch(), 'X');
++    assert_eq!(grid.scrollback[1].cells.cell(0).unwrap().ch(), 'Y');
+ }
+ 
+ #[test]
+@@ -1290,7 +1290,8 @@ fn reflow_widen_joins_wrapped_rows() {
+             PackedCell::with_ch('B'),
+             PackedCell::with_ch('C'),
+             cell_with('D', true), // last cell has WRAPLINE
+-        ],
++        ]
++        .into(),
+         wrapped: true,
+     });
+     grid.scrollback.push_back(ScrollbackRow {
+@@ -1299,7 +1300,8 @@ fn reflow_widen_joins_wrapped_rows() {
+             PackedCell::with_ch('F'),
+             PackedCell::default(),
+             PackedCell::default(),
+-        ],
++        ]
++        .into(),
+         wrapped: false,
+     });
+ 
+@@ -1331,8 +1333,8 @@ fn reflow_widen_joins_wrapped_rows() {
+     // Should reflow to 1 row: "ABCDEF  " (not wrapped)
+     assert_eq!(grid.scrollback.len(), 1);
+     assert!(!grid.scrollback[0].wrapped);
+-    assert_eq!(grid.scrollback[0].cells[0].ch(), 'A');
+-    assert_eq!(grid.scrollback[0].cells[5].ch(), 'F');
++    assert_eq!(grid.scrollback[0].cells.cell(0).unwrap().ch(), 'A');
++    assert_eq!(grid.scrollback[0].cells.cell(5).unwrap().ch(), 'F');
+ }
+ 
+ #[test]
+@@ -1347,7 +1349,8 @@ fn reflow_narrow_splits_long_line() {
+             PackedCell::with_ch('D'),
+             PackedCell::with_ch('E'),
+             PackedCell::with_ch('F'),
+-        ],
++        ]
++        .into(),
+         wrapped: false,
+     });
+ 
+@@ -1380,10 +1383,10 @@ fn reflow_narrow_splits_long_line() {
+     assert_eq!(grid.scrollback.len(), 2);
+     assert!(grid.scrollback[0].wrapped);
+     assert!(!grid.scrollback[1].wrapped);
+-    assert_eq!(grid.scrollback[0].cells[0].ch(), 'A');
+-    assert_eq!(grid.scrollback[0].cells[2].ch(), 'C');
+-    assert_eq!(grid.scrollback[1].cells[0].ch(), 'D');
+-    assert_eq!(grid.scrollback[1].cells[2].ch(), 'F');
++    assert_eq!(grid.scrollback[0].cells.cell(0).unwrap().ch(), 'A');
++    assert_eq!(grid.scrollback[0].cells.cell(2).unwrap().ch(), 'C');
++    assert_eq!(grid.scrollback[1].cells.cell(0).unwrap().ch(), 'D');
++    assert_eq!(grid.scrollback[1].cells.cell(2).unwrap().ch(), 'F');
+ }
+ 
+ #[test]
+@@ -1396,7 +1399,8 @@ fn reflow_preserves_unwrapped_lines() {
+             PackedCell::with_ch('B'),
+             PackedCell::default(),
+             PackedCell::default(),
+-        ],
++        ]
++        .into(),
+         wrapped: false,
+     });
+     grid.scrollback.push_back(ScrollbackRow {
+@@ -1405,7 +1409,8 @@ fn reflow_preserves_unwrapped_lines() {
+             PackedCell::with_ch('Y'),
+             PackedCell::default(),
+             PackedCell::default(),
+-        ],
++        ]
++        .into(),
+         wrapped: false,
+     });
+ 
+@@ -1435,8 +1440,8 @@ fn reflow_preserves_unwrapped_lines() {
+     grid.apply_full_sync_owned(&sync);
+ 
+     assert_eq!(grid.scrollback.len(), 2);
+-    assert_eq!(grid.scrollback[0].cells[0].ch(), 'A');
+-    assert_eq!(grid.scrollback[1].cells[0].ch(), 'X');
++    assert_eq!(grid.scrollback[0].cells.cell(0).unwrap().ch(), 'A');
++    assert_eq!(grid.scrollback[1].cells.cell(0).unwrap().ch(), 'X');
+ }
+ 
+ // ─── Phase 3: trailing punctuation / port preservation ──────────
+@@ -2477,3 +2482,37 @@ fn selection_copy_preserves_combining_characters_and_emoji_graphemes() {
+     assert_eq!(grid.text_in_range((0, 0), (2, 0)), "e\u{301}👩\u{200d}💻");
+     assert_eq!(grid.text_in_range((2, 0), (2, 0)), "👩\u{200d}💻");
+ }
++
++#[test]
++fn compact_history_can_be_viewed_selected_and_reflowed_without_losing_cells() {
++    let original: Vec<_> = (0..100)
++        .map(|i| PackedCell::with_ch(char::from(b'a' + (i % 26) as u8)))
++        .collect();
++    let mut grid = ClientPaneGrid::new(100, 1, 100);
++    grid.scrollback
++        .push_back(ScrollbackRow::from_slice(&original));
++    assert!(matches!(
++        grid.scrollback[0].cells,
++        ScrollbackCells::Uniform { .. }
++    ));
++    assert!(matches!(
++        grid.visible_cells(),
++        std::borrow::Cow::Borrowed(_)
++    ));
++    grid.scroll_up(1);
++    assert_eq!(grid.visible_cells().as_ref(), original);
++    assert_eq!(grid.buffer_row(0).as_ref(), original);
++    assert_eq!(grid.word_bounds_at(42, 0), Some((0, 99)));
++    grid.reflow_scrollback(50);
++    assert_eq!(grid.scrollback.len(), 2);
++    assert!(grid.scrollback[0].wrapped);
++    assert!(!grid.scrollback[1].wrapped);
++    assert_eq!(
++        grid.scrollback[0].cells.as_cells().as_ref(),
++        &original[..50]
++    );
++    assert_eq!(
++        grid.scrollback[1].cells.as_cells().as_ref(),
++        &original[50..]
++    );
++}
+diff --git a/crates/loom-app/src/grid/types.rs b/crates/loom-app/src/grid/types.rs
+index c6804ba..672e0ac 100644
+--- a/crates/loom-app/src/grid/types.rs
++++ b/crates/loom-app/src/grid/types.rs
+@@ -1,20 +1,141 @@
+ use loom_protocol::message::*;
++use std::borrow::Cow;
++
++/// Immutable history cells. Rows with identical attributes share one template;
++/// character bytes remain exact, including malformed or padded UTF-8 input.
++#[derive(Clone)]
++pub enum ScrollbackCells {
++    Dense(Vec<PackedCell>),
++    Uniform {
++        template: PackedCell,
++        characters: Box<[[u8; 4]]>,
++    },
++}
++
++impl ScrollbackCells {
++    fn uniform_template(cells: &[PackedCell]) -> Option<PackedCell> {
++        // Avoid adding representation overhead to tiny rows.
++        let template = *cells.first().filter(|_| cells.len() >= 8)?;
++        cells
++            .iter()
++            .all(|cell| {
++                let mut attributes = *cell;
++                attributes.ch_bytes = template.ch_bytes;
++                attributes == template
++            })
++            .then_some(template)
++    }
++
++    pub fn as_cells(&self) -> Cow<'_, [PackedCell]> {
++        match self {
++            Self::Dense(cells) => Cow::Borrowed(cells),
++            Self::Uniform {
++                template,
++                characters,
++            } => Cow::Owned(
++                characters
++                    .iter()
++                    .map(|&ch_bytes| {
++                        let mut cell = *template;
++                        cell.ch_bytes = ch_bytes;
++                        cell
++                    })
++                    .collect(),
++            ),
++        }
++    }
++
++    /// Append a viewport-width row without allocating an intermediate row.
++    /// Resize gaps are padded with default cells; excess columns are truncated.
++    pub fn append_to(&self, output: &mut Vec<PackedCell>, columns: usize) {
++        let take = match self {
++            Self::Dense(cells) => {
++                let take = cells.len().min(columns);
++                output.extend_from_slice(&cells[..take]);
++                take
++            }
++            Self::Uniform {
++                template,
++                characters,
++            } => {
++                let take = characters.len().min(columns);
++                output.extend(characters[..take].iter().map(|&ch_bytes| {
++                    let mut cell = *template;
++                    cell.ch_bytes = ch_bytes;
++                    cell
++                }));
++                take
++            }
++        };
++        output.resize(output.len() + columns - take, PackedCell::default());
++    }
++
++    pub fn cell(&self, index: usize) -> Option<PackedCell> {
++        match self {
++            Self::Dense(cells) => cells.get(index).copied(),
++            Self::Uniform {
++                template,
++                characters,
++            } => characters.get(index).map(|&ch_bytes| {
++                let mut cell = *template;
++                cell.ch_bytes = ch_bytes;
++                cell
++            }),
++        }
++    }
++
++    pub fn into_cells(self) -> Vec<PackedCell> {
++        match self {
++            Self::Dense(cells) => cells,
++            compact => compact.as_cells().into_owned(),
++        }
++    }
++}
++
++impl From<&[PackedCell]> for ScrollbackCells {
++    fn from(cells: &[PackedCell]) -> Self {
++        if let Some(template) = Self::uniform_template(cells) {
++            Self::Uniform {
++                template,
++                characters: cells.iter().map(|cell| cell.ch_bytes).collect(),
++            }
++        } else {
++            Self::Dense(cells.to_vec())
++        }
++    }
++}
++
++impl From<Vec<PackedCell>> for ScrollbackCells {
++    fn from(cells: Vec<PackedCell>) -> Self {
++        if let Some(template) = Self::uniform_template(&cells) {
++            Self::Uniform {
++                template,
++                characters: cells.iter().map(|cell| cell.ch_bytes).collect(),
++            }
++        } else {
++            Self::Dense(cells)
++        }
++    }
++}
+ 
+ /// A single scrollback row with wrap metadata for reflow on resize.
+ #[derive(Clone)]
+ pub struct ScrollbackRow {
+-    pub cells: Vec<PackedCell>,
++    pub cells: ScrollbackCells,
+     /// True if this row's content continues on the next row (soft wrap).
+     pub wrapped: bool,
+ }
+ 
+ impl ScrollbackRow {
+-    /// Take a decoded row without copying its cells; preserve its wrap flag.
+-    pub(super) fn from_vec(cells: Vec<PackedCell>) -> Self {
++    /// Compact a decoded scratch row and preserve its wrap flag.
++    pub(super) fn from_slice(cells: &[PackedCell]) -> Self {
+         let wrapped = cells
+             .last()
+             .is_some_and(|c| c.flags_u16() & FLAG_WRAPLINE != 0);
+-        ScrollbackRow { cells, wrapped }
++        ScrollbackRow {
++            cells: cells.into(),
++            wrapped,
++        }
+     }
+ }
+ 
+@@ -57,3 +178,80 @@ pub(super) fn classify_word_cell(cell: &PackedCell) -> WordClass {
+         WordClass::Symbol
+     }
+ }
++
++#[cfg(test)]
++mod compact_tests {
++    use super::*;
++
++    #[test]
++    fn history_attributes_and_character_bytes_roundtrip_exactly() {
++        for flags in [
++            0,
++            FLAG_BOLD,
++            FLAG_INVERSE,
++            FLAG_HIDDEN,
++            FLAG_WIDE_CHAR,
++            u16::MAX,
++        ] {
++            for fg in [
++                PackedColor::named(16),
++                PackedColor::indexed(123),
++                PackedColor::rgb(7, 31, 255),
++            ] {
++                let mut row = vec![PackedCell::default(); 100];
++                for (i, cell) in row.iter_mut().enumerate() {
++                    cell.set_ch(['x', '中', '😀', '\0'][i % 4]);
++                    cell.fg = fg;
++                    cell.bg = PackedColor::rgb(19, 42, 87);
++                    cell.flags = flags.to_le_bytes();
++                }
++                row[17].ch_bytes = [255, 0, 1, 0];
++                let compact = ScrollbackCells::from(row.as_slice());
++                assert!(matches!(compact, ScrollbackCells::Uniform { .. }));
++                assert_eq!(compact.as_cells().as_ref(), row);
++                for (i, cell) in row.iter().enumerate() {
++                    assert_eq!(compact.cell(i), Some(*cell));
++                }
++                assert!(compact.cell(row.len()).is_none());
++                assert_eq!(compact.clone().into_cells(), row);
++                row[37].bg = PackedColor::indexed(29);
++                let dense = ScrollbackCells::from(row.clone());
++                assert!(matches!(dense, ScrollbackCells::Dense(_)));
++                assert_eq!(dense.into_cells(), row);
++            }
++        }
++    }
++
++    #[test]
++    fn wrap_metadata_and_mixed_width_rows_are_preserved() {
++        let mut row = vec![PackedCell::with_ch('a'); 100];
++        row[99].flags = FLAG_WRAPLINE.to_le_bytes();
++        row[40].set_ch('界');
++        row[40].flags = FLAG_WIDE_CHAR.to_le_bytes();
++        row[41].flags = FLAG_WIDE_CHAR_SPACER.to_le_bytes();
++        let history = ScrollbackRow::from_slice(&row);
++        assert!(history.wrapped);
++        assert!(matches!(history.cells, ScrollbackCells::Dense(_)));
++        assert_eq!(history.cells.as_cells().as_ref(), row);
++    }
++
++    #[test]
++    fn append_preserves_prefix_and_truncates_or_pads_both_representations() {
++        let mut row = vec![PackedCell::with_ch('界'); 100];
++        for mixed in [false, true] {
++            if mixed {
++                row[5].fg = PackedColor::rgb(1, 2, 3);
++            }
++            let stored = ScrollbackCells::from(row.as_slice());
++            for columns in [0, 50, 100, 120] {
++                let prefix = vec![PackedCell::with_ch('p'); 3];
++                let mut actual = prefix.clone();
++                stored.append_to(&mut actual, columns);
++                let mut expected = prefix;
++                expected.extend_from_slice(&row[..columns.min(row.len())]);
++                expected.resize(3 + columns, PackedCell::default());
++                assert_eq!(actual, expected);
++            }
++        }
++    }
++}
+diff --git a/crates/loom-protocol/src/codec/mod.rs b/crates/loom-protocol/src/codec/mod.rs
+index 90e1366..d06d32e 100644
+--- a/crates/loom-protocol/src/codec/mod.rs
++++ b/crates/loom-protocol/src/codec/mod.rs
+@@ -42,6 +42,7 @@ pub use state_machine::{
+     OP_ASCII, OP_ASCII_REPEAT, OP_CHAR1, OP_CHARS, OP_CHARS_LONG, OP_END, OP_REPEAT, OP_RESET,
+     OP_SET_BG, OP_SET_BG_INDEXED, OP_SET_BG_NAMED, OP_SET_FG, OP_SET_FG_BG, OP_SET_FG_INDEXED,
+     OP_SET_FG_NAMED, OP_SET_FLAGS, StateEncoder, decode_sm_cells, decode_sm_rows,
++    decode_sm_rows_with,
+ };
+ 
+ #[cfg(test)]
+diff --git a/crates/loom-protocol/src/codec/state_machine.rs b/crates/loom-protocol/src/codec/state_machine.rs
+index fdc7257..0cac8ce 100644
+--- a/crates/loom-protocol/src/codec/state_machine.rs
++++ b/crates/loom-protocol/src/codec/state_machine.rs
+@@ -350,6 +350,84 @@ pub fn decode_sm_rows(
+     Ok(output.rows)
+ }
+ 
++/// Decode history one row at a time into caller-owned storage. A single scratch
++/// row avoids allocating the complete dense history before compacting it.
++/// The transform sees default padding on short streams. Its returned rows are
++/// discarded if opcode validation fails; callers commit the vector on success.
++pub fn decode_sm_rows_with<R>(
++    data: &[u8],
++    columns: usize,
++    rows: usize,
++    transform: impl FnMut(&[PackedCell]) -> R,
++) -> io::Result<Vec<R>> {
++    let count = columns
++        .checked_mul(rows)
++        .filter(|&n| n <= MAX_GRID_CELLS)
++        .ok_or_else(overflow_err)?;
++    if columns == 0 && rows != 0 {
++        return Err(overflow_err());
++    }
++    let mut output = MappedRows {
++        columns,
++        count,
++        scratch: vec![PackedCell::default(); if rows == 0 { 0 } else { columns }],
++        rows: Vec::with_capacity(rows),
++        transform,
++    };
++    let decoded = decode_cells_into(data, &mut output)?;
++    if output.rows.len() < rows {
++        // Full rows overwrite every scratch cell. Only a final short row
++        // needs its unwritten tail reset after reusing the preceding row.
++        output.scratch[decoded % columns..].fill(PackedCell::default());
++        output.finish_row();
++        output.scratch.fill(PackedCell::default());
++    }
++    while output.rows.len() < rows {
++        output.finish_row();
++    }
++    Ok(output.rows)
++}
++
++struct MappedRows<R, F> {
++    columns: usize,
++    count: usize,
++    scratch: Vec<PackedCell>,
++    rows: Vec<R>,
++    transform: F,
++}
++
++impl<R, F: FnMut(&[PackedCell]) -> R> MappedRows<R, F> {
++    fn finish_row(&mut self) {
++        self.rows.push((self.transform)(&self.scratch));
++    }
++}
++
++impl<R, F: FnMut(&[PackedCell]) -> R> CellOutput for MappedRows<R, F> {
++    fn len(&self) -> usize {
++        self.count
++    }
++
++    fn spans(
++        &mut self,
++        start: usize,
++        count: usize,
++        mut write: impl FnMut(usize, &mut [PackedCell]),
++    ) {
++        let mut written = 0;
++        while written < count {
++            let index = start + written;
++            let column = index % self.columns;
++            let length = (count - written).min(self.columns - column);
++            debug_assert_eq!(index / self.columns, self.rows.len());
++            write(written, &mut self.scratch[column..column + length]);
++            written += length;
++            if column + length == self.columns {
++                self.finish_row();
++            }
++        }
++    }
++}
++
+ // Share opcode validation/state between the hot contiguous viewport decoder
+ // and row storage. Static dispatch keeps the contiguous path a single span.
+ trait CellOutput {
+diff --git a/crates/loom-protocol/src/codec/tests.rs b/crates/loom-protocol/src/codec/tests.rs
+index 8da389d..a25f908 100644
+--- a/crates/loom-protocol/src/codec/tests.rs
++++ b/crates/loom-protocol/src/codec/tests.rs
+@@ -2434,9 +2434,22 @@ fn row_decoder_preserves_runs_attributes_and_padding_across_rows() {
+         cells.push(cell);
+     }
+     let encoded = sm_encode_cells(&cells);
+-    for columns in [1, 3, 37, 100, 701] {
+-        let rows = cells.len().div_ceil(columns);
++    for (columns, extra_rows) in [
++        (1, 0),
++        (3, 0),
++        (37, 0),
++        (100, 0),
++        (701, 0),
++        (1, 3),
++        (3, 3),
++        (37, 3),
++        (100, 3),
++        (701, 3),
++    ] {
++        let rows = cells.len().div_ceil(columns) + extra_rows;
+         let decoded = decode_sm_rows(&encoded, columns, rows).unwrap();
++        let mapped = decode_sm_rows_with(&encoded, columns, rows, |row| row.to_vec()).unwrap();
++        assert_eq!(mapped, decoded);
+         let flat: Vec<_> = decoded.into_iter().flatten().collect();
+         let mut expected = cells.clone();
+         expected.resize(columns * rows, PackedCell::default());
+@@ -2458,6 +2471,11 @@ fn row_decoder_rejects_overflow_and_truncation_like_contiguous_decoder() {
+         let mut flat = vec![PackedCell::default(); 10];
+         let contiguous = decode_sm_cells(&data[..end], &mut flat);
+         let rows = decode_sm_rows(&data[..end], 2, 5);
++        let mapped = decode_sm_rows_with(&data[..end], 2, 5, |row| row.to_vec());
++        assert_eq!(rows.is_err(), mapped.is_err(), "mapped prefix {end}");
++        if let (Ok(a), Ok(b)) = (&rows, &mapped) {
++            assert_eq!(a, b);
++        }
+         assert_eq!(contiguous.is_err(), rows.is_err(), "prefix {end}");
+         if let Ok(rows) = rows {
+             let rows: Vec<_> = rows.into_iter().flatten().collect();
+@@ -2472,3 +2490,17 @@ fn row_decoder_rejects_overflow_and_truncation_like_contiguous_decoder() {
+     assert!(decode_sm_rows(&[OP_END], 0, 1).is_err());
+     assert!(decode_sm_rows(&[OP_END], 0, 0).unwrap().is_empty());
+ }
++
++#[test]
++fn mapped_row_decoder_checks_sizes_without_allocating_empty_rows() {
++    assert!(decode_sm_rows_with(&[OP_END], usize::MAX, 2, |r| r.to_vec()).is_err());
++    assert!(decode_sm_rows_with(&[OP_END], 1, MAX_GRID_CELLS + 1, |r| r.to_vec()).is_err());
++    assert!(decode_sm_rows_with(&[OP_END], 0, 1, |r| r.to_vec()).is_err());
++    assert!(
++        decode_sm_rows_with(&[OP_END], usize::MAX, 0, |r| r.to_vec())
++            .unwrap()
++            .is_empty()
++    );
++    let rows = decode_sm_rows_with(&[OP_END], 4, 7, |r| r.to_vec()).unwrap();
++    assert_eq!(rows, vec![vec![PackedCell::default(); 4]; 7]);
++}

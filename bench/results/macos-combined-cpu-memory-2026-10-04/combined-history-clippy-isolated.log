@@ -1,0 +1,533 @@
+   Compiling serde_core v1.0.228
+    Checking cfg-if v1.0.4
+    Checking log v0.4.29
+   Compiling libm v0.2.16
+    Checking smallvec v1.15.1
+    Checking pin-project-lite v0.2.17
+    Checking libc v0.2.184
+   Compiling num-traits v0.2.19
+    Checking itoa v1.0.18
+   Compiling syn v2.0.117
+    Checking scopeguard v1.2.0
+    Checking bytes v1.11.1
+    Checking memchr v2.8.0
+    Checking objc2-encode v4.1.0
+    Checking lock_api v0.4.14
+    Checking option-ext v0.2.0
+    Checking regex-syntax v0.8.10
+    Checking crossbeam-utils v0.8.21
+    Checking twox-hash v2.1.2
+    Checking lz4_flex v0.11.6
+    Checking once_cell v1.21.4
+    Checking equivalent v1.0.2
+    Checking aho-corasick v1.1.4
+    Checking bitflags v1.3.2
+    Checking hashbrown v0.17.0
+    Checking anyhow v1.0.102
+    Checking unicode-width v0.2.2
+   Compiling version_check v0.9.5
+   Compiling objc2 v0.6.4
+    Checking winnow v0.5.40
+    Checking ryu v1.0.23
+    Checking errno v0.3.14
+    Checking parking_lot_core v0.9.12
+    Checking signal-hook-registry v1.4.8
+    Checking mio v1.2.0
+    Checking socket2 v0.6.3
+    Checking parking_lot v0.12.5
+    Checking dirs-sys v0.5.0
+    Checking indexmap v2.14.0
+    Checking dirs v6.0.0
+    Checking winnow v0.7.15
+    Checking castaway v0.2.4
+    Checking static_assertions v1.1.0
+    Checking futures-core v0.3.32
+   Compiling objc-sys v0.3.5
+    Checking compact_str v0.8.1
+    Checking toml_write v0.1.2
+    Checking regex-automata v0.4.14
+    Checking arrayvec v0.7.6
+    Checking cursor-icon v1.2.0
+    Checking core-foundation-sys v0.8.7
+    Checking base64 v0.22.1
+    Checking zmij v1.0.21
+    Checking signal-hook v0.3.18
+    Checking home v0.5.12
+    Checking dispatch v0.2.0
+   Compiling heck v0.5.0
+    Checking unicode-segmentation v1.13.2
+    Checking foreign-types-shared v0.3.1
+    Checking dpi v0.1.2
+    Checking crossbeam-channel v0.5.15
+    Checking loom-anim v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-anim)
+    Checking fastrand v2.4.1
+    Checking objc2 v0.5.2
+    Checking utf8parse v0.2.2
+    Checking core-foundation v0.9.4
+   Compiling slotmap v1.1.1
+    Checking anstyle-query v1.1.5
+    Checking anstyle-parse v1.0.0
+    Checking colorchoice v1.0.5
+    Checking raw-window-handle v0.6.2
+    Checking rmp v0.8.15
+    Checking is_terminal_polyfill v1.70.2
+    Checking anstyle v1.0.14
+    Checking core-graphics-types v0.1.3
+    Checking getrandom v0.4.2
+    Checking block2 v0.6.2
+    Checking core-foundation v0.10.1
+   Compiling winit v0.30.13 (https://github.com/l1nxy/winit.git?branch=loom-patches#3f290e45)
+    Checking tracing-core v0.1.36
+    Checking core_maths v0.1.1
+    Checking anstream v1.0.0
+    Checking loom-layout v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-layout)
+    Checking smol_str v0.2.2
+    Checking bit-vec v0.8.0
+    Checking bitflags v2.11.0
+    Checking serde_json v1.0.149
+    Checking tinyvec_macros v0.1.1
+   Compiling thiserror v2.0.18
+    Checking tracing v0.1.44
+    Checking block2 v0.5.1
+    Checking ttf-parser v0.25.1
+    Checking tinyvec v1.11.0
+    Checking rustix v1.1.4
+    Checking nix v0.29.0
+    Checking objc2-core-foundation v0.3.2
+    Checking objc2-foundation v0.2.2
+    Checking core-graphics-types v0.2.0
+    Checking bit-set v0.8.0
+    Checking getrandom v0.3.4
+    Checking memmap2 v0.9.10
+    Checking ttf-parser v0.20.0
+    Checking regex v1.12.3
+   Compiling shlex v1.3.0
+    Checking unicode-script v0.5.8
+    Checking unicode-bidi-mirroring v0.4.0
+    Checking unicode-ccc v0.4.0
+    Checking unicode-properties v0.1.4
+    Checking objc2-foundation v0.3.2
+   Compiling find-msvc-tools v0.1.9
+    Checking objc2-core-graphics v0.3.2
+    Checking objc2-core-video v0.3.2
+    Checking objc2-core-text v0.3.2
+    Checking rand_core v0.9.5
+   Compiling cc v1.2.60
+    Checking loom-input v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-input)
+    Checking simd-adler32 v0.3.9
+    Checking polling v3.11.0
+    Checking rustix-openpty v0.2.0
+    Checking tempfile v3.27.0
+    Checking either v1.15.0
+    Checking clap_lex v1.1.0
+   Compiling crc32fast v1.5.0
+    Checking strsim v0.11.1
+    Checking same-file v1.0.6
+    Checking adler2 v2.0.1
+    Checking crossbeam-epoch v0.9.18
+    Checking shell-words v1.1.1
+    Checking walkdir v2.5.0
+    Checking clap_builder v4.6.0
+    Checking fdeflate v0.3.7
+    Checking miniz_oxide v0.8.9
+    Checking ciborium-io v0.2.2
+    Checking plotters-backend v0.3.7
+    Checking itertools v0.10.5
+    Checking plotters-svg v0.3.7
+    Checking crossbeam-deque v0.8.6
+   Compiling generic-array v0.14.7
+    Checking http v1.4.0
+    Checking cast v0.3.0
+    Checking rayon-core v1.13.0
+    Checking fontdb v0.16.2
+    Checking percent-encoding v2.3.2
+   Compiling syn v1.0.109
+    Checking plotters v0.3.7
+    Checking rayon v1.11.0
+    Checking serial-core v0.4.0
+    Checking flate2 v1.1.9
+    Checking objc2-app-kit v0.2.2
+    Checking criterion-plot v0.5.0
+    Checking termios v0.2.2
+    Checking ioctl-rs v0.1.6
+    Checking is-terminal v0.4.17
+   Compiling glutin v0.32.3
+   Compiling naga v25.0.1
+    Checking zune-core v0.5.1
+    Checking typenum v1.20.0
+    Checking oorandom v11.1.5
+    Checking foldhash v0.1.5
+    Checking anes v0.1.6
+    Checking termcolor v1.4.1
+    Checking hashbrown v0.15.5
+    Checking codespan-reporting v0.12.0
+    Checking zune-jpeg v0.5.15
+    Checking serial-unix v0.4.0
+    Checking memoffset v0.6.5
+    Checking typeid v1.0.3
+    Checking dispatch2 v0.3.1
+    Checking wait-timeout v0.2.1
+    Checking cgl v0.3.2
+    Checking libloading v0.8.9
+   Compiling glutin-winit v0.5.0
+    Checking quick-error v1.2.3
+    Checking pxfm v0.1.28
+    Checking pin-utils v0.1.0
+    Checking rustc-hash v1.1.0
+    Checking weezl v0.1.12
+    Checking fnv v1.0.7
+    Checking hexf-parse v0.2.1
+   Compiling httparse v1.10.1
+    Checking unicode-ident v1.0.24
+    Checking futures-sink v0.3.32
+    Checking quick-error v2.0.1
+    Checking rusty-fork v0.3.1
+    Checking nix v0.25.1
+    Checking serial v0.4.0
+    Checking erased-discriminant v1.0.1
+    Checking png v0.18.1
+    Checking png v0.17.16
+    Checking http-body v1.0.1
+    Checking rand_xorshift v0.4.0
+    Checking slab v0.4.12
+    Checking byteorder-lite v0.1.0
+    Checking unarray v0.1.4
+    Checking futures-task v0.3.32
+    Checking mint v0.5.9
+    Checking downcast-rs v1.2.1
+    Checking grid v0.15.0
+    Checking powerfmt v0.2.0
+   Compiling which v8.0.2
+    Checking crypto-common v0.1.7
+    Checking taffy v0.7.7
+    Checking deranged v0.5.8
+    Checking block-buffer v0.10.4
+    Checking gethostname v1.1.0
+    Checking env_filter v1.0.1
+    Checking loom-motion v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-motion)
+    Checking time-core v0.1.8
+    Checking num-conv v0.2.1
+    Checking colorsys v0.6.7
+    Checking moxcms v0.8.1
+    Checking jiff v0.2.23
+    Checking zeroize v1.8.2
+    Checking glow v0.16.0
+    Checking tower-service v0.3.3
+    Checking digest v0.10.7
+   Compiling luajit-src v210.6.6+707c12b
+   Compiling lua-src v550.0.0
+    Checking cpufeatures v0.2.17
+    Checking kqueue-sys v1.0.4
+    Checking time v0.3.47
+    Checking parking v2.2.1
+   Compiling pkg-config v0.3.33
+   Compiling winnow v1.0.1
+   Compiling semver v1.0.28
+   Compiling unicase v2.9.0
+   Compiling mac-notification-sys v0.6.12
+    Checking futures-io v0.3.32
+    Checking tower-layer v0.3.3
+    Checking httpdate v1.0.3
+    Checking mime v0.3.17
+    Checking futures-lite v2.6.1
+   Compiling mime_guess v2.0.5
+   Compiling toml_parser v1.1.2+spec-1.1.0
+   Compiling rustc_version v0.4.1
+   Compiling mlua-sys v0.10.0
+    Checking kqueue v1.1.1
+    Checking env_logger v0.11.10
+    Checking sha1 v0.10.6
+    Checking http-body-util v0.1.3
+    Checking futures-channel v0.3.32
+    Checking mio v0.8.11
+    Checking filetime v0.2.27
+    Checking console v0.15.11
+   Compiling loomtty v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom)
+    Checking data-encoding v2.11.0
+    Checking atomic-waker v1.1.2
+   Compiling toml_datetime v1.1.1+spec-1.1.0
+    Checking sync_wrapper v1.0.2
+    Checking notify v6.1.1
+   Compiling rstest_macros v0.26.1
+   Compiling toml_edit v0.25.11+spec-1.1.0
+    Checking form_urlencoded v1.2.2
+    Checking axum-core v0.5.6
+    Checking serde_path_to_error v0.1.20
+   Compiling proc-macro-crate v3.5.0
+    Checking bstr v1.12.1
+    Checking objc2-metal v0.3.2
+    Checking objc2-core-image v0.3.2
+    Checking objc2-cloud-kit v0.3.2
+    Checking objc2-core-data v0.3.2
+    Checking notify-rust v4.14.0
+    Checking rustc-hash v2.1.2
+    Checking matchit v0.8.4
+   Compiling relative-path v1.9.3
+    Checking http-range-header v0.4.2
+   Compiling glob v0.3.3
+    Checking loom-procinfo v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-procinfo)
+    Checking subtle v2.6.1
+    Checking loom-integration-tests v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-integration-tests)
+    Checking futures-timer v3.0.3
+warning: manual `RangeInclusive::contains` implementation
+   --> crates/loom-motion/src/transition.rs:182:21
+    |
+182 |                     v >= 0.0 && v <= 1.0,
+    |                     ^^^^^^^^^^^^^^^^^^^^ help: use: `(0.0..=1.0).contains(&v)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#manual_range_contains
+    = note: `#[warn(clippy::manual_range_contains)]` on by default
+
+warning: `loom-motion` (lib test) generated 1 warning (run `cargo clippy --fix --lib -p loom-motion --tests` to apply 1 suggestion)
+    Checking objc2-quartz-core v0.3.2
+    Checking objc2-app-kit v0.3.2
+   Compiling serde_derive v1.0.228
+   Compiling zerocopy-derive v0.8.48
+   Compiling tokio-macros v2.7.0
+   Compiling bytemuck_derive v1.10.2
+   Compiling garde_derive v0.22.1
+   Compiling thiserror-impl v1.0.69
+   Compiling foreign-types-macros v0.2.3
+   Compiling thiserror-impl v2.0.18
+   Compiling clap_derive v4.6.0
+   Compiling strum_macros v0.26.4
+   Compiling fax_derive v0.2.0
+    Checking foreign-types v0.5.0
+    Checking core-graphics v0.23.2
+    Checking core-graphics v0.24.0
+    Checking fax v0.2.6
+    Checking core-text v21.0.0
+   Compiling hidden-trait v0.1.2
+   Compiling futures-macro v0.3.32
+    Checking tokio v1.51.1
+    Checking thiserror v1.0.69
+   Compiling blade-macros v0.3.0
+    Checking filedescriptor v0.8.3
+    Checking bytemuck v1.25.0
+    Checking portable-pty v0.8.1
+    Checking dialoguer v0.11.0
+    Checking tokio-stream v0.1.18
+    Checking garde v0.22.1
+    Checking hyper v1.10.1
+    Checking rustybuzz v0.20.1
+    Checking tokio-test v0.4.5
+    Checking tokio-util v0.7.18
+    Checking hyper-util v0.1.20
+    Checking mlua v0.11.6
+    Checking zerocopy v0.8.48
+    Checking loom-plugin v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-plugin)
+    Checking clap v4.6.0
+    Checking strum v0.26.3
+    Checking serde v1.0.228
+    Checking rmp-serde v1.3.1
+    Checking toml_datetime v0.6.11
+    Checking serde_spanned v0.6.9
+    Checking vte v0.15.0 (https://github.com/l1nxy/vte.git?branch=loom-patches#fdfbd92d)
+    Checking tinytemplate v1.2.1
+    Checking keyboard-types v0.7.0
+    Checking futures-util v0.3.32
+    Checking toml_edit v0.20.2
+    Checking toml_edit v0.22.27
+    Checking serde-reflection v0.5.2
+    Checking serde_urlencoded v0.7.1
+    Checking alacritty_terminal v0.25.1 (https://github.com/l1nxy/alacritty.git?branch=loom-patches#86778462)
+    Checking muda v0.15.3
+    Checking global-hotkey v0.7.0
+    Checking tray-icon v0.19.3
+    Checking toml v0.8.2
+    Checking loom-config v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-config)
+    Checking loom-protocol v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-protocol)
+    Checking half v2.7.1
+    Checking ppv-lite86 v0.2.21
+    Checking ciborium-ll v0.2.2
+    Checking loom-session v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-session)
+    Checking rand_chacha v0.9.0
+    Checking ciborium v0.2.2
+    Checking rand v0.9.3
+    Checking tiff v0.11.3
+    Checking tower v0.5.3
+    Checking tower-http v0.6.11
+    Checking criterion v0.5.1
+    Checking proptest v1.11.0
+    Checking tungstenite v0.29.0
+    Checking loom-app v0.1.0 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-app)
+    Checking loom-render v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-render)
+    Checking loom-term v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-term)
+    Checking image v0.25.10
+    Checking tokio-tungstenite v0.29.0
+warning: this expression creates a reference which is immediately dereferenced by the compiler
+   --> crates/loom-app/src/grid/cell_ops.rs:219:34
+    |
+219 |         let next = self.cell_end(&row, idx) + 1;
+    |                                  ^^^^ help: change this to: `row`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#needless_borrow
+    = note: `#[warn(clippy::needless_borrow)]` on by default
+
+warning: this expression creates a reference which is immediately dereferenced by the compiler
+   --> crates/loom-app/src/grid/cell_ops.rs:231:37
+    |
+231 |             let end = self.cell_end(&row, idx);
+    |                                     ^^^^ help: change this to: `row`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#needless_borrow
+
+warning: `loom-app` (lib) generated 2 warnings (run `cargo clippy --fix --lib -p loom-app` to apply 2 suggestions)
+warning: unnecessary `>= y + 1` or `x - 1 >=`
+   --> crates/loom-term/src/pane/tests.rs:946:9
+    |
+946 |         p.prompt_marks.len() >= marks_before + 1
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: change it to: `p.prompt_marks.len() > marks_before`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#int_plus_one
+    = note: `#[warn(clippy::int_plus_one)]` on by default
+
+    Checking axum v0.8.9
+    Checking loom-ui v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-ui)
+    Checking rstest v0.26.1
+warning: very complex type used. Consider factoring parts into `type` definitions
+   --> crates/loom-config/src/config.rs:207:20
+    |
+207 |         let cases: &[(&str, fn(&mut LoomConfig))] = &[
+    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#type_complexity
+    = note: `#[warn(clippy::type_complexity)]` on by default
+
+warning: length comparison to zero
+   --> crates/loom-term/src/pane/tests.rs:361:16
+    |
+361 |             || read_grid_row(p, 0).len() > 0
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: using `!is_empty` is clearer and more explicit: `!read_grid_row(p, 0).is_empty()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#len_zero
+    = note: `#[warn(clippy::len_zero)]` on by default
+
+warning: casting to the same type is unnecessary (`usize` -> `usize`)
+   --> crates/loom-term/src/pane/tests.rs:614:18
+    |
+614 |     let target = (n_lines - 50) as usize;
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ help: try: `(n_lines - 50)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#unnecessary_cast
+    = note: `#[warn(clippy::unnecessary_cast)]` on by default
+
+warning: `loom-term` (lib test) generated 3 warnings (run `cargo clippy --fix --lib -p loom-term --tests` to apply 3 suggestions)
+warning: `loom-config` (lib test) generated 1 warning
+warning: the loop variable `i` is only used to index `cells`
+    --> crates/loom-app/src/grid/tests.rs:1827:14
+     |
+1827 |     for i in 0..5 {
+     |              ^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#needless_range_loop
+     = note: `#[warn(clippy::needless_range_loop)]` on by default
+help: consider using an iterator
+     |
+1827 -     for i in 0..5 {
+1827 +     for <item> in cells.iter_mut().take(5) {
+     |
+
+    Checking arboard v3.6.1
+warning: items after a test module
+  --> crates/loom-render/src/lib.rs:31:1
+   |
+31 | mod font_size_tests {
+   | ^^^^^^^^^^^^^^^^^^^
+...
+49 | pub struct FrameScene<'a> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#items_after_test_module
+   = note: `#[warn(clippy::items_after_test_module)]` on by default
+   = help: move the items to before the test module was defined
+
+warning: this `if` statement can be collapsed
+    --> crates/loom-app/src/prediction/tests.rs:1397:5
+     |
+1397 | /     if let Some(o) = overlay {
+1398 | |         if let Some(cell) = o.get_cell(0, 1) {
+1399 | |             assert_eq!(cell.replacement.fg, PackedColor::rgb(255, 0, 0));
+1400 | |         }
+1401 | |     }
+     | |_____^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#collapsible_if
+     = note: `#[warn(clippy::collapsible_if)]` on by default
+help: collapse nested if block
+     |
+1397 ~     if let Some(o) = overlay
+1398 ~         && let Some(cell) = o.get_cell(0, 1) {
+1399 |             assert_eq!(cell.replacement.fg, PackedColor::rgb(255, 0, 0));
+1400 ~         }
+     |
+
+warning: `loom-app` (lib test) generated 4 warnings (2 duplicates) (run `cargo clippy --fix --lib -p loom-app --tests` to apply 1 suggestion)
+warning: `loom-render` (lib test) generated 1 warning (run `cargo clippy --fix --lib -p loom-render --tests` to apply 1 suggestion)
+    Checking blade-graphics v0.7.1
+    Checking loomtty-server v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-server)
+warning: doc list item without indentation
+    --> crates/loom-protocol/src/codec/tests.rs:1944:9
+     |
+1944 |     /// This test pins both the name bytes and the payload shape.
+     |         ^
+     |
+     = help: if this is supposed to be its own paragraph, add a blank line
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#doc_lazy_continuation
+     = note: `#[warn(clippy::doc_lazy_continuation)]` on by default
+help: indent this line
+     |
+1944 |     ///     This test pins both the name bytes and the payload shape.
+     |         ++++
+
+warning: `loom-protocol` (lib test) generated 1 warning
+    Checking loom-gpu v0.2.1 (/Users/linxy/.codex/worktrees/tui-client-cpu/loomtty/crates/loom-gpu)
+warning: items after a test module
+    --> crates/loom-gpu/src/blade.rs:2114:1
+     |
+2114 | mod shader_tests {
+     | ^^^^^^^^^^^^^^^^
+...
+2206 | const RECT_SHADER: &str = r#"
+     | ^^^^^^^^^^^^^^^^^^^^^^^
+...
+2255 | const VERTEX_SHADER: &str = r#"
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2308 | const WGSL_COLOR_FUNCS: &str = r#"
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2340 | const WGSL_CORNER_FUNCS: &str = r#"
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2359 | const ALPHA_FRAGMENT: &str = r#"
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2395 | const COLOR_FRAGMENT: &str = r#"
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2417 | const BACKGROUND_IMAGE_SHADER: &str = r#"
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#items_after_test_module
+     = note: `#[warn(clippy::items_after_test_module)]` on by default
+     = help: move the items to before the test module was defined
+
+warning: `loom-gpu` (lib test) generated 1 warning (run `cargo clippy --fix --lib -p loom-gpu --tests` to apply 1 suggestion)
+warning: this function has too many arguments (8/7)
+   --> crates/loom/src/app/ui/transient.rs:100:5
+    |
+100 | /     pub(in crate::app) fn build_bell_flash(
+101 | |         &mut self,
+102 | |         tiles: &[(u64, GeoRect, bool)],
+103 | |         zoom: f32,
+...   |
+108 | |         color_glyphs: &mut Vec<GlyphInstance>,
+109 | |     ) {
+    | |_____^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#too_many_arguments
+    = note: `#[warn(clippy::too_many_arguments)]` on by default
+
+warning: `loomtty` (lib test) generated 1 warning
+    Finished `dev` profile [optimized + debuginfo] target(s) in 33.68s

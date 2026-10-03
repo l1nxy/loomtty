@@ -1,0 +1,153 @@
+{
+  "complete_launches": 6,
+  "unique_client_pids": [
+    82231,
+    92846,
+    2974,
+    3420,
+    4718,
+    5145
+  ],
+  "foreground_acknowledgements": 18,
+  "display": {
+    "cell_width": 6.0,
+    "cell_height": 12.0,
+    "dpi_scale": 1.0
+  },
+  "frames_per_tui": 1200,
+  "versions_match_frozen_metadata": true,
+  "continuous_visibility_monitoring": false,
+  "results_sha256": "aa5840bf5e9d592188f68729d2587f6e481d0c73bb6e8a2b8e73e746e44d3734",
+  "cpu_acceptance": false,
+  "metrics": [
+    {
+      "round": 0,
+      "variant": "before",
+      "tui_full": {
+        "cpu_percent": 17.652771393560645,
+        "client_cpu_percent": 12.531199678710681,
+        "server_cpu_percent": 5.121571714849963,
+        "p95_ms": 1.559041,
+        "p99_ms": 2.211792
+      },
+      "tui_partial": {
+        "cpu_percent": 12.350434603524342,
+        "client_cpu_percent": 9.800171449203367,
+        "server_cpu_percent": 2.5502631543209744,
+        "p95_ms": 0.907583,
+        "p99_ms": 1.453708
+      },
+      "history_footprint_mib": 130.36104583740234
+    },
+    {
+      "round": 0,
+      "variant": "after",
+      "tui_full": {
+        "cpu_percent": 16.420382562784415,
+        "client_cpu_percent": 11.738868089560377,
+        "server_cpu_percent": 4.681514473224036,
+        "p95_ms": 0.692375,
+        "p99_ms": 0.831083
+      },
+      "tui_partial": {
+        "cpu_percent": 6.637942276391422,
+        "client_cpu_percent": 5.350408389000292,
+        "server_cpu_percent": 1.2875338873911286,
+        "p95_ms": 0.207292,
+        "p99_ms": 0.253083
+      },
+      "history_footprint_mib": 117.00164794921875
+    },
+    {
+      "round": 1,
+      "variant": "after",
+      "tui_full": {
+        "cpu_percent": 10.713823300202684,
+        "client_cpu_percent": 7.832435154892796,
+        "server_cpu_percent": 2.881388145309887,
+        "p95_ms": 0.531458,
+        "p99_ms": 0.68125
+      },
+      "tui_partial": {
+        "cpu_percent": 10.351794271390181,
+        "client_cpu_percent": 8.125954798939766,
+        "server_cpu_percent": 2.225839472450414,
+        "p95_ms": 0.652333,
+        "p99_ms": 1.2955
+      },
+      "history_footprint_mib": 117.47044372558594
+    },
+    {
+      "round": 1,
+      "variant": "before",
+      "tui_full": {
+        "cpu_percent": 8.732396733962878,
+        "client_cpu_percent": 6.097248022121805,
+        "server_cpu_percent": 2.6351487118410724,
+        "p95_ms": 0.401958,
+        "p99_ms": 0.537833
+      },
+      "tui_partial": {
+        "cpu_percent": 7.682498099247036,
+        "client_cpu_percent": 6.231124984715897,
+        "server_cpu_percent": 1.451373114531137,
+        "p95_ms": 0.281167,
+        "p99_ms": 0.430291
+      },
+      "history_footprint_mib": 130.79850006103516
+    },
+    {
+      "round": 2,
+      "variant": "before",
+      "tui_full": {
+        "cpu_percent": 10.213881590379371,
+        "client_cpu_percent": 6.882628172311048,
+        "server_cpu_percent": 3.331253418068323,
+        "p95_ms": 0.536333,
+        "p99_ms": 0.604166
+      },
+      "tui_partial": {
+        "cpu_percent": 5.867530381437062,
+        "client_cpu_percent": 4.668296104007689,
+        "server_cpu_percent": 1.1992342774293734,
+        "p95_ms": 0.18525,
+        "p99_ms": 0.19925
+      },
+      "history_footprint_mib": 130.25167083740234
+    },
+    {
+      "round": 2,
+      "variant": "after",
+      "tui_full": {
+        "cpu_percent": 14.399121754956838,
+        "client_cpu_percent": 10.121685575716231,
+        "server_cpu_percent": 4.277436179240604,
+        "p95_ms": 0.727125,
+        "p99_ms": 1.012541
+      },
+      "tui_partial": {
+        "cpu_percent": 11.283651172511325,
+        "client_cpu_percent": 8.97003768360568,
+        "server_cpu_percent": 2.313613488905645,
+        "p95_ms": 0.394959,
+        "p99_ms": 0.596125
+      },
+      "history_footprint_mib": 118.07977294921875
+    }
+  ],
+  "summary": {
+    "before": {
+      "history_footprint_mib": 130.36104583740234
+    },
+    "after": {
+      "history_footprint_mib": 117.47044372558594
+    }
+  },
+  "caveats": [
+    "Round 0 copied from first controller after launch acknowledgement timeout at round 1; six unique successful launches, not an uninterrupted run.",
+    "CUA stale binding accidentally launched benchmark client PID 92936 at 00:17:47; removed before r1-before. No CPU measurements from that process available.",
+    "r0-before launch used AXRaise plus screenshot; subsequent launch and TUI gates used AXRaise plus title click.",
+    "TUI foreground checked only at phase boundaries.",
+    "Large client and unchanged-server CPU variation; neither CPU gain nor lack of regression established for combined candidate."
+  ]
+}

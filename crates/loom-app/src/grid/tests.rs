@@ -515,8 +515,8 @@ fn full_sync_scrollback_trimmed_to_max() {
     // Should keep only the last 3 scrollback rows
     assert_eq!(grid.scrollback.len(), 3);
     // Oldest surviving = '7', then '8', then '9'
-    assert_eq!(grid.scrollback[0].cells[0].ch(), '7');
-    assert_eq!(grid.scrollback[2].cells[0].ch(), '9');
+    assert_eq!(grid.scrollback[0].cells.cell(0).unwrap().ch(), '7');
+    assert_eq!(grid.scrollback[2].cells.cell(0).unwrap().ch(), '9');
 }
 
 #[test]
@@ -606,8 +606,8 @@ fn full_sync_same_width_trim_rebases_grapheme_indices() {
     grid.apply_full_sync_owned(&trim_sync);
 
     assert_eq!(grid.scrollback.len(), 2);
-    assert_eq!(grid.scrollback[0].cells[0].ch(), 'q');
-    assert_eq!(grid.scrollback[1].cells[0].ch(), 'm');
+    assert_eq!(grid.scrollback[0].cells.cell(0).unwrap().ch(), 'q');
+    assert_eq!(grid.scrollback[1].cells.cell(0).unwrap().ch(), 'm');
     assert!(!grid.grapheme_map.contains_key(&0));
 }
 
@@ -758,7 +758,7 @@ fn scrollback_replace_clears_and_repopulates() {
         });
     }
     assert_eq!(grid.scrollback.len(), 3);
-    assert_eq!(grid.scrollback[0].cells[0].ch(), 'a');
+    assert_eq!(grid.scrollback[0].cells.cell(0).unwrap().ch(), 'a');
 
     // Now apply a replace sync with 2 rows: 'X', 'Y'
     grid.apply_full_sync_owned(&FullPaneSync {
@@ -794,8 +794,8 @@ fn scrollback_replace_clears_and_repopulates() {
     });
     // Old scrollback cleared, replaced with 2 new rows
     assert_eq!(grid.scrollback.len(), 2);
-    assert_eq!(grid.scrollback[0].cells[0].ch(), 'X');
-    assert_eq!(grid.scrollback[1].cells[0].ch(), 'Y');
+    assert_eq!(grid.scrollback[0].cells.cell(0).unwrap().ch(), 'X');
+    assert_eq!(grid.scrollback[1].cells.cell(0).unwrap().ch(), 'Y');
 }
 
 #[test]
@@ -1290,7 +1290,8 @@ fn reflow_widen_joins_wrapped_rows() {
             PackedCell::with_ch('B'),
             PackedCell::with_ch('C'),
             cell_with('D', true), // last cell has WRAPLINE
-        ],
+        ]
+        .into(),
         wrapped: true,
     });
     grid.scrollback.push_back(ScrollbackRow {
@@ -1299,7 +1300,8 @@ fn reflow_widen_joins_wrapped_rows() {
             PackedCell::with_ch('F'),
             PackedCell::default(),
             PackedCell::default(),
-        ],
+        ]
+        .into(),
         wrapped: false,
     });
 
@@ -1331,8 +1333,8 @@ fn reflow_widen_joins_wrapped_rows() {
     // Should reflow to 1 row: "ABCDEF  " (not wrapped)
     assert_eq!(grid.scrollback.len(), 1);
     assert!(!grid.scrollback[0].wrapped);
-    assert_eq!(grid.scrollback[0].cells[0].ch(), 'A');
-    assert_eq!(grid.scrollback[0].cells[5].ch(), 'F');
+    assert_eq!(grid.scrollback[0].cells.cell(0).unwrap().ch(), 'A');
+    assert_eq!(grid.scrollback[0].cells.cell(5).unwrap().ch(), 'F');
 }
 
 #[test]
@@ -1347,7 +1349,8 @@ fn reflow_narrow_splits_long_line() {
             PackedCell::with_ch('D'),
             PackedCell::with_ch('E'),
             PackedCell::with_ch('F'),
-        ],
+        ]
+        .into(),
         wrapped: false,
     });
 
@@ -1380,10 +1383,10 @@ fn reflow_narrow_splits_long_line() {
     assert_eq!(grid.scrollback.len(), 2);
     assert!(grid.scrollback[0].wrapped);
     assert!(!grid.scrollback[1].wrapped);
-    assert_eq!(grid.scrollback[0].cells[0].ch(), 'A');
-    assert_eq!(grid.scrollback[0].cells[2].ch(), 'C');
-    assert_eq!(grid.scrollback[1].cells[0].ch(), 'D');
-    assert_eq!(grid.scrollback[1].cells[2].ch(), 'F');
+    assert_eq!(grid.scrollback[0].cells.cell(0).unwrap().ch(), 'A');
+    assert_eq!(grid.scrollback[0].cells.cell(2).unwrap().ch(), 'C');
+    assert_eq!(grid.scrollback[1].cells.cell(0).unwrap().ch(), 'D');
+    assert_eq!(grid.scrollback[1].cells.cell(2).unwrap().ch(), 'F');
 }
 
 #[test]
@@ -1396,7 +1399,8 @@ fn reflow_preserves_unwrapped_lines() {
             PackedCell::with_ch('B'),
             PackedCell::default(),
             PackedCell::default(),
-        ],
+        ]
+        .into(),
         wrapped: false,
     });
     grid.scrollback.push_back(ScrollbackRow {
@@ -1405,7 +1409,8 @@ fn reflow_preserves_unwrapped_lines() {
             PackedCell::with_ch('Y'),
             PackedCell::default(),
             PackedCell::default(),
-        ],
+        ]
+        .into(),
         wrapped: false,
     });
 
@@ -1435,8 +1440,8 @@ fn reflow_preserves_unwrapped_lines() {
     grid.apply_full_sync_owned(&sync);
 
     assert_eq!(grid.scrollback.len(), 2);
-    assert_eq!(grid.scrollback[0].cells[0].ch(), 'A');
-    assert_eq!(grid.scrollback[1].cells[0].ch(), 'X');
+    assert_eq!(grid.scrollback[0].cells.cell(0).unwrap().ch(), 'A');
+    assert_eq!(grid.scrollback[1].cells.cell(0).unwrap().ch(), 'X');
 }
 
 // ─── Phase 3: trailing punctuation / port preservation ──────────
@@ -2476,4 +2481,38 @@ fn selection_copy_preserves_combining_characters_and_emoji_graphemes() {
     grid.grapheme_map.insert(1, "👩\u{200d}💻".into());
     assert_eq!(grid.text_in_range((0, 0), (2, 0)), "e\u{301}👩\u{200d}💻");
     assert_eq!(grid.text_in_range((2, 0), (2, 0)), "👩\u{200d}💻");
+}
+
+#[test]
+fn compact_history_can_be_viewed_selected_and_reflowed_without_losing_cells() {
+    let original: Vec<_> = (0..100)
+        .map(|i| PackedCell::with_ch(char::from(b'a' + (i % 26) as u8)))
+        .collect();
+    let mut grid = ClientPaneGrid::new(100, 1, 100);
+    grid.scrollback
+        .push_back(ScrollbackRow::from_slice(&original));
+    assert!(matches!(
+        grid.scrollback[0].cells,
+        ScrollbackCells::Uniform { .. }
+    ));
+    assert!(matches!(
+        grid.visible_cells(),
+        std::borrow::Cow::Borrowed(_)
+    ));
+    grid.scroll_up(1);
+    assert_eq!(grid.visible_cells().as_ref(), original);
+    assert_eq!(grid.buffer_row(0).as_ref(), original);
+    assert_eq!(grid.word_bounds_at(42, 0), Some((0, 99)));
+    grid.reflow_scrollback(50);
+    assert_eq!(grid.scrollback.len(), 2);
+    assert!(grid.scrollback[0].wrapped);
+    assert!(!grid.scrollback[1].wrapped);
+    assert_eq!(
+        grid.scrollback[0].cells.as_cells().as_ref(),
+        &original[..50]
+    );
+    assert_eq!(
+        grid.scrollback[1].cells.as_cells().as_ref(),
+        &original[50..]
+    );
 }

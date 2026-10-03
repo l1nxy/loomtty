@@ -1,20 +1,116 @@
 use loom_protocol::message::*;
+use std::borrow::Cow;
+
+/// Immutable history cells. Rows with identical attributes share one template;
+/// character bytes remain exact, including malformed or padded UTF-8 input.
+#[derive(Clone)]
+pub enum ScrollbackCells {
+    Dense(Vec<PackedCell>),
+    Uniform {
+        template: PackedCell,
+        characters: Box<[[u8; 4]]>,
+    },
+}
+
+impl ScrollbackCells {
+    fn uniform_template(cells: &[PackedCell]) -> Option<PackedCell> {
+        // Avoid adding representation overhead to tiny rows.
+        let template = *cells.first().filter(|_| cells.len() >= 8)?;
+        cells
+            .iter()
+            .all(|cell| {
+                let mut attributes = *cell;
+                attributes.ch_bytes = template.ch_bytes;
+                attributes == template
+            })
+            .then_some(template)
+    }
+
+    pub fn as_cells(&self) -> Cow<'_, [PackedCell]> {
+        match self {
+            Self::Dense(cells) => Cow::Borrowed(cells),
+            Self::Uniform {
+                template,
+                characters,
+            } => Cow::Owned(
+                characters
+                    .iter()
+                    .map(|&ch_bytes| {
+                        let mut cell = *template;
+                        cell.ch_bytes = ch_bytes;
+                        cell
+                    })
+                    .collect(),
+            ),
+        }
+    }
+
+    pub fn cell(&self, index: usize) -> Option<PackedCell> {
+        match self {
+            Self::Dense(cells) => cells.get(index).copied(),
+            Self::Uniform {
+                template,
+                characters,
+            } => characters.get(index).map(|&ch_bytes| {
+                let mut cell = *template;
+                cell.ch_bytes = ch_bytes;
+                cell
+            }),
+        }
+    }
+
+    pub fn into_cells(self) -> Vec<PackedCell> {
+        match self {
+            Self::Dense(cells) => cells,
+            compact => compact.as_cells().into_owned(),
+        }
+    }
+}
+
+impl From<&[PackedCell]> for ScrollbackCells {
+    fn from(cells: &[PackedCell]) -> Self {
+        if let Some(template) = Self::uniform_template(cells) {
+            Self::Uniform {
+                template,
+                characters: cells.iter().map(|cell| cell.ch_bytes).collect(),
+            }
+        } else {
+            Self::Dense(cells.to_vec())
+        }
+    }
+}
+
+impl From<Vec<PackedCell>> for ScrollbackCells {
+    fn from(cells: Vec<PackedCell>) -> Self {
+        if let Some(template) = Self::uniform_template(&cells) {
+            Self::Uniform {
+                template,
+                characters: cells.iter().map(|cell| cell.ch_bytes).collect(),
+            }
+        } else {
+            Self::Dense(cells)
+        }
+    }
+}
 
 /// A single scrollback row with wrap metadata for reflow on resize.
 #[derive(Clone)]
 pub struct ScrollbackRow {
-    pub cells: Vec<PackedCell>,
+    pub cells: ScrollbackCells,
     /// True if this row's content continues on the next row (soft wrap).
     pub wrapped: bool,
 }
 
 impl ScrollbackRow {
-    /// Take a decoded row without copying its cells; preserve its wrap flag.
-    pub(super) fn from_vec(cells: Vec<PackedCell>) -> Self {
+    /// Compact a decoded scratch row and preserve its wrap flag.
+    pub(super) fn from_slice(cells: &[PackedCell]) -> Self {
         let wrapped = cells
             .last()
             .is_some_and(|c| c.flags_u16() & FLAG_WRAPLINE != 0);
-        ScrollbackRow { cells, wrapped }
+        ScrollbackRow {
+            cells: cells.into(),
+            wrapped,
+        }
     }
 }
 
@@ -55,5 +151,62 @@ pub(super) fn classify_word_cell(cell: &PackedCell) -> WordClass {
         WordClass::Word
     } else {
         WordClass::Symbol
+    }
+}
+
+#[cfg(test)]
+mod compact_tests {
+    use super::*;
+
+    #[test]
+    fn history_attributes_and_character_bytes_roundtrip_exactly() {
+        for flags in [
+            0,
+            FLAG_BOLD,
+            FLAG_INVERSE,
+            FLAG_HIDDEN,
+            FLAG_WIDE_CHAR,
+            u16::MAX,
+        ] {
+            for fg in [
+                PackedColor::named(16),
+                PackedColor::indexed(123),
+                PackedColor::rgb(7, 31, 255),
+            ] {
+                let mut row = vec![PackedCell::default(); 100];
+                for (i, cell) in row.iter_mut().enumerate() {
+                    cell.set_ch(['x', '中', '😀', '\0'][i % 4]);
+                    cell.fg = fg;
+                    cell.bg = PackedColor::rgb(19, 42, 87);
+                    cell.flags = flags.to_le_bytes();
+                }
+                row[17].ch_bytes = [255, 0, 1, 0];
+                let compact = ScrollbackCells::from(row.as_slice());
+                assert!(matches!(compact, ScrollbackCells::Uniform { .. }));
+                assert_eq!(compact.as_cells().as_ref(), row);
+                for (i, cell) in row.iter().enumerate() {
+                    assert_eq!(compact.cell(i), Some(*cell));
+                }
+                assert!(compact.cell(row.len()).is_none());
+                assert_eq!(compact.clone().into_cells(), row);
+                row[37].bg = PackedColor::indexed(29);
+                let dense = ScrollbackCells::from(row.clone());
+                assert!(matches!(dense, ScrollbackCells::Dense(_)));
+                assert_eq!(dense.into_cells(), row);
+            }
+        }
+    }
+
+    #[test]
+    fn wrap_metadata_and_mixed_width_rows_are_preserved() {
+        let mut row = vec![PackedCell::with_ch('a'); 100];
+        row[99].flags = FLAG_WRAPLINE.to_le_bytes();
+        row[40].set_ch('界');
+        row[40].flags = FLAG_WIDE_CHAR.to_le_bytes();
+        row[41].flags = FLAG_WIDE_CHAR_SPACER.to_le_bytes();
+        let history = ScrollbackRow::from_slice(&row);
+        assert!(history.wrapped);
+        assert!(matches!(history.cells, ScrollbackCells::Dense(_)));
+        assert_eq!(history.cells.as_cells().as_ref(), row);
     }
 }

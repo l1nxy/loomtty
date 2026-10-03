@@ -77,7 +77,7 @@ impl ClientPaneGrid {
 
         for row in self.scrollback.drain(..) {
             // Strip trailing default cells (blank padding) before joining
-            let mut cells = row.cells;
+            let mut cells = row.cells.into_cells();
             if row.wrapped {
                 // For wrapped rows, keep all cells (they filled the full width)
                 current_line.append(&mut cells);
@@ -103,7 +103,7 @@ impl ClientPaneGrid {
             if logical.is_empty() {
                 // Preserve empty lines
                 self.scrollback.push_back(ScrollbackRow {
-                    cells: vec![PackedCell::default(); new_cols],
+                    cells: vec![PackedCell::default(); new_cols].into(),
                     wrapped: false,
                 });
                 continue;
@@ -144,7 +144,7 @@ impl ClientPaneGrid {
                 let mut cells = logical[pos..end].to_vec();
                 cells.resize(new_cols, PackedCell::default());
                 self.scrollback.push_back(ScrollbackRow {
-                    cells,
+                    cells: cells.into(),
                     wrapped: !is_last,
                 });
                 pos = end;

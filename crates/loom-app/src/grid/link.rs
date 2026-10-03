@@ -123,7 +123,7 @@ impl ClientPaneGrid {
             if r == buffer_row {
                 target_offset = out.len();
             }
-            for rc in self.row_chars(self.row(r)) {
+            for rc in self.row_chars(&self.row(r)) {
                 out.push(LineChar {
                     row: r,
                     start_col: rc.start_col,

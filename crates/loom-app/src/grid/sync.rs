@@ -95,10 +95,11 @@ impl ClientPaneGrid {
 
         let sb_expected = appended_scrollback_rows * new_cols;
         if sb_expected > 0 {
-            match loom_protocol::codec::decode_sm_rows(
+            match loom_protocol::codec::decode_sm_rows_with(
                 sync.scrollback_sm_data(),
                 new_cols,
                 appended_scrollback_rows,
+                ScrollbackRow::from_slice,
             ) {
                 Ok(rows) => {
                     let scrollback_base = self.scrollback.len();
@@ -109,14 +110,19 @@ impl ClientPaneGrid {
                         let buffer_idx = scrollback_base * new_cols + idx;
                         if idx < sb_expected && buffer_idx >= trim_count * new_cols {
                             let mut grapheme = String::new();
-                            grapheme.push(rows[idx / new_cols][idx % new_cols].ch());
+                            grapheme.push(
+                                rows[idx / new_cols]
+                                    .cells
+                                    .cell(idx % new_cols)
+                                    .unwrap()
+                                    .ch(),
+                            );
                             grapheme.push_str(extra);
                             rebased_grapheme_map
                                 .insert((buffer_idx - trim_count * new_cols) as u32, grapheme);
                         }
                     }
-                    self.scrollback
-                        .extend(rows.into_iter().map(ScrollbackRow::from_vec));
+                    self.scrollback.extend(rows);
                 }
                 Err(e) => log::warn!("scrollback SM decode error: {e}"),
             }

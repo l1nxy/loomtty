@@ -84,11 +84,11 @@ impl ClientPaneGrid {
         }
 
         let mut idx = (col as usize).min(row.len().saturating_sub(1));
-        idx = self.normalize_cell_start(row, idx);
+        idx = self.normalize_cell_start(&row, idx);
 
         let class = classify_word_cell(row.get(idx)?);
         let mut left = idx;
-        while let Some(prev) = self.prev_cell_start(row, left) {
+        while let Some(prev) = self.prev_cell_start(&row, left) {
             if classify_word_cell(&row[prev]) != class {
                 break;
             }
@@ -96,14 +96,14 @@ impl ClientPaneGrid {
         }
 
         let mut right = idx;
-        while let Some(next) = self.next_cell_start(row, right) {
+        while let Some(next) = self.next_cell_start(&row, right) {
             if classify_word_cell(&row[next]) != class {
                 break;
             }
             right = next;
         }
 
-        Some((left as u16, self.cell_end(row, right) as u16))
+        Some((left as u16, self.cell_end(&row, right) as u16))
     }
 
     /// Extract text from a buffer range (absolute buffer_rows).
@@ -136,10 +136,10 @@ impl ClientPaneGrid {
             // the `FLAG_WIDE_CHAR_SPACER` skip below, this means a half-cell
             // visual selection still copies the full underlying character.
             if left < row_data.len() {
-                left = self.normalize_cell_start(row_data, left);
+                left = self.normalize_cell_start(&row_data, left);
             }
             if right < row_data.len() {
-                right = self.cell_end(row_data, right);
+                right = self.cell_end(&row_data, right);
             }
             let mut line = String::new();
             for col in left..=right {
@@ -188,8 +188,8 @@ impl ClientPaneGrid {
         let row = self.row(buf_row);
         let l = (left as usize).min(row.len().saturating_sub(1));
         let r = (right as usize).min(row.len().saturating_sub(1));
-        let l = self.normalize_cell_start(row, l);
-        let r = self.cell_end(row, r);
+        let l = self.normalize_cell_start(&row, l);
+        let r = self.cell_end(&row, r);
         (l as u16, r as u16)
     }
 
@@ -212,7 +212,7 @@ impl ClientPaneGrid {
     }
 
     pub(super) fn next_cell_start(&self, row: &[PackedCell], idx: usize) -> Option<usize> {
-        let next = self.cell_end(row, idx) + 1;
+        let next = self.cell_end(&row, idx) + 1;
         if next < row.len() { Some(next) } else { None }
     }
 
@@ -224,7 +224,7 @@ impl ClientPaneGrid {
                 idx += 1;
                 continue;
             }
-            let end = self.cell_end(row, idx);
+            let end = self.cell_end(&row, idx);
             let ch = row[idx].ch();
             if ch != '\0' {
                 chars.push(RowChar {

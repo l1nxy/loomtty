@@ -11,11 +11,11 @@ mod types;
 mod tests;
 
 pub use link::looks_like_file_path;
-pub use types::{LinkMatch, ScrollbackRow};
+pub use types::{LinkMatch, ScrollbackCells, ScrollbackRow};
 
 /// Client-side pane grid with split storage: scrollback VecDeque + flat viewport.
 ///
-/// `scrollback` holds history rows as a VecDeque of Vec<PackedCell>.
+/// `scrollback` holds immutable rows with shared attributes where possible.
 /// `viewport` is a contiguous `Vec<PackedCell>` of size `rows * cols`,
 /// enabling direct memcpy for delta applies and fast clone for visible_cells.
 ///
@@ -96,28 +96,28 @@ impl ClientPaneGrid {
 
     /// Access a row by absolute buffer index (0 = oldest scrollback row).
     /// Returns the row slice from either scrollback or viewport.
-    pub(super) fn row(&self, buf_row: usize) -> &[PackedCell] {
+    pub(super) fn row(&self, buf_row: usize) -> std::borrow::Cow<'_, [PackedCell]> {
         let sb_len = self.scrollback.len();
         if buf_row < sb_len {
-            &self.scrollback[buf_row].cells
+            self.scrollback[buf_row].cells.as_cells()
         } else {
             let vp_line = buf_row - sb_len;
             let cols = self.cols as usize;
             let start = vp_line * cols;
             let end = start + cols;
             if end <= self.viewport.len() {
-                &self.viewport[start..end]
+                std::borrow::Cow::Borrowed(&self.viewport[start..end])
             } else {
-                &[]
+                std::borrow::Cow::Borrowed(&[])
             }
         }
     }
 
     /// Read one absolute buffer row for native text/accessibility adapters.
     /// Out-of-range indices return an empty slice.
-    pub fn buffer_row(&self, buf_row: usize) -> &[PackedCell] {
+    pub fn buffer_row(&self, buf_row: usize) -> std::borrow::Cow<'_, [PackedCell]> {
         if buf_row >= self.buffer_len() {
-            return &[];
+            return std::borrow::Cow::Borrowed(&[]);
         }
         self.row(buf_row)
     }

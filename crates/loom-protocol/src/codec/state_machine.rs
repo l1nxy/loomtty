@@ -350,6 +350,78 @@ pub fn decode_sm_rows(
     Ok(output.rows)
 }
 
+/// Decode history one row at a time into caller-owned storage. A single scratch
+/// row avoids allocating the complete dense history before compacting it.
+/// The transform sees default padding on short streams. Its returned rows are
+/// discarded if opcode validation fails; callers commit the vector on success.
+pub fn decode_sm_rows_with<R>(
+    data: &[u8],
+    columns: usize,
+    rows: usize,
+    transform: impl FnMut(&[PackedCell]) -> R,
+) -> io::Result<Vec<R>> {
+    let count = columns
+        .checked_mul(rows)
+        .filter(|&n| n <= MAX_GRID_CELLS)
+        .ok_or_else(overflow_err)?;
+    if columns == 0 && rows != 0 {
+        return Err(overflow_err());
+    }
+    let mut output = MappedRows {
+        columns,
+        count,
+        scratch: vec![PackedCell::default(); if rows == 0 { 0 } else { columns }],
+        rows: Vec::with_capacity(rows),
+        transform,
+    };
+    decode_cells_into(data, &mut output)?;
+    while output.rows.len() < rows {
+        output.finish_row();
+    }
+    Ok(output.rows)
+}
+
+struct MappedRows<R, F> {
+    columns: usize,
+    count: usize,
+    scratch: Vec<PackedCell>,
+    rows: Vec<R>,
+    transform: F,
+}
+
+impl<R, F: FnMut(&[PackedCell]) -> R> MappedRows<R, F> {
+    fn finish_row(&mut self) {
+        self.rows.push((self.transform)(&self.scratch));
+        self.scratch.fill(PackedCell::default());
+    }
+}
+
+impl<R, F: FnMut(&[PackedCell]) -> R> CellOutput for MappedRows<R, F> {
+    fn len(&self) -> usize {
+        self.count
+    }
+
+    fn spans(
+        &mut self,
+        start: usize,
+        count: usize,
+        mut write: impl FnMut(usize, &mut [PackedCell]),
+    ) {
+        let mut written = 0;
+        while written < count {
+            let index = start + written;
+            let column = index % self.columns;
+            let length = (count - written).min(self.columns - column);
+            debug_assert_eq!(index / self.columns, self.rows.len());
+            write(written, &mut self.scratch[column..column + length]);
+            written += length;
+            if column + length == self.columns {
+                self.finish_row();
+            }
+        }
+    }
+}
+
 // Share opcode validation/state between the hot contiguous viewport decoder
 // and row storage. Static dispatch keeps the contiguous path a single span.
 trait CellOutput {

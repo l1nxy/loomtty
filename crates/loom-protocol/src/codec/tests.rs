@@ -2437,6 +2437,8 @@ fn row_decoder_preserves_runs_attributes_and_padding_across_rows() {
     for columns in [1, 3, 37, 100, 701] {
         let rows = cells.len().div_ceil(columns);
         let decoded = decode_sm_rows(&encoded, columns, rows).unwrap();
+        let mapped = decode_sm_rows_with(&encoded, columns, rows, |row| row.to_vec()).unwrap();
+        assert_eq!(mapped, decoded);
         let flat: Vec<_> = decoded.into_iter().flatten().collect();
         let mut expected = cells.clone();
         expected.resize(columns * rows, PackedCell::default());
@@ -2458,6 +2460,11 @@ fn row_decoder_rejects_overflow_and_truncation_like_contiguous_decoder() {
         let mut flat = vec![PackedCell::default(); 10];
         let contiguous = decode_sm_cells(&data[..end], &mut flat);
         let rows = decode_sm_rows(&data[..end], 2, 5);
+        let mapped = decode_sm_rows_with(&data[..end], 2, 5, |row| row.to_vec());
+        assert_eq!(rows.is_err(), mapped.is_err(), "mapped prefix {end}");
+        if let (Ok(a), Ok(b)) = (&rows, &mapped) {
+            assert_eq!(a, b);
+        }
         assert_eq!(contiguous.is_err(), rows.is_err(), "prefix {end}");
         if let Ok(rows) = rows {
             let rows: Vec<_> = rows.into_iter().flatten().collect();
@@ -2471,4 +2478,18 @@ fn row_decoder_rejects_overflow_and_truncation_like_contiguous_decoder() {
     assert!(decode_sm_rows(&[OP_END], 1, MAX_GRID_CELLS + 1).is_err());
     assert!(decode_sm_rows(&[OP_END], 0, 1).is_err());
     assert!(decode_sm_rows(&[OP_END], 0, 0).unwrap().is_empty());
+}
+
+#[test]
+fn mapped_row_decoder_checks_sizes_without_allocating_empty_rows() {
+    assert!(decode_sm_rows_with(&[OP_END], usize::MAX, 2, |r| r.to_vec()).is_err());
+    assert!(decode_sm_rows_with(&[OP_END], 1, MAX_GRID_CELLS + 1, |r| r.to_vec()).is_err());
+    assert!(decode_sm_rows_with(&[OP_END], 0, 1, |r| r.to_vec()).is_err());
+    assert!(
+        decode_sm_rows_with(&[OP_END], usize::MAX, 0, |r| r.to_vec())
+            .unwrap()
+            .is_empty()
+    );
+    let rows = decode_sm_rows_with(&[OP_END], 4, 7, |r| r.to_vec()).unwrap();
+    assert_eq!(rows, vec![vec![PackedCell::default(); 4]; 7]);
 }

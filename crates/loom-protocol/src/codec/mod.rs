@@ -42,6 +42,7 @@ pub use state_machine::{
     OP_ASCII, OP_ASCII_REPEAT, OP_CHAR1, OP_CHARS, OP_CHARS_LONG, OP_END, OP_REPEAT, OP_RESET,
     OP_SET_BG, OP_SET_BG_INDEXED, OP_SET_BG_NAMED, OP_SET_FG, OP_SET_FG_BG, OP_SET_FG_INDEXED,
     OP_SET_FG_NAMED, OP_SET_FLAGS, StateEncoder, decode_sm_cells, decode_sm_rows,
+    decode_sm_rows_with,
 };
 
 #[cfg(test)]

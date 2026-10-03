@@ -1,0 +1,17 @@
+Round 1/1: before
+  loomtty: idle 5.005s
+  loomtty: warm_idle 5.005s
+  loomtty: ascii 0.031s
+  loomtty: truecolor 0.026s
+  loomtty: cjk 0.026s
+  loomtty: emoji 0.023s
+  loomtty: scroll 0.037s
+  loomtty: cursor 0.032s
+  loomtty: latency 1.215s
+  loomtty: loaded_latency 0.030s
+  loomtty: tui_full 20.004s
+  loomtty: tui_partial 20.000s
+  loomtty: scrollback 0.005s
+  loomtty: post_idle 5.005s
+Round 1/1: after
+FAILED: timed out waiting for /private/tmp/loom-backend-probe-1003/r0-after/ready.json

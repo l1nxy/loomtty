@@ -1,0 +1,56 @@
+diff --git a/crates/loom-app/src/grid/sync.rs b/crates/loom-app/src/grid/sync.rs
+index e0ac0a1..dd414cb 100644
+--- a/crates/loom-app/src/grid/sync.rs
++++ b/crates/loom-app/src/grid/sync.rs
+@@ -31,6 +31,23 @@ fn rebase_grapheme_lookup(
+ }
+ 
+ impl ClientPaneGrid {
++    fn evict_overwritten_metadata(&mut self, start: usize, end: usize) {
++        // Most terminal output has neither OSC 8 links nor combining extras.
++        // An empty HashMap can retain its allocation after earlier content;
++        // avoid hashing every overwritten cell just to discover no entries.
++        if !self.hyperlink_cell_map.is_empty() {
++            for idx in start..end {
++                self.hyperlink_cell_map.remove(&(idx as u32));
++            }
++        }
++        if !self.grapheme_map.is_empty() {
++            let history_base = self.scrollback.len() * self.cols as usize;
++            for idx in start..end {
++                self.grapheme_map.remove(&((history_base + idx) as u32));
++            }
++        }
++    }
++
+     /// Convenience wrapper for tests: encode a `FullPaneSync` and apply the borrowed version.
+     pub fn apply_full_sync_owned(&mut self, sync: &FullPaneSync) {
+         match loom_protocol::codec::full_pane_sync_to_borrowed(sync) {
+@@ -229,12 +246,7 @@ impl ClientPaneGrid {
+             if copy_len > 0 {
+                 let dst_start = line * cols + col_start;
+                 let dst_end = line * cols + col_end;
+-                // Evict stale side-table entries for overwritten cells
+-                for idx in dst_start..dst_end {
+-                    self.hyperlink_cell_map.remove(&(idx as u32));
+-                    self.grapheme_map
+-                        .remove(&((self.scrollback.len() * cols + idx) as u32));
+-                }
++                self.evict_overwritten_metadata(dst_start, dst_end);
+                 self.viewport[dst_start..dst_end].copy_from_slice(&region.cells[..copy_len]);
+                 self.mark_row_dirty(line);
+             }
+@@ -273,12 +285,7 @@ impl ClientPaneGrid {
+             if copy_len > 0 {
+                 let dst_start = line * cols + col_start;
+                 let dst_end = dst_start + copy_len;
+-                // Evict stale side-table entries for overwritten cells
+-                for idx in dst_start..dst_end {
+-                    self.hyperlink_cell_map.remove(&(idx as u32));
+-                    self.grapheme_map
+-                        .remove(&((self.scrollback.len() * cols + idx) as u32));
+-                }
++                self.evict_overwritten_metadata(dst_start, dst_end);
+                 let sm_data = delta.sm_data(i);
+                 match loom_protocol::codec::decode_sm_cells(
+                     sm_data,

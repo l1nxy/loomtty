@@ -1,0 +1,13 @@
+   Compiling loom-config v0.2.1 (/Users/linxy/.codex/worktrees/client-delta-cpu/loomtty/crates/loom-config)
+   Compiling loom-protocol v0.2.1 (/Users/linxy/.codex/worktrees/client-delta-cpu/loomtty/crates/loom-protocol)
+   Compiling loom-anim v0.2.1 (/Users/linxy/.codex/worktrees/client-delta-cpu/loomtty/crates/loom-anim)
+   Compiling loom-input v0.2.1 (/Users/linxy/.codex/worktrees/client-delta-cpu/loomtty/crates/loom-input)
+   Compiling loom-layout v0.2.1 (/Users/linxy/.codex/worktrees/client-delta-cpu/loomtty/crates/loom-layout)
+   Compiling loomtty v0.2.1 (/Users/linxy/.codex/worktrees/client-delta-cpu/loomtty/crates/loom)
+   Compiling loom-session v0.2.1 (/Users/linxy/.codex/worktrees/client-delta-cpu/loomtty/crates/loom-session)
+   Compiling loom-motion v0.2.1 (/Users/linxy/.codex/worktrees/client-delta-cpu/loomtty/crates/loom-motion)
+   Compiling loom-render v0.2.1 (/Users/linxy/.codex/worktrees/client-delta-cpu/loomtty/crates/loom-render)
+   Compiling loom-app v0.1.0 (/Users/linxy/.codex/worktrees/client-delta-cpu/loomtty/crates/loom-app)
+   Compiling loom-ui v0.2.1 (/Users/linxy/.codex/worktrees/client-delta-cpu/loomtty/crates/loom-ui)
+   Compiling loom-gpu v0.2.1 (/Users/linxy/.codex/worktrees/client-delta-cpu/loomtty/crates/loom-gpu)
+    Finished `release` profile [optimized] target(s) in 12.00s

@@ -1,0 +1,2 @@
+[2026-10-03T15:35:59Z WARN  loom_gpu] GL backend failed: GPU device initialization failed: GL backend is not supported on macOS (OpenGL is deprecated). Use blade (Metal) instead: backend = "blade"
+renderer init failed: DeviceInit("GL backend is not supported on macOS (OpenGL is deprecated). Use blade (Metal) instead: backend = \"blade\"")

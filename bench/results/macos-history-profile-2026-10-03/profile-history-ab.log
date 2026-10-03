@@ -1,0 +1,31 @@
+Round 1/1: before
+  loomtty: idle 0.505s
+  loomtty: warm_idle 0.505s
+  loomtty: ascii 0.001s
+  loomtty: truecolor 0.001s
+  loomtty: cjk 0.001s
+  loomtty: emoji 0.001s
+  loomtty: scroll 0.001s
+  loomtty: cursor 0.001s
+  loomtty: latency 0.126s
+  loomtty: loaded_latency 0.003s
+  loomtty: tui_full 40.008s
+  loomtty: tui_partial 40.007s
+  loomtty: scrollback 0.006s
+  loomtty: post_idle 0.510s
+Round 1/1: after
+  loomtty: idle 0.502s
+  loomtty: warm_idle 0.510s
+  loomtty: ascii 0.001s
+  loomtty: truecolor 0.001s
+  loomtty: cjk 0.001s
+  loomtty: emoji 0.001s
+  loomtty: scroll 0.001s
+  loomtty: cursor 0.001s
+  loomtty: latency 0.142s
+  loomtty: loaded_latency 0.003s
+  loomtty: tui_full 40.008s
+  loomtty: tui_partial 40.004s
+  loomtty: scrollback 0.006s
+  loomtty: post_idle 0.510s
+Report: /private/tmp/loom-history-profile-ab-1003/report.md

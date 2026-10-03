@@ -1,0 +1,17 @@
+Round 1/1: loomtty
+  loomtty: idle 0.510s
+  loomtty: warm_idle 0.510s
+  loomtty: ascii 0.001s
+  loomtty: truecolor 0.001s
+  loomtty: cjk 0.001s
+  loomtty: emoji 0.001s
+  loomtty: scroll 0.001s
+  loomtty: cursor 0.001s
+  loomtty: latency 0.146s
+  loomtty: loaded_latency 0.004s
+  loomtty: tui_full 40.004s
+  loomtty: tui_partial 40.004s
+  loomtty: scrollback 0.006s
+  loomtty: post_idle 0.510s
+  ready 439.0ms, grid 100x30
+Report: /private/tmp/loom-delta-empty-profile-1003/report.md

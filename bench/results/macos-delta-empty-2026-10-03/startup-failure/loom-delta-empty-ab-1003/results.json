@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-10-03T15:40:43.942051+00:00",
+  "machine": {
+    "chip": "Apple M6",
+    "macos": "27.0",
+    "architecture": "arm64",
+    "memory_bytes": 34359738368,
+    "power": "Now drawing from 'AC Power'",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded"
+  },
+  "settings": {
+    "apps": [
+      "before",
+      "after"
+    ],
+    "rounds": 3,
+    "mib": 8,
+    "columns": 100,
+    "rows": 30,
+    "frames": 1200,
+    "latency_samples": 200,
+    "idle_seconds": 5,
+    "seed": 5306,
+    "timeout": 120,
+    "output": "/private/tmp/loom-delta-empty-ab-1003",
+    "loom": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/delta-empty-20261003/loomtty.app/Contents/MacOS/loomtty",
+    "loom_server": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/main-bench-20261003/loomtty.app/Contents/Helpers/loomtty-server.app/Contents/MacOS/loomtty-server",
+    "loom_width": 600.0,
+    "loom_height": 400.0,
+    "vtebench": null,
+    "vtebench_seconds": 3,
+    "vtebench_output_mode": "original",
+    "confirm_visible": false,
+    "probe": false,
+    "before": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/main-bench-20261003/loomtty.app/Contents/MacOS"
+  },
+  "versions": {
+    "before": {
+      "text": "loomtty 0.2.1",
+      "sha256": "e467ffb2a2659a1a347461ae969cf5270393bb5091b2e1e55da7e1e59afc52af",
+      "server_sha256": "2b69ee4c17b103718ff746e872a5ea77bb624712bc72a3885dd3cc851ff6c331"
+    },
+    "after": {
+      "text": "loomtty 0.2.1",
+      "sha256": "ea190a6532f882f1b361af9ce091bc18fd95d008300b41b69e50054f53797106",
+      "server_sha256": "2b69ee4c17b103718ff746e872a5ea77bb624712bc72a3885dd3cc851ff6c331"
+    }
+  },
+  "git_head": "dd6e2e4b3e0b9d16b011826928da2ede8a6e34bb",
+  "git_status": "?? bench/results/macos-delta-empty-2026-10-03/\n?? bench/results/macos-history-profile-2026-10-03/",
+  "benchmark_sha256": {
+    "macos_bench.py": "37b4d50ef655e25e9aa2de324187df7de055278fa407963417a7845d08749602",
+    "terminal_workload.py": "3b7eaf35cc767a2b8f01e952b8b7f7184b26fb0d0c97ef97d9b2f5444c4525fb",
+    "compare_loom.py": "bfc8b0052001c6d93eb3397b23299028b1c25ee9ca155e38aba50d5f19ef0307"
+  },
+  "runs": [
+    {
+      "app": "before",
+      "round": 0,
+      "phases": [],
+      "config": "[font]\nfamily = \"Menlo\"\nsize = 10.0\ndisable_ligatures = \"always\"\n[window]\nwidth = 600.0\nheight = 400.0\ntitle = \"loom benchmark\"\n[appearance]\npadding = 0.0\nborder_width = 0.0\ncolumn_gap = 0.0\n[statusbar]\npadding_ratio = 0.0\n[terminal]\nshell = \"/private/tmp/loom-delta-empty-ab-1003/r0-before/worker.sh\"\ndefault_cols = 100\ndefault_rows = 30\ncursor_blink = false\nscrollback_lines = 10000\n[render]\nbackend = \"blade\"\n",
+      "error": "timed out waiting for /private/tmp/loom-delta-empty-ab-1003/r0-before/ready.json",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py\", line 338, in run_one\n    ready = wait_file(directory / \"ready.json\")\n  File \"/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py\", line 144, in wait_file\n    raise TimeoutError(f\"timed out waiting for {path}\")\nTimeoutError: timed out waiting for /private/tmp/loom-delta-empty-ab-1003/r0-before/ready.json\n",
+      "visibility_confirmation": {
+        "method": "CLI auto-foreground per user instruction; not independently verified by CUA",
+        "continuous_visibility_monitoring": false
+      }
+    }
+  ]
+}

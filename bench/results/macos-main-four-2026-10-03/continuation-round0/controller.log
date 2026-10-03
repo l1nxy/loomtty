@@ -1,0 +1,28 @@
+Round 1/1: kitty
+  kitty: idle 5.005s
+  kitty: warm_idle 5.005s
+  kitty: ascii 0.038s
+  kitty: truecolor 0.047s
+  kitty: cjk 0.045s
+  kitty: emoji 0.042s
+  kitty: scroll 0.129s
+  kitty: cursor 0.042s
+  kitty: latency 1.897s
+  kitty: loaded_latency 0.699s
+  kitty: tui_full 10.003s
+  kitty: tui_partial 10.002s
+  kitty: scrollback 0.006s
+  kitty: post_idle 5.005s
+  kitty: vtebench/cursor_motion 3.769s
+  kitty: vtebench/dense_cells 3.823s
+  FAILED: concurrent Rust build/test processes detected: 26989, 27292, 27358, 27374, 27422, 27423, 27470, 27473, 27485; retry when idle
+Round 1/1: alacritty
+  Waiting for unrelated Rust builds to finish before launch
+Traceback (most recent call last):
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/extras-bench-20261003/run-four-r0.py", line 39, in <module>
+    code=b.main()
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py", line 580, in main
+    run = run_one(app, round_index, args.output / f"r{round_index}-{app}", args)
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/extras-bench-20261003/run-four-r0.py", line 21, in run_one
+    time.sleep(2)
+KeyboardInterrupt

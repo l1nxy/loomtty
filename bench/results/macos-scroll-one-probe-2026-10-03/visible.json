@@ -1,0 +1,10 @@
+{
+  "app": "loomtty",
+  "processes": {
+    "server": 35988,
+    "client": 35989
+  },
+  "title": "loom benchmark [bench-35976-0]",
+  "method": "Agent CUA Raise, AX and screenshot",
+  "checked_at": "2026-10-03T12:04:48.652993+00:00"
+}

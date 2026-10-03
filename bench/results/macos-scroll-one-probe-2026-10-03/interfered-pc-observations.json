@@ -1,0 +1,1983 @@
+{
+  "diagnostic_only": true,
+  "interference": "concurrent Rust build detected at workload completion; not an uncontended profile or performance baseline",
+  "normalization": "frame addr minus binary load-addr plus Mach-O preferred base 0x100000000; floor to 4-byte ARM instruction boundary",
+  "running_weight_ns": 26865000000,
+  "leaf_addresses": [
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccc30",
+      "weight_ns": 3255000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccc2c",
+      "weight_ns": 1044000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002cc9e8",
+      "weight_ns": 793000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccaec",
+      "weight_ns": 732000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0038",
+      "weight_ns": 723000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002cccb4",
+      "weight_ns": 617000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b004c",
+      "weight_ns": 581000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0234",
+      "weight_ns": 576000000
+    },
+    {
+      "name": "_$LT$vte..ansi..Performer$LT$H$C$T$GT$$u20$as$u20$vte..Perform$GT$::execute::h9c87e1ee25cc9487",
+      "pc": "0x1002b518c",
+      "weight_ns": 495000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b020c",
+      "weight_ns": 444000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002cc9b4",
+      "weight_ns": 412000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::linefeed::h09f627feaaaa13be",
+      "pc": "0x1002b92a0",
+      "weight_ns": 392000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0238",
+      "weight_ns": 370000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d82c8",
+      "weight_ns": 341000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bb800",
+      "weight_ns": 341000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0010",
+      "weight_ns": 289000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d84dc",
+      "weight_ns": 267000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d81fc",
+      "weight_ns": 251000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002aff38",
+      "weight_ns": 245000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d8eac",
+      "weight_ns": 242000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d7fa0",
+      "weight_ns": 229000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d80fc",
+      "weight_ns": 224000000
+    },
+    {
+      "name": "_$LT$vte..ansi..Performer$LT$H$C$T$GT$$u20$as$u20$vte..Perform$GT$::execute::h9c87e1ee25cc9487",
+      "pc": "0x1002b57bc",
+      "weight_ns": 209000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0200",
+      "weight_ns": 202000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002ccd94",
+      "weight_ns": 202000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::linefeed::h09f627feaaaa13be",
+      "pc": "0x1002b93ac",
+      "weight_ns": 201000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d82b0",
+      "weight_ns": 199000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002cccd4",
+      "weight_ns": 198000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0230",
+      "weight_ns": 190000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002cc9b0",
+      "weight_ns": 182000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002aff2c",
+      "weight_ns": 181000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0290",
+      "weight_ns": 179000000
+    },
+    {
+      "name": "_$LT$vte..ansi..Performer$LT$H$C$T$GT$$u20$as$u20$vte..Perform$GT$::execute::h9c87e1ee25cc9487",
+      "pc": "0x1002b53a0",
+      "weight_ns": 176000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccc4c",
+      "weight_ns": 175000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002ccd44",
+      "weight_ns": 175000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bb8a4",
+      "weight_ns": 175000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a8238",
+      "weight_ns": 173000000
+    },
+    {
+      "name": "_$LT$vte..ansi..Performer$LT$H$C$T$GT$$u20$as$u20$vte..Perform$GT$::execute::h9c87e1ee25cc9487",
+      "pc": "0x1002b57b8",
+      "weight_ns": 172000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0264",
+      "weight_ns": 170000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002afffc",
+      "weight_ns": 165000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d7f9c",
+      "weight_ns": 163000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002ccd84",
+      "weight_ns": 161000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccc6c",
+      "weight_ns": 140000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002ccd54",
+      "weight_ns": 135000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002cc9cc",
+      "weight_ns": 109000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccc00",
+      "weight_ns": 108000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d8274",
+      "weight_ns": 103000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002ccc9c",
+      "weight_ns": 100000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d8284",
+      "weight_ns": 94000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a8210",
+      "weight_ns": 92000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d828c",
+      "weight_ns": 89000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0028",
+      "weight_ns": 84000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccaf4",
+      "weight_ns": 79000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccb7c",
+      "weight_ns": 77000000
+    },
+    {
+      "name": "<deduplicated_symbol>",
+      "pc": "0x1002dc864",
+      "weight_ns": 74000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002ccd1c",
+      "weight_ns": 73000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002ccccc",
+      "weight_ns": 65000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0030",
+      "weight_ns": 62000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002affe4",
+      "weight_ns": 58000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002cc9a4",
+      "weight_ns": 50000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccc64",
+      "weight_ns": 50000000
+    },
+    {
+      "name": "_$LT$loom_protocol..message..PackedCell$u20$as$u20$core..default..Default$GT$::default::hccbbb255e7f6c285",
+      "pc": "0x100428a5c",
+      "weight_ns": 49000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0014",
+      "weight_ns": 47000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccc34",
+      "weight_ns": 45000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell::h90b191531e05b396",
+      "pc": "0x1002d5768",
+      "weight_ns": 40000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bb80c",
+      "weight_ns": 40000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell::h90b191531e05b396",
+      "pc": "0x1002d576c",
+      "weight_ns": 38000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0278",
+      "weight_ns": 38000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002cc9a8",
+      "weight_ns": 37000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002ccd88",
+      "weight_ns": 36000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d8100",
+      "weight_ns": 35000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_color::hfd87255c5de50ea5",
+      "pc": "0x1002d43c0",
+      "weight_ns": 31000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0204",
+      "weight_ns": 31000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell::h90b191531e05b396",
+      "pc": "0x1002d57ec",
+      "weight_ns": 31000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_color::hfd87255c5de50ea5",
+      "pc": "0x1002d4750",
+      "weight_ns": 30000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell::h90b191531e05b396",
+      "pc": "0x1002d5774",
+      "weight_ns": 28000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_color::hfd87255c5de50ea5",
+      "pc": "0x1002d45c4",
+      "weight_ns": 28000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002ccce0",
+      "weight_ns": 28000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b022c",
+      "weight_ns": 28000000
+    },
+    {
+      "name": "alacritty_terminal::grid::storage::Storage$LT$T$GT$::truncate::h06e24ded47ceabe2",
+      "pc": "0x1002cef48",
+      "weight_ns": 27000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d82bc",
+      "weight_ns": 27000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002ccd40",
+      "weight_ns": 26000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002ccd4c",
+      "weight_ns": 26000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a8198",
+      "weight_ns": 26000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d80e8",
+      "weight_ns": 26000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell::h90b191531e05b396",
+      "pc": "0x1002d5748",
+      "weight_ns": 25000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002ccd28",
+      "weight_ns": 25000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0258",
+      "weight_ns": 25000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002ccd5c",
+      "weight_ns": 25000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b000c",
+      "weight_ns": 25000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccae0",
+      "weight_ns": 24000000
+    },
+    {
+      "name": "filedescriptor::unix::_$LT$impl$u20$std..io..Read$u20$for$u20$filedescriptor..FileDescriptor$GT$::read::h42ceb1c81505663c",
+      "pc": "0x1002f62ac",
+      "weight_ns": 23000000
+    },
+    {
+      "name": "_$LT$twox_hash..xxhash64..Hasher$u20$as$u20$core..hash..Hasher$GT$::write::had26af42ea2f2f9e",
+      "pc": "0x1002b44a8",
+      "weight_ns": 23000000
+    },
+    {
+      "name": "core::str::converts::from_utf8::he9f0822f56a5cc24",
+      "pc": "0x1004b1c64",
+      "weight_ns": 23000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3ce0",
+      "weight_ns": 22000000
+    },
+    {
+      "name": "_$LT$vte..ansi..Performer$LT$H$C$T$GT$$u20$as$u20$vte..Perform$GT$::execute::h9c87e1ee25cc9487",
+      "pc": "0x1002b53a4",
+      "weight_ns": 21000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002ccca0",
+      "weight_ns": 20000000
+    },
+    {
+      "name": "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::viewport_row_fingerprint::hd300588920cadc4d",
+      "pc": "0x1002be9b4",
+      "weight_ns": 19000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0034",
+      "weight_ns": 19000000
+    },
+    {
+      "name": "loom_protocol::message::PackedCell::set_ch::h57b83022bcc12763",
+      "pc": "0x10041bb74",
+      "weight_ns": 18000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a8170",
+      "weight_ns": 17000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bafec",
+      "weight_ns": 16000000
+    },
+    {
+      "name": "_$LT$twox_hash..xxhash64..Hasher$u20$as$u20$core..hash..Hasher$GT$::write::had26af42ea2f2f9e",
+      "pc": "0x1002b44b8",
+      "weight_ns": 16000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell::h90b191531e05b396",
+      "pc": "0x1002d5724",
+      "weight_ns": 15000000
+    },
+    {
+      "name": "alacritty_terminal::grid::storage::Storage$LT$T$GT$::truncate::h06e24ded47ceabe2",
+      "pc": "0x1002cef58",
+      "weight_ns": 15000000
+    },
+    {
+      "name": "loom_protocol::message::PackedCell::set_ch::h57b83022bcc12763",
+      "pc": "0x10041bb80",
+      "weight_ns": 14000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a7f90",
+      "weight_ns": 14000000
+    },
+    {
+      "name": "_$LT$vte..ansi..Performer$LT$H$C$T$GT$$u20$as$u20$vte..Perform$GT$::execute::h9c87e1ee25cc9487",
+      "pc": "0x1002b519c",
+      "weight_ns": 14000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccaf8",
+      "weight_ns": 13000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0228",
+      "weight_ns": 13000000
+    },
+    {
+      "name": "std::sync::mpmc::Sender$LT$T$GT$::send::hcc755b62b6d7a22f",
+      "pc": "0x1002e4f1c",
+      "weight_ns": 13000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell::h90b191531e05b396",
+      "pc": "0x1002d5778",
+      "weight_ns": 13000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccb5c",
+      "weight_ns": 12000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell::h90b191531e05b396",
+      "pc": "0x1002d57a8",
+      "weight_ns": 12000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_color::hfd87255c5de50ea5",
+      "pc": "0x1002d437c",
+      "weight_ns": 11000000
+    },
+    {
+      "name": "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::viewport_row_fingerprint::hd300588920cadc4d",
+      "pc": "0x1002be978",
+      "weight_ns": 11000000
+    },
+    {
+      "name": "core::str::converts::from_utf8::he9f0822f56a5cc24",
+      "pc": "0x1004b1c74",
+      "weight_ns": 11000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d84b4",
+      "weight_ns": 11000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3b48",
+      "weight_ns": 10000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0224",
+      "weight_ns": 10000000
+    },
+    {
+      "name": "loom_term::partial_buf::PartialBuf::prepend_to::hf6589d7e1e380b4d",
+      "pc": "0x1002d166c",
+      "weight_ns": 10000000
+    },
+    {
+      "name": "_$LT$portable_pty..unix..PtyFd$u20$as$u20$std..io..Read$GT$::read::h2900657ce9ddc0d8",
+      "pc": "0x1002eee24",
+      "weight_ns": 10000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a822c",
+      "weight_ns": 8000000
+    },
+    {
+      "name": "_$LT$core..iter..adapters..take..Take$LT$I$GT$$u20$as$u20$core..iter..traits..iterator..Iterator$GT$::nth::h11e2ed4a09db89fb",
+      "pc": "0x1002e38c0",
+      "weight_ns": 8000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a8230",
+      "weight_ns": 8000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0044",
+      "weight_ns": 8000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0220",
+      "weight_ns": 8000000
+    },
+    {
+      "name": "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::viewport_row_fingerprint::hd300588920cadc4d",
+      "pc": "0x1002be95c",
+      "weight_ns": 7000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a815c",
+      "weight_ns": 7000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bb8b0",
+      "weight_ns": 7000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0294",
+      "weight_ns": 7000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_color::hfd87255c5de50ea5",
+      "pc": "0x1002d4378",
+      "weight_ns": 7000000
+    },
+    {
+      "name": "_$LT$core..iter..adapters..take..Take$LT$I$GT$$u20$as$u20$core..iter..traits..iterator..Iterator$GT$::nth::h11e2ed4a09db89fb",
+      "pc": "0x1002e3920",
+      "weight_ns": 7000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b021c",
+      "weight_ns": 7000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bb88c",
+      "weight_ns": 7000000
+    },
+    {
+      "name": "std::sys::backtrace::__rust_begin_short_backtrace::he2946a50a4994206",
+      "pc": "0x1002cf9f4",
+      "weight_ns": 7000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3bf8",
+      "weight_ns": 6000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccad0",
+      "weight_ns": 6000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e403c",
+      "weight_ns": 6000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bb810",
+      "weight_ns": 6000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3e8c",
+      "weight_ns": 6000000
+    },
+    {
+      "name": "mio::poll::Poll::poll::heee6c024659087cc",
+      "pc": "0x100466930",
+      "weight_ns": 6000000
+    },
+    {
+      "name": "_$LT$vte..ansi..Performer$LT$H$C$T$GT$$u20$as$u20$vte..Perform$GT$::execute::h9c87e1ee25cc9487",
+      "pc": "0x1002b52e0",
+      "weight_ns": 6000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3e98",
+      "weight_ns": 5000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell::h90b191531e05b396",
+      "pc": "0x1002d572c",
+      "weight_ns": 5000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a8304",
+      "weight_ns": 5000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002baff0",
+      "weight_ns": 5000000
+    },
+    {
+      "name": "_$LT$vte..ansi..Performer$LT$H$C$T$GT$$u20$as$u20$vte..Perform$GT$::execute::h9c87e1ee25cc9487",
+      "pc": "0x1002b5418",
+      "weight_ns": 5000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::linefeed::h09f627feaaaa13be",
+      "pc": "0x1002b931c",
+      "weight_ns": 5000000
+    },
+    {
+      "name": "std::sys::backtrace::__rust_begin_short_backtrace::he2946a50a4994206",
+      "pc": "0x1002cfa4c",
+      "weight_ns": 5000000
+    },
+    {
+      "name": "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::viewport_row_fingerprint::hd300588920cadc4d",
+      "pc": "0x1002bea04",
+      "weight_ns": 5000000
+    },
+    {
+      "name": "_RNvCs5QKde7ScR4H_7___rustc11___rdl_alloc",
+      "pc": "0x10046b5c0",
+      "weight_ns": 5000000
+    },
+    {
+      "name": "_$LT$twox_hash..xxhash64..Hasher$u20$as$u20$core..hash..Hasher$GT$::write::had26af42ea2f2f9e",
+      "pc": "0x1002b44a0",
+      "weight_ns": 5000000
+    },
+    {
+      "name": "std::sync::mpmc::Sender$LT$T$GT$::send::hcc755b62b6d7a22f",
+      "pc": "0x1002e5274",
+      "weight_ns": 5000000
+    },
+    {
+      "name": "_$LT$portable_pty..unix..PtyFd$u20$as$u20$std..io..Read$GT$::read::h2900657ce9ddc0d8",
+      "pc": "0x1002eee40",
+      "weight_ns": 5000000
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::queue::Steal$LT$T$GT$::steal_into::hf5895e26888fc700",
+      "pc": "0x100451414",
+      "weight_ns": 5000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a8214",
+      "weight_ns": 5000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccc1c",
+      "weight_ns": 5000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d81c0",
+      "weight_ns": 5000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell::h90b191531e05b396",
+      "pc": "0x1002d5728",
+      "weight_ns": 4000000
+    },
+    {
+      "name": "DYLD-STUB$$malloc",
+      "pc": "0x100515d34",
+      "weight_ns": 4000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::linefeed::h09f627feaaaa13be",
+      "pc": "0x1002b9328",
+      "weight_ns": 4000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::try_recv::hb89605bb3209234c",
+      "pc": "0x1002d9e38",
+      "weight_ns": 4000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::try_recv::hb89605bb3209234c",
+      "pc": "0x1002d9eac",
+      "weight_ns": 4000000
+    },
+    {
+      "name": "loom_term::pane::cell::collect_scrollback_cells::h4159672b9984c156",
+      "pc": "0x1002d54e4",
+      "weight_ns": 4000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a8180",
+      "weight_ns": 4000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3ea4",
+      "weight_ns": 4000000
+    },
+    {
+      "name": "<deduplicated_symbol>",
+      "pc": "0x1002dc868",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "_$LT$twox_hash..xxhash64..Hasher$u20$as$u20$core..hash..Hasher$GT$::write::had26af42ea2f2f9e",
+      "pc": "0x1002b4490",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "loom_term::kitty_graphics::KittyGraphicsParser::scan::ha21abfa666410b62",
+      "pc": "0x1002e30fc",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a8228",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "_$LT$core..hash..sip..Hasher$LT$S$GT$$u20$as$u20$core..hash..Hasher$GT$::write::hb04a1596f5d3eca1",
+      "pc": "0x100083fc4",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a7f74",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3b40",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "alacritty_terminal::grid::storage::Storage$LT$T$GT$::truncate::h06e24ded47ceabe2",
+      "pc": "0x1002cef3c",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a8224",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "_$LT$core..iter..adapters..take..Take$LT$I$GT$$u20$as$u20$core..iter..traits..iterator..Iterator$GT$::nth::h11e2ed4a09db89fb",
+      "pc": "0x1002e3890",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bc1a8",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3d94",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a819c",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d7f98",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "loom_term::esc_scanner::scan_osc::h46473fca16391616",
+      "pc": "0x1002e4cec",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::Context::park_internal::h0856240cf819d981",
+      "pc": "0x1004488ac",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "_$LT$twox_hash..xxhash64..Hasher$u20$as$u20$core..hash..Hasher$GT$::write::had26af42ea2f2f9e",
+      "pc": "0x1002b433c",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a8218",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3e24",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "_$LT$vte..ansi..Performer$LT$H$C$T$GT$$u20$as$u20$vte..Perform$GT$::execute::h9c87e1ee25cc9487",
+      "pc": "0x1002b52d8",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "loom_term::esc_scanner::scan_dcs::ha224f39361745d84",
+      "pc": "0x1002e4c04",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bb7fc",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "core::slice::_$LT$impl$u20$$u5b$T$u5d$$GT$::rotate_left::h31e6037afffd0bd6",
+      "pc": "0x1002de5e0",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "_RNvCs5QKde7ScR4H_7___rustc35___rust_no_alloc_shim_is_unstable_v2",
+      "pc": "0x1000df6d0",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a8220",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "loom_term::partial_buf::PartialBuf::prepend_to::hf6589d7e1e380b4d",
+      "pc": "0x1002d1700",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::send::haa190e56424df42a",
+      "pc": "0x1002d95ac",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "std::sys::backtrace::__rust_begin_short_backtrace::he2946a50a4994206",
+      "pc": "0x1002cfa00",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bb804",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "loom_term::esc_scanner::scan_osc::h46473fca16391616",
+      "pc": "0x1002e4e48",
+      "weight_ns": 3000000
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::park::Inner::park_condvar::hd55df7ef58c7dddc",
+      "pc": "0x10045e820",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell::h90b191531e05b396",
+      "pc": "0x1002d57cc",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bb808",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::linefeed::h09f627feaaaa13be",
+      "pc": "0x1002b9290",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::viewport_row_fingerprint::hd300588920cadc4d",
+      "pc": "0x1002beaf0",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3ecc",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::esc_scanner::scan_osc::h46473fca16391616",
+      "pc": "0x1002e4e50",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_protocol::codec::state_machine::StateEncoder::push_cell::h4a5253169883ef32",
+      "pc": "0x10042ec9c",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::shell_integration::Osc133Parser::scan::ha77fd874611c6024",
+      "pc": "0x1002e37f0",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a817c",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a8188",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loomtty_server::daemon::prepare_daemon_with::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::hfe49397ac932da0d",
+      "pc": "0x10005abd8",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "std::sync::mpmc::waker::SyncWaker::notify::h1cd1f4024689341b",
+      "pc": "0x1002da800",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d827c",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::esc_scanner::scan_osc::h46473fca16391616",
+      "pc": "0x1002e4e5c",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b003c",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::partial_buf::PartialBuf::prepend_to::hf6589d7e1e380b4d",
+      "pc": "0x1002d164c",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "_RNvCs5QKde7ScR4H_7___rustc13___rdl_dealloc",
+      "pc": "0x10046b62c",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3ba4",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::queue::Steal$LT$T$GT$::steal_into::hf5895e26888fc700",
+      "pc": "0x100451430",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_color::hfd87255c5de50ea5",
+      "pc": "0x1002d45a8",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3e80",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_protocol::codec::state_machine::StateEncoder::push_cell::h4a5253169883ef32",
+      "pc": "0x10042ecec",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::esc_scanner::scan_osc::h46473fca16391616",
+      "pc": "0x1002e4cb0",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "alacritty_terminal::grid::storage::Storage$LT$T$GT$::truncate::h06e24ded47ceabe2",
+      "pc": "0x1002cef7c",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell::h90b191531e05b396",
+      "pc": "0x1002d5758",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::send::haa190e56424df42a",
+      "pc": "0x1002d9714",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell::h90b191531e05b396",
+      "pc": "0x1002d5764",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::Context::run::hec67d908247640d4",
+      "pc": "0x1004497f0",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002affec",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_protocol::codec::full_sync::encode_full_pane_sync_framed::hffa8695823de12dd",
+      "pc": "0x10042d0fc",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::esc_scanner::scan_dcs::ha224f39361745d84",
+      "pc": "0x1002e4a24",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "std::sync::mpmc::waker::SyncWaker::notify::h1cd1f4024689341b",
+      "pc": "0x1002da678",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::Context::run::hec67d908247640d4",
+      "pc": "0x1004497dc",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::esc_scanner::scan_csi_dec::h38134bdbc8544d60",
+      "pc": "0x1002e447c",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3dc4",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell::h90b191531e05b396",
+      "pc": "0x1002d577c",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::send::haa190e56424df42a",
+      "pc": "0x1002d9534",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "_$LT$core..hash..sip..Hasher$LT$S$GT$$u20$as$u20$core..hash..Hasher$GT$::write::hb04a1596f5d3eca1",
+      "pc": "0x100084178",
+      "weight_ns": 2000000
+    },
+    {
+      "name": "_$LT$core..hash..sip..Hasher$LT$S$GT$$u20$as$u20$core..hash..Hasher$GT$::write::hb04a1596f5d3eca1",
+      "pc": "0x100083ffc",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::esc_scanner::scan_csi_dec::h38134bdbc8544d60",
+      "pc": "0x1002e4458",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::Context::run_task::h3a976313a6d0087c",
+      "pc": "0x10044a41c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b01f0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3dac",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "parking_lot::condvar::Condvar::wait_until_internal::he6dde96d1a6a58e1",
+      "pc": "0x100467730",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sys::backtrace::__rust_begin_short_backtrace::he2946a50a4994206",
+      "pc": "0x1002cf9e4",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::viewport_row_fingerprint::hd300588920cadc4d",
+      "pc": "0x1002bea50",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sys::backtrace::__rust_begin_short_backtrace::he2946a50a4994206",
+      "pc": "0x1002cfa74",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccc5c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "core::hash::BuildHasher::hash_one::h0406fb293faaf33c",
+      "pc": "0x10007cdd8",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "_$LT$loom_protocol..message..PackedCell$u20$as$u20$core..default..Default$GT$::default::hccbbb255e7f6c285",
+      "pc": "0x100428a4c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_protocol::codec::state_machine::StateEncoder::push_cell::h4a5253169883ef32",
+      "pc": "0x10042ed10",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::cell::collect_scrollback_cells::h4159672b9984c156",
+      "pc": "0x1002d5508",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::cell::collect_scrollback_cells::h4159672b9984c156",
+      "pc": "0x1002d54d4",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell::h90b191531e05b396",
+      "pc": "0x1002d57e0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::sixel::SixelParser::scan::h6abfd26782c4f2b1",
+      "pc": "0x1002eb1b0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a8200",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::viewport_row_fingerprint::hd300588920cadc4d",
+      "pc": "0x1002be9b0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bb7d4",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "_RNvCs5QKde7ScR4H_7___rustc11___rdl_alloc",
+      "pc": "0x10046b5cc",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::send::haa190e56424df42a",
+      "pc": "0x1002d95e0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bb020",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "tokio::runtime::time::Driver::park_internal::h90ba73e8f5a24fe9",
+      "pc": "0x10044f550",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sync::mpmc::Receiver$LT$T$GT$::try_recv::h115aac22da2f7a5a",
+      "pc": "0x1002e5574",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::extract_damage::hcdb59afdcc598995",
+      "pc": "0x1002be534",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::Context::run::hec67d908247640d4",
+      "pc": "0x100449194",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::Context::run::hec67d908247640d4",
+      "pc": "0x1004497cc",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::try_recv::hb89605bb3209234c",
+      "pc": "0x1002d9e78",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "alacritty_terminal::term::TermDamageState::reset::heb05279646ad1b76",
+      "pc": "0x1002f6ed8",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::try_recv::hb89605bb3209234c",
+      "pc": "0x1002d9fb0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::osc8_parser::Osc8Parser::scan::h7d877953e1af82c4",
+      "pc": "0x1002e20dc",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loomtty_server::daemon::session::Session::process_pty_and_damage::h94c27f2e92b4b96e",
+      "pc": "0x1000bd318",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e4024",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a8234",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002ccd34",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a8174",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::send::haa190e56424df42a",
+      "pc": "0x1002d94f4",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bb66c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "DYLD-STUB$$memcpy",
+      "pc": "0x100515d50",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "_$LT$vte..ansi..Performer$LT$H$C$T$GT$$u20$as$u20$vte..Perform$GT$::execute::h9c87e1ee25cc9487",
+      "pc": "0x1002b5184",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::Context::run::hec67d908247640d4",
+      "pc": "0x100449800",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3b60",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "hashbrown::map::HashMap$LT$K$C$V$C$S$C$A$GT$::insert::h2025d928d98cf211",
+      "pc": "0x1000575c4",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002aff18",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "<deduplicated_symbol>",
+      "pc": "0x1002dc89c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002cc9a0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "memchr::memmem::searcher::searcher_kind_neon::hd978fa828a96aaeb",
+      "pc": "0x1003a8194",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_protocol::codec::state_machine::StateEncoder::push_cell::h4a5253169883ef32",
+      "pc": "0x10042ed0c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::cell::collect_scrollback_cells::h4159672b9984c156",
+      "pc": "0x1002d5590",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::cell::collect_scrollback_cells::h4159672b9984c156",
+      "pc": "0x1002d5494",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "tokio::runtime::io::driver::Driver::turn::h0321f86985e3fec2",
+      "pc": "0x10045fd98",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sys::pal::unix::sync::mutex::Mutex::lock::hf11d9bf9473ab519",
+      "pc": "0x1004788ec",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "tokio::runtime::task::raw::poll::h546d5bb4caae0d50",
+      "pc": "0x1000db420",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::linefeed::h09f627feaaaa13be",
+      "pc": "0x1002b93b4",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "tokio::sync::notify::Notify::notify_with_strategy::h4abb8ef0dd3245ae",
+      "pc": "0x100456824",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bb9ac",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bae60",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::kitty_graphics::KittyGraphicsParser::scan::ha21abfa666410b62",
+      "pc": "0x1002e2208",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccc0c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002cc998",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "core::hash::BuildHasher::hash_one::h0406fb293faaf33c",
+      "pc": "0x10007cee8",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::viewport_row_fingerprint::hd300588920cadc4d",
+      "pc": "0x1002be7e4",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bac3c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::Context::run_task::h3a976313a6d0087c",
+      "pc": "0x10044a518",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_pty_output::hc8985faea51a41b6",
+      "pc": "0x1002bce10",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3e70",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_color::hfd87255c5de50ea5",
+      "pc": "0x1002d4734",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loomtty_server::daemon::session::Session::process_pty_and_damage::h94c27f2e92b4b96e",
+      "pc": "0x1000bc064",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::esc_scanner::scan_osc::h46473fca16391616",
+      "pc": "0x1002e4e34",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "tokio::runtime::signal::Driver::process::hdbce1e14448d2325",
+      "pc": "0x1004446ac",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::send::haa190e56424df42a",
+      "pc": "0x1002d9504",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "core::hash::BuildHasher::hash_one::hd0ab24eef03c3aa8",
+      "pc": "0x10007d400",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pty::Pty::drain_output::hee9567d77d39c987",
+      "pc": "0x1002d2940",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccc3c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "_$LT$vte..ansi..Performer$LT$H$C$T$GT$$u20$as$u20$vte..Perform$GT$::execute::h9c87e1ee25cc9487",
+      "pc": "0x1002b57c0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "DYLD-STUB$$free",
+      "pc": "0x100515c3c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::worker::Context::run::hec67d908247640d4",
+      "pc": "0x100449638",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bc180",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3e44",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "_$LT$vte..ansi..Performer$LT$H$C$T$GT$$u20$as$u20$vte..Perform$GT$::execute::h9c87e1ee25cc9487",
+      "pc": "0x1002b5428",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "core::str::converts::from_utf8::he9f0822f56a5cc24",
+      "pc": "0x1004b1c40",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::cell::collect_scrollback_cells::h4159672b9984c156",
+      "pc": "0x1002d550c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::cell::collect_scrollback_cells::h4159672b9984c156",
+      "pc": "0x1002d5610",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "DYLD-STUB$$clock_gettime",
+      "pc": "0x100515b54",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::sixel::SixelParser::scan::h6abfd26782c4f2b1",
+      "pc": "0x1002eb158",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::partial_buf::PartialBuf::prepend_to::hf6589d7e1e380b4d",
+      "pc": "0x1002d165c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "filedescriptor::unix::_$LT$impl$u20$std..io..Read$u20$for$u20$filedescriptor..FileDescriptor$GT$::read::h42ceb1c81505663c",
+      "pc": "0x1002f62d4",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "nix::sys::termios::tcgetattr::h1cdddc90b486a125",
+      "pc": "0x1002f6594",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::send::haa190e56424df42a",
+      "pc": "0x1002d9800",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bafe8",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccb04",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::shell_integration::Osc133Parser::scan::ha77fd874611c6024",
+      "pc": "0x1002e37c4",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "core::str::converts::from_utf8::he9f0822f56a5cc24",
+      "pc": "0x1004b1e24",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::send::_$u7b$$u7b$closure$u7d$$u7d$::h5cb2662871220406",
+      "pc": "0x1002d9d6c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::sixel::SixelParser::scan::h6abfd26782c4f2b1",
+      "pc": "0x1002ea970",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::osc8_parser::Osc8Parser::scan::h7d877953e1af82c4",
+      "pc": "0x1002e208c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::osc7_parser::Osc7Parser::scan::hda02a10b8002141d",
+      "pc": "0x1002db548",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "tokio::runtime::time::wheel::Wheel::next_expiration::h6911976c5dd7f6c5",
+      "pc": "0x10045b2ac",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::esc_scanner::scan_osc::h46473fca16391616",
+      "pc": "0x1002e4ca8",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sync::mpmc::Sender$LT$T$GT$::send::hcc755b62b6d7a22f",
+      "pc": "0x1002e4f3c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loomtty_server::daemon::session::Session::process_pty_and_damage::h94c27f2e92b4b96e",
+      "pc": "0x1000bbbe0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pty::Pty::drain_output::hee9567d77d39c987",
+      "pc": "0x1002d2984",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::kitty_graphics::KittyGraphicsParser::scan::ha21abfa666410b62",
+      "pc": "0x1002e21c0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "_$LT$twox_hash..xxhash64..Hasher$u20$as$u20$core..hash..Hasher$GT$::write::had26af42ea2f2f9e",
+      "pc": "0x1002b44ac",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "DYLD-STUB$$read",
+      "pc": "0x100516040",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::snapshot::_$LT$impl$u20$loom_term..pane..Pane$GT$::viewport_row_fingerprint::hd300588920cadc4d",
+      "pc": "0x1002beac0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bb89c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3dbc",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "core::slice::_$LT$impl$u20$$u5b$T$u5d$$GT$::rotate_left::h31e6037afffd0bd6",
+      "pc": "0x1002de5dc",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d84b0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d8e98",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::shell_integration::Osc133Parser::scan::ha77fd874611c6024",
+      "pc": "0x1002e37e8",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::shell_integration::Osc133Parser::scan::ha77fd874611c6024",
+      "pc": "0x1002e33b8",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002ccca8",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::send::haa190e56424df42a",
+      "pc": "0x1002d97d0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::send::haa190e56424df42a",
+      "pc": "0x1002d95b8",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "_$LT$core..iter..adapters..take..Take$LT$I$GT$$u20$as$u20$core..iter..traits..iterator..Iterator$GT$::nth::h11e2ed4a09db89fb",
+      "pc": "0x1002e38ac",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::try_recv::hb89605bb3209234c",
+      "pc": "0x1002d9f78",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bc1e0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sync::mpmc::waker::SyncWaker::notify::h1cd1f4024689341b",
+      "pc": "0x1002da7fc",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::send::haa190e56424df42a",
+      "pc": "0x1002d97f0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bb038",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bafd0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::send::haa190e56424df42a",
+      "pc": "0x1002d97c8",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3db8",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "_$LT$portable_pty..unix..PtyFd$u20$as$u20$std..io..Read$GT$::read::h2900657ce9ddc0d8",
+      "pc": "0x1002eee18",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "tokio::runtime::scheduler::multi_thread::queue::Steal$LT$T$GT$::steal_into::hf5895e26888fc700",
+      "pc": "0x100451434",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b0288",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell::h90b191531e05b396",
+      "pc": "0x1002d57b0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "alacritty_terminal::grid::Grid$LT$T$GT$::scroll_up::h271cf101757d8a4d",
+      "pc": "0x1002ccb78",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "core::slice::_$LT$impl$u20$$u5b$T$u5d$$GT$::rotate_left::h31e6037afffd0bd6",
+      "pc": "0x1002de574",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sys::pal::unix::time::Timespec::now::h0f1f309d4c5fe2d8",
+      "pc": "0x1004789f8",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sys::backtrace::__rust_begin_short_backtrace::he2946a50a4994206",
+      "pc": "0x1002cfa20",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002b01e8",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sys::pal::unix::time::Timespec::now::h0f1f309d4c5fe2d8",
+      "pc": "0x100478a4c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::cell::pack_cell::h90b191531e05b396",
+      "pc": "0x1002d5738",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e4038",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "hashbrown::map::HashMap$LT$K$C$V$C$S$C$A$GT$::insert::h2025d928d98cf211",
+      "pc": "0x1000574c4",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "core::str::converts::from_utf8::he9f0822f56a5cc24",
+      "pc": "0x1004b1c68",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d7fb8",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "alacritty_terminal::grid::row::Row$LT$T$GT$::reset::h53da9450bc7623a6",
+      "pc": "0x1002cccc0",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::shell_integration::Osc133Parser::scan::ha77fd874611c6024",
+      "pc": "0x1002e3370",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3e28",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "DYLD-STUB$$read",
+      "pc": "0x100516044",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "<deduplicated_symbol>",
+      "pc": "0x1002dc85c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "tokio::runtime::time::Driver::park_internal::h90ba73e8f5a24fe9",
+      "pc": "0x10044f290",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "_$LT$vte..ansi..Performer$LT$H$C$T$GT$$u20$as$u20$vte..Perform$GT$::execute::h9c87e1ee25cc9487",
+      "pc": "0x1002b5448",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3e60",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3e5c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "<deduplicated_symbol>",
+      "pc": "0x1002dc858",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "alacritty_terminal::term::Term$LT$T$GT$::scroll_up_relative::h15694735e791d4d9",
+      "pc": "0x1002aff10",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::pane::Pane::process_chunks::hf9fe9f1817861486",
+      "pc": "0x1002bad08",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sys::backtrace::__rust_begin_short_backtrace::he2946a50a4994206",
+      "pc": "0x1002cfa14",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sync::mpmc::Sender$LT$T$GT$::send::hcc755b62b6d7a22f",
+      "pc": "0x1002e4ed8",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "loom_term::esc_scanner::next_intro::hdff1e2f345deee13",
+      "pc": "0x1002e3b3c",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "_$LT$alloc..string..String$u20$as$u20$core..clone..Clone$GT$::clone::h65381f6df886e978",
+      "pc": "0x1004a6274",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "_$LT$alacritty_terminal..term..Term$LT$T$GT$$u20$as$u20$vte..ansi..Handler$GT$::input::h921568cb6144215b",
+      "pc": "0x1002d84a8",
+      "weight_ns": 1000000
+    },
+    {
+      "name": "std::sync::mpmc::array::Channel$LT$T$GT$::send::haa190e56424df42a",
+      "pc": "0x1002d95d4",
+      "weight_ns": 1000000
+    }
+  ]
+}

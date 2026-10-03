@@ -1,0 +1,16 @@
+Round 1/3: kitty
+  Waiting for unrelated Rust builds to finish before launch
+  FAILED: concurrent Rust build/test processes detected: 23716, 23720; retry when idle
+Round 1/3: alacritty
+  Waiting for unrelated Rust builds to finish before launch
+  FAILED: concurrent Rust build/test processes detected: 24853, 25078; retry when idle
+Round 1/3: ghostty
+  Waiting for unrelated Rust builds to finish before launch
+Traceback (most recent call last):
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/extras-bench-20261003/run-four.py", line 39, in <module>
+    code=b.main()
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py", line 580, in main
+    run = run_one(app, round_index, args.output / f"r{round_index}-{app}", args)
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/extras-bench-20261003/run-four.py", line 21, in run_one
+    time.sleep(2)
+KeyboardInterrupt

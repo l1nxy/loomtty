@@ -33,7 +33,7 @@ def run_one(app, round_index, directory, args):
     return result
 b.run_one=run_one
 bundle=root/'target/main-bench-20261003/loomtty.app/Contents/MacOS'
-sys.argv=['macos_bench.py','--rounds','3','--frames','600','--loom',str(bundle/'loomtty'),'--loom-server',str(bundle/'loomtty-server'),'--loom-width','600','--loom-height','400','--vtebench',str(root.parent/'vtebench-extras-20261003'),'--vtebench-seconds','3','--output','/tmp/loom-four-main-1003b']
+sys.argv=['macos_bench.py','--rounds','3','--frames','600','--loom',str(bundle/'loomtty'),'--loom-server',str(bundle/'loomtty-server'),'--loom-width','600','--loom-height','400','--vtebench',str(root.parent/'vtebench-extras-20261003'),'--vtebench-seconds','3','--output','/tmp/loom-four-main-1003c']
 wake=subprocess.Popen(['caffeinate','-d','-i','-w',str(os.getpid())])
 try:
     code=b.main()

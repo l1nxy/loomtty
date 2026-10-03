@@ -1,0 +1,59 @@
+Round 1/3: kitty
+  kitty: idle 5.005s
+  kitty: warm_idle 5.005s
+  kitty: ascii 0.037s
+  kitty: truecolor 0.047s
+  kitty: cjk 0.045s
+  kitty: emoji 0.042s
+  kitty: scroll 0.129s
+  kitty: cursor 0.042s
+  kitty: latency 1.900s
+  kitty: loaded_latency 0.716s
+  kitty: tui_full 10.002s
+  kitty: tui_partial 10.003s
+  kitty: scrollback 0.006s
+  kitty: post_idle 5.005s
+  kitty: vtebench/cursor_motion 4.288s
+  kitty: vtebench/dense_cells 4.663s
+  kitty: vtebench/light_cells 4.151s
+  kitty: vtebench/medium_cells 3.968s
+  kitty: vtebench/scrolling 7.665s
+  kitty: vtebench/scrolling_bottom_region 4.812s
+  kitty: vtebench/scrolling_bottom_small_region 5.156s
+  kitty: vtebench/scrolling_fullscreen 4.027s
+  kitty: vtebench/scrolling_top_region 4.465s
+  kitty: vtebench/scrolling_top_small_region 6.479s
+  kitty: vtebench/sync_medium_cells 3.614s
+  kitty: vtebench/unicode 4.143s
+  ready 1060.4ms, grid 100x30
+Round 1/3: alacritty
+  Waiting for unrelated Rust builds to finish before launch
+  alacritty: idle 5.005s
+  alacritty: warm_idle 5.005s
+  alacritty: ascii 0.050s
+  alacritty: truecolor 0.046s
+  alacritty: cjk 0.056s
+  alacritty: emoji 0.041s
+  alacritty: scroll 0.041s
+  alacritty: cursor 0.052s
+  alacritty: latency 1.232s
+  alacritty: loaded_latency 0.039s
+  alacritty: tui_full 10.003s
+  alacritty: tui_partial 10.003s
+  alacritty: scrollback 0.008s
+  alacritty: post_idle 5.010s
+  alacritty: vtebench/cursor_motion 3.621s
+  alacritty: vtebench/dense_cells 6.528s
+  alacritty: vtebench/light_cells 3.931s
+  alacritty: vtebench/medium_cells 3.903s
+  alacritty: vtebench/scrolling 4.362s
+  alacritty: vtebench/scrolling_bottom_region 4.459s
+  alacritty: vtebench/scrolling_bottom_small_region 4.146s
+Traceback (most recent call last):
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/extras-bench-20261003/run-four-auto-retry2.py", line 43, in <module>
+    code=b.main()
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py", line 580, in main
+    run = run_one(app, round_index, args.output / f"r{round_index}-{app}", args)
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/extras-bench-20261003/run-four-auto-retry2.py", line 36, in run_one
+    raise RuntimeError(f"{app}: {result['error']}; result retained in {directory}")
+RuntimeError: alacritty: concurrent Rust build/test processes detected: 59518, 59520; retry when idle; result retained in /private/tmp/loom-four-auto-1003f/r0-alacritty

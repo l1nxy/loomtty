@@ -1,0 +1,25 @@
+Round 1/3: kitty
+  Reusing complete verified launch from /private/tmp/loom-four-auto-1003f/r0-kitty
+  ready 1060.4ms, grid 100x30
+Round 1/3: alacritty
+  alacritty: idle 5.010s
+  alacritty: warm_idle 5.010s
+  alacritty: ascii 0.052s
+  alacritty: truecolor 0.043s
+  alacritty: cjk 0.056s
+  alacritty: emoji 0.042s
+  alacritty: scroll 0.042s
+  alacritty: cursor 0.045s
+  alacritty: latency 1.414s
+  alacritty: loaded_latency 0.038s
+  alacritty: tui_full 10.005s
+  FAILED: concurrent Rust build/test processes detected: 60649; retry when idle
+Round 1/3: ghostty
+Traceback (most recent call last):
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/extras-bench-20261003/resume-four-auto.py", line 98, in <module>
+    code = b.main()
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/bench/macos_bench.py", line 580, in main
+    run = run_one(app, round_index, args.output / f"r{round_index}-{app}", args)
+  File "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/extras-bench-20261003/resume-four-auto.py", line 37, in run_one
+    raise RuntimeError('Previous launch interrupted; stop before the next app, retaining completed launches')
+RuntimeError: Previous launch interrupted; stop before the next app, retaining completed launches

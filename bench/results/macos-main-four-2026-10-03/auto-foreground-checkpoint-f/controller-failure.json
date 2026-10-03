@@ -1,0 +1,6 @@
+{
+  "app": "alacritty",
+  "round": 0,
+  "result_directory": "/private/tmp/loom-four-auto-1003f/r0-alacritty",
+  "error": "concurrent Rust build/test processes detected: 59518, 59520; retry when idle"
+}

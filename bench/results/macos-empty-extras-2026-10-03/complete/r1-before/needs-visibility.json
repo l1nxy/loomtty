@@ -1,0 +1,7 @@
+{
+  "app": "loomtty",
+  "processes": {
+    "server": 8789,
+    "client": 8790
+  }
+}

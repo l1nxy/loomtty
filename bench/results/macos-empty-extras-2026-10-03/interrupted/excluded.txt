@@ -1,0 +1,1 @@
+Excluded as an incomplete cohort: r1-after detected concurrent Rust build/test processes and aborted. r0 startup timestamps also used process-relative Python monotonic epochs and must not be used. No optimization conclusion is drawn from this cohort.

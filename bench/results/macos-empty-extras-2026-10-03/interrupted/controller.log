@@ -1,0 +1,36 @@
+Round 1/3: before
+  WAITING FOR VISIBLE WINDOW: /private/tmp/loom-extras-ab-1003/r0-before
+  loomtty: idle 5.005s
+  loomtty: warm_idle 5.005s
+  loomtty: ascii 0.033s
+  loomtty: truecolor 0.028s
+  loomtty: cjk 0.027s
+  loomtty: emoji 0.032s
+  loomtty: scroll 0.041s
+  loomtty: cursor 0.033s
+  loomtty: latency 1.218s
+  loomtty: loaded_latency 0.033s
+  loomtty: tui_full 10.002s
+  loomtty: tui_partial 10.002s
+  loomtty: scrollback 0.006s
+  loomtty: post_idle 5.005s
+Round 1/3: after
+  WAITING FOR VISIBLE WINDOW: /private/tmp/loom-extras-ab-1003/r0-after
+  loomtty: idle 5.005s
+  loomtty: warm_idle 5.001s
+  loomtty: ascii 0.037s
+  loomtty: truecolor 0.028s
+  loomtty: cjk 0.027s
+  loomtty: emoji 0.027s
+  loomtty: scroll 0.040s
+  loomtty: cursor 0.035s
+  loomtty: latency 1.215s
+  loomtty: loaded_latency 0.033s
+  loomtty: tui_full 10.002s
+  loomtty: tui_partial 10.001s
+  loomtty: scrollback 0.007s
+  loomtty: post_idle 5.000s
+Round 2/3: after
+  WAITING FOR VISIBLE WINDOW: /private/tmp/loom-extras-ab-1003/r1-after
+  loomtty: idle 5.005s
+FAILED: concurrent Rust build/test processes detected: 7808, 7810; retry when idle

@@ -1,0 +1,10 @@
+{
+  "app": "loomtty",
+  "processes": {
+    "server": 8789,
+    "client": 8790
+  },
+  "method": "Agent CUA Raise + AX title + screenshot; user requested automatic foreground",
+  "title": "loom benchmark [bench-8171-1]",
+  "checked_at": "2026-10-03T11:37:15.487900+00:00"
+}

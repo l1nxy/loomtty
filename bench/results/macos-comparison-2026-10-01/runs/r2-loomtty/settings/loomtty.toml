@@ -1,0 +1,22 @@
+[font]
+family = "Menlo"
+size = 10.0
+disable_ligatures = "always"
+[window]
+width = 600.0
+height = 400.0
+title = "loom benchmark"
+[appearance]
+padding = 0.0
+border_width = 0.0
+column_gap = 0.0
+[statusbar]
+padding_ratio = 0.0
+[terminal]
+shell = "/private/tmp/loom-bench-20261001-full/r2-loomtty/worker.sh"
+default_cols = 100
+default_rows = 30
+cursor_blink = false
+scrollback_lines = 10000
+[render]
+backend = "blade"

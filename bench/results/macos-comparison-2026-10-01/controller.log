@@ -1,0 +1,193 @@
+Round 1/3: kitty
+  kitty: idle 5.010s
+  kitty: warm_idle 5.010s
+  kitty: ascii 0.038s
+  kitty: truecolor 0.084s
+  kitty: cjk 0.047s
+  kitty: emoji 0.042s
+  kitty: scroll 0.129s
+  kitty: cursor 0.050s
+  kitty: latency 2.080s
+  kitty: loaded_latency 0.916s
+  kitty: tui_full 5.005s
+  kitty: tui_partial 24.301s
+  kitty: scrollback 0.016s
+  kitty: post_idle 5.008s
+  ready 527.9ms, grid 100x30
+Round 1/3: alacritty
+  alacritty: idle 5.010s
+  alacritty: warm_idle 5.010s
+  alacritty: ascii 0.041s
+  alacritty: truecolor 0.046s
+  alacritty: cjk 0.044s
+  alacritty: emoji 0.043s
+  alacritty: scroll 0.040s
+  alacritty: cursor 0.041s
+  alacritty: latency 1.436s
+  alacritty: loaded_latency 0.039s
+  alacritty: tui_full 5.005s
+  alacritty: tui_partial 5.006s
+  alacritty: scrollback 0.040s
+  alacritty: post_idle 5.010s
+  ready 1114.9ms, grid 100x30
+Round 1/3: ghostty
+  ghostty: idle 5.010s
+  ghostty: warm_idle 5.010s
+  ghostty: ascii 0.069s
+  ghostty: truecolor 0.069s
+  ghostty: cjk 0.068s
+  ghostty: emoji 0.066s
+  ghostty: scroll 0.118s
+  ghostty: cursor 0.071s
+  ghostty: latency 1.457s
+  ghostty: loaded_latency 0.083s
+  ghostty: tui_full 5.002s
+  ghostty: tui_partial 5.003s
+  ghostty: scrollback 0.049s
+  ghostty: post_idle 5.010s
+  ready 695.6ms, grid 100x30
+Round 1/3: loomtty
+  loomtty: idle 5.010s
+  loomtty: warm_idle 5.010s
+  loomtty: ascii 0.033s
+  loomtty: truecolor 0.027s
+  loomtty: cjk 0.027s
+  loomtty: emoji 0.025s
+  loomtty: scroll 0.039s
+  loomtty: cursor 0.033s
+  loomtty: latency 1.442s
+  loomtty: loaded_latency 0.030s
+  loomtty: tui_full 5.005s
+  loomtty: tui_partial 5.005s
+  loomtty: scrollback 0.006s
+  loomtty: post_idle 5.010s
+  ready 693.5ms, grid 100x30
+Round 2/3: alacritty
+  alacritty: idle 5.010s
+  alacritty: warm_idle 5.010s
+  alacritty: ascii 0.040s
+  alacritty: truecolor 0.045s
+  alacritty: cjk 0.045s
+  alacritty: emoji 0.041s
+  alacritty: scroll 0.041s
+  alacritty: cursor 0.041s
+  alacritty: latency 1.419s
+  alacritty: loaded_latency 0.039s
+  alacritty: tui_full 5.007s
+  alacritty: tui_partial 5.001s
+  alacritty: scrollback 0.038s
+  alacritty: post_idle 5.010s
+  ready 672.2ms, grid 100x30
+Round 2/3: ghostty
+  ghostty: idle 5.010s
+  ghostty: warm_idle 5.010s
+  ghostty: ascii 0.064s
+  ghostty: truecolor 0.067s
+  ghostty: cjk 0.069s
+  ghostty: emoji 0.065s
+  ghostty: scroll 0.125s
+  ghostty: cursor 0.070s
+  ghostty: latency 1.435s
+  ghostty: loaded_latency 0.079s
+  ghostty: tui_full 5.000s
+  ghostty: tui_partial 5.004s
+  ghostty: scrollback 0.048s
+  ghostty: post_idle 5.010s
+  ready 978.9ms, grid 100x30
+Round 2/3: loomtty
+  loomtty: idle 5.010s
+  loomtty: warm_idle 5.010s
+  loomtty: ascii 0.034s
+  loomtty: truecolor 0.028s
+  loomtty: cjk 0.026s
+  loomtty: emoji 0.024s
+  loomtty: scroll 0.040s
+  loomtty: cursor 0.034s
+  loomtty: latency 1.428s
+  loomtty: loaded_latency 0.030s
+  loomtty: tui_full 5.001s
+  loomtty: tui_partial 5.006s
+  loomtty: scrollback 0.006s
+  loomtty: post_idle 5.010s
+  ready 951.0ms, grid 100x30
+Round 2/3: kitty
+  kitty: idle 5.010s
+  kitty: warm_idle 5.010s
+  kitty: ascii 0.038s
+  kitty: truecolor 0.081s
+  kitty: cjk 0.046s
+  kitty: emoji 0.042s
+  kitty: scroll 0.129s
+  kitty: cursor 0.049s
+  kitty: latency 2.073s
+  kitty: loaded_latency 0.917s
+  kitty: tui_full 5.003s
+  kitty: tui_partial 24.885s
+  kitty: scrollback 0.015s
+  kitty: post_idle 5.010s
+  ready 704.7ms, grid 100x30
+Round 3/3: ghostty
+  ghostty: idle 5.010s
+  ghostty: warm_idle 5.010s
+  ghostty: ascii 0.069s
+  ghostty: truecolor 0.071s
+  ghostty: cjk 0.069s
+  ghostty: emoji 0.066s
+  ghostty: scroll 0.116s
+  ghostty: cursor 0.072s
+  ghostty: latency 1.425s
+  ghostty: loaded_latency 0.083s
+  ghostty: tui_full 5.003s
+  ghostty: tui_partial 5.006s
+  ghostty: scrollback 0.048s
+  ghostty: post_idle 5.010s
+  ready 886.2ms, grid 100x30
+Round 3/3: alacritty
+  alacritty: idle 5.010s
+  alacritty: warm_idle 5.010s
+  alacritty: ascii 0.039s
+  alacritty: truecolor 0.046s
+  alacritty: cjk 0.045s
+  alacritty: emoji 0.044s
+  alacritty: scroll 0.040s
+  alacritty: cursor 0.040s
+  alacritty: latency 1.432s
+  alacritty: loaded_latency 0.038s
+  alacritty: tui_full 5.006s
+  alacritty: tui_partial 5.002s
+  alacritty: scrollback 0.039s
+  alacritty: post_idle 5.010s
+  ready 676.6ms, grid 100x30
+Round 3/3: loomtty
+  loomtty: idle 5.010s
+  loomtty: warm_idle 5.010s
+  loomtty: ascii 0.034s
+  loomtty: truecolor 0.028s
+  loomtty: cjk 0.028s
+  loomtty: emoji 0.025s
+  loomtty: scroll 0.039s
+  loomtty: cursor 0.034s
+  loomtty: latency 1.431s
+  loomtty: loaded_latency 0.031s
+  loomtty: tui_full 5.002s
+  loomtty: tui_partial 5.006s
+  loomtty: scrollback 0.006s
+  loomtty: post_idle 5.010s
+  ready 994.8ms, grid 100x30
+Round 3/3: kitty
+  kitty: idle 5.010s
+  kitty: warm_idle 5.010s
+  kitty: ascii 0.040s
+  kitty: truecolor 0.081s
+  kitty: cjk 0.046s
+  kitty: emoji 0.042s
+  kitty: scroll 0.129s
+  kitty: cursor 0.048s
+  kitty: latency 2.068s
+  kitty: loaded_latency 0.910s
+  kitty: tui_full 5.001s
+  kitty: tui_partial 24.469s
+  kitty: scrollback 0.011s
+  kitty: post_idle 5.010s
+  ready 754.9ms, grid 100x30
+Report: /private/tmp/loom-bench-20261001-full/report.md

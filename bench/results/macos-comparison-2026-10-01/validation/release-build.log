@@ -1,0 +1,9 @@
+   Compiling loom-config v0.2.1 (/Users/linxy/.codex/worktrees/ac67/loomtty/crates/loom-config)
+   Compiling loom-input v0.2.1 (/Users/linxy/.codex/worktrees/ac67/loomtty/crates/loom-input)
+   Compiling loomtty v0.2.1 (/Users/linxy/.codex/worktrees/ac67/loomtty/crates/loom)
+   Compiling loom-render v0.2.1 (/Users/linxy/.codex/worktrees/ac67/loomtty/crates/loom-render)
+   Compiling loom-app v0.1.0 (/Users/linxy/.codex/worktrees/ac67/loomtty/crates/loom-app)
+   Compiling loom-ui v0.2.1 (/Users/linxy/.codex/worktrees/ac67/loomtty/crates/loom-ui)
+   Compiling loom-gpu v0.2.1 (/Users/linxy/.codex/worktrees/ac67/loomtty/crates/loom-gpu)
+   Compiling loomtty-server v0.2.1 (/Users/linxy/.codex/worktrees/ac67/loomtty/crates/loom-server)
+    Finished `release` profile [optimized] target(s) in 10.63s

@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-10-01T15:18:45.318819+00:00",
+  "machine": {
+    "chip": "Apple M6",
+    "macos": "27.0",
+    "memory_bytes": 34359738368,
+    "architecture": "arm64",
+    "python": "3.13.15 (main, Sep  1 2026, 14:05:45) [Clang 22.1.3 ]",
+    "power": "Now drawing from 'AC Power'",
+    "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded"
+  },
+  "settings": {
+    "apps": [
+      "loomtty"
+    ],
+    "rounds": 1,
+    "mib": 8,
+    "columns": 100,
+    "rows": 30,
+    "frames": 300,
+    "latency_samples": 200,
+    "idle_seconds": 5,
+    "seed": 5306,
+    "timeout": 120,
+    "output": "/private/tmp/loom-bench-probe-20261001-calibrated",
+    "loom": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/release/loomtty",
+    "loom_server": "/Users/linxy/.codex/worktrees/macos-native/loomtty/target/release/loomtty-server",
+    "loom_width": 600.0,
+    "loom_height": 392.0,
+    "probe": true
+  },
+  "versions": {
+    "loomtty": {
+      "text": "loomtty 0.2.1",
+      "sha256": "26a47e68892414b2c4714ab0e1b4bfb19ea12b77266ecc24de5b3ed461048d66",
+      "server_sha256": "5ed8af256617f9ddc789453a2444ca908efc71efea88f7b0c11a8e4d06b811df"
+    }
+  },
+  "git_head": "b3216b58f094cf75b32b312af85c7829525ae7f0",
+  "git_status": "",
+  "benchmark_sha256": {
+    "macos_bench.py": "1ac2343f0a81419e8289a241c40c5d539a78bac52563a60665c1dbe0187d019f",
+    "terminal_workload.py": "9c25ef2e0e677f6a797c962804692473230008ac8bee39731dff8ac6ba13c426"
+  },
+  "runs": [
+    {
+      "app": "loomtty",
+      "round": 0,
+      "phases": [],
+      "config": "[font]\nfamily = \"Menlo\"\nsize = 10.0\ndisable_ligatures = \"always\"\n[window]\nwidth = 600.0\nheight = 392.0\ntitle = \"loom benchmark\"\n[appearance]\npadding = 0.0\nborder_width = 0.0\ncolumn_gap = 0.0\n[statusbar]\npadding_ratio = 0.0\n[terminal]\nshell = \"/private/tmp/loom-bench-probe-20261001-calibrated/r0-loomtty/worker.sh\"\ndefault_cols = 100\ndefault_rows = 30\ncursor_blink = false\nscrollback_lines = 10000\n[render]\nbackend = \"blade\"\n",
+      "ready": {
+        "pid": 24375,
+        "ppid": 24373,
+        "ready_ns": 10316443941416,
+        "columns": 100,
+        "rows": 29,
+        "term": "xterm-256color",
+        "term_program": "loomtty"
+      },
+      "startup_ms": 429.046625,
+      "processes": {
+        "server": 24373,
+        "client": 24374
+      },
+      "error": "loomtty grid is 100x29; expected 100x30",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/linxy/.codex/worktrees/ac67/loomtty/bench/macos_bench.py\", line 340, in run_one\n    raise RuntimeError(f\"{app} grid is {ready['columns']}x{ready['rows']}; expected {args.columns}x{args.rows}\")\nRuntimeError: loomtty grid is 100x29; expected 100x30\n",
+      "display": {
+        "cell_width": 6.0,
+        "cell_height": 12.0,
+        "dpi_scale": 1.0
+      }
+    }
+  ]
+}

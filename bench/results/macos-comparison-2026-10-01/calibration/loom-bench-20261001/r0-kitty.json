@@ -1,0 +1,239 @@
+{
+  "app": "kitty",
+  "round": 0,
+  "phases": [
+    {
+      "name": "idle",
+      "seconds": 5.010117833,
+      "resources": {
+        "sample_seconds": 5.291721540999788,
+        "cpu_seconds": 0.003395000000000009,
+        "cpu_percent_one_core": 0.06415681501182273,
+        "peak_rss_mib": 118.921875,
+        "peak_footprint_mib": 56.64167785644531,
+        "end_rss_mib": 118.765625,
+        "end_footprint_mib": 56.45417785644531,
+        "wakeups": 11,
+        "components": {
+          "kitty": {
+            "cpu_seconds": 0.003395000000000009,
+            "end_rss_mib": 118.765625,
+            "end_footprint_mib": 56.45417785644531
+          }
+        }
+      },
+      "warmup": false
+    },
+    {
+      "name": "ascii",
+      "bytes": 65549,
+      "sha256": "185947b23231006364b6b63c627a861e1a54b5e0a8713d4c25b14604f7251dce",
+      "mib_per_second": 19.859914586299404,
+      "seconds": 0.003147667,
+      "resources": {
+        "sample_seconds": 0.28777400000035414,
+        "cpu_seconds": 0.0006786666666666608,
+        "cpu_percent_one_core": 0.23583321170982285,
+        "peak_rss_mib": 119.0625,
+        "peak_footprint_mib": 56.68855285644531,
+        "end_rss_mib": 119.0625,
+        "end_footprint_mib": 56.68855285644531,
+        "wakeups": 37,
+        "components": {
+          "kitty": {
+            "cpu_seconds": 0.0006786666666666608,
+            "end_rss_mib": 119.0625,
+            "end_footprint_mib": 56.68855285644531
+          }
+        }
+      },
+      "warmup": true
+    },
+    {
+      "name": "truecolor",
+      "bytes": 66804,
+      "sha256": "cb1febaebb07afdb015b431e086111e71542aa21afd6eb0443b4a4e778aec8e2",
+      "mib_per_second": 18.03879136517754,
+      "seconds": 0.003531792,
+      "resources": {
+        "sample_seconds": 0.29287058299996716,
+        "cpu_seconds": 0.001031291666666656,
+        "cpu_percent_one_core": 0.3521322135199805,
+        "peak_rss_mib": 119.0625,
+        "peak_footprint_mib": 56.68855285644531,
+        "end_rss_mib": 119.0625,
+        "end_footprint_mib": 56.68855285644531,
+        "wakeups": 36,
+        "components": {
+          "kitty": {
+            "cpu_seconds": 0.001031291666666656,
+            "end_rss_mib": 119.0625,
+            "end_footprint_mib": 56.68855285644531
+          }
+        }
+      },
+      "warmup": true
+    },
+    {
+      "name": "cjk",
+      "bytes": 65560,
+      "sha256": "0736355a3277dfb30dcbd59f98bbe23e07571de7b125d4f62876a4f0190dff21",
+      "mib_per_second": 18.179665704881284,
+      "seconds": 0.003439166,
+      "resources": {
+        "sample_seconds": 0.2797058329997526,
+        "cpu_seconds": 0.000852416666666661,
+        "cpu_percent_one_core": 0.3047546980071077,
+        "peak_rss_mib": 119.09375,
+        "peak_footprint_mib": 56.68855285644531,
+        "end_rss_mib": 119.09375,
+        "end_footprint_mib": 56.68855285644531,
+        "wakeups": 48,
+        "components": {
+          "kitty": {
+            "cpu_seconds": 0.000852416666666661,
+            "end_rss_mib": 119.09375,
+            "end_footprint_mib": 56.68855285644531
+          }
+        }
+      },
+      "warmup": true
+    },
+    {
+      "name": "emoji",
+      "bytes": 65538,
+      "sha256": "ff9f8249e81d5ff126fd6248fe9384f1aed19262f848eef4b497b54ae3be98a4",
+      "mib_per_second": 19.74705812523449,
+      "seconds": 0.003165125,
+      "resources": {
+        "sample_seconds": 0.2779185839990532,
+        "cpu_seconds": 0.000598833333333354,
+        "cpu_percent_one_core": 0.215470777346575,
+        "peak_rss_mib": 119.109375,
+        "peak_footprint_mib": 56.68855285644531,
+        "end_rss_mib": 119.109375,
+        "end_footprint_mib": 56.68855285644531,
+        "wakeups": 58,
+        "components": {
+          "kitty": {
+            "cpu_seconds": 0.000598833333333354,
+            "end_rss_mib": 119.109375,
+            "end_footprint_mib": 56.68855285644531
+          }
+        }
+      },
+      "warmup": true
+    },
+    {
+      "name": "scroll",
+      "bytes": 66048,
+      "sha256": "f0471da69e2b60fe1f8633a2572874d4d6952d9da164197994eb069d7bc5ddb7",
+      "mib_per_second": 15.752323712458105,
+      "seconds": 0.003998666,
+      "resources": {
+        "sample_seconds": 0.29288425000049756,
+        "cpu_seconds": 0.001492208333333328,
+        "cpu_percent_one_core": 0.5094873941943935,
+        "peak_rss_mib": 119.109375,
+        "peak_footprint_mib": 56.68855285644531,
+        "end_rss_mib": 119.109375,
+        "end_footprint_mib": 56.68855285644531,
+        "wakeups": 42,
+        "components": {
+          "kitty": {
+            "cpu_seconds": 0.001492208333333328,
+            "end_rss_mib": 119.109375,
+            "end_footprint_mib": 56.68855285644531
+          }
+        }
+      },
+      "warmup": true
+    },
+    {
+      "name": "cursor",
+      "bytes": 65820,
+      "sha256": "04947cf4ddc069f8e2ac663ff135a2ab96efff9505517f8b5582b984f22e9622",
+      "mib_per_second": 19.516270233706877,
+      "seconds": 0.003216334,
+      "resources": {
+        "sample_seconds": 0.2947589169998537,
+        "cpu_seconds": 0.0007113749999999863,
+        "cpu_percent_one_core": 0.24134129926944312,
+        "peak_rss_mib": 119.109375,
+        "peak_footprint_mib": 56.68855285644531,
+        "end_rss_mib": 119.109375,
+        "end_footprint_mib": 56.68855285644531,
+        "wakeups": 64,
+        "components": {
+          "kitty": {
+            "cpu_seconds": 0.0007113749999999863,
+            "end_rss_mib": 119.109375,
+            "end_footprint_mib": 56.68855285644531
+          }
+        }
+      },
+      "warmup": true
+    },
+    {
+      "name": "warm_idle",
+      "seconds": 5.01005225,
+      "resources": {
+        "sample_seconds": 5.283599624999624,
+        "cpu_seconds": 0.002963375000000018,
+        "cpu_percent_one_core": 0.05608628984638912,
+        "peak_rss_mib": 119.109375,
+        "peak_footprint_mib": 56.68855285644531,
+        "end_rss_mib": 118.75,
+        "end_footprint_mib": 53.32917785644531,
+        "wakeups": 4,
+        "components": {
+          "kitty": {
+            "cpu_seconds": 0.002963375000000018,
+            "end_rss_mib": 118.75,
+            "end_footprint_mib": 53.32917785644531
+          }
+        }
+      },
+      "warmup": false
+    },
+    {
+      "name": "ascii",
+      "bytes": 8388656,
+      "sha256": "2bdf9c247aebd067304a55b61d3d720b41c82b53f66315b57d35b2a29d1ecd7e",
+      "mib_per_second": 210.3464674765517,
+      "seconds": 0.038032708,
+      "resources": {
+        "sample_seconds": 0.3274535000000469,
+        "cpu_seconds": 0.03137720833333332,
+        "cpu_percent_one_core": 9.582187496340344,
+        "peak_rss_mib": 122.0625,
+        "peak_footprint_mib": 56.64167785644531,
+        "end_rss_mib": 122.0625,
+        "end_footprint_mib": 56.64167785644531,
+        "wakeups": 499,
+        "components": {
+          "kitty": {
+            "cpu_seconds": 0.03137720833333332,
+            "end_rss_mib": 122.0625,
+            "end_footprint_mib": 56.64167785644531
+          }
+        }
+      },
+      "warmup": false
+    }
+  ],
+  "config": "font_family Menlo\nfont_size 10.0\ndisable_ligatures always\nremember_window_size no\ninitial_window_width 100c\ninitial_window_height 30c\nwindow_padding_width 0\nwindow_margin_width 0\ncursor_blink_interval 0\nscrollback_lines 10000\nshell_integration disabled\nconfirm_os_window_close 0\nmacos_quit_when_last_window_closed yes\nbackground_opacity 1.0\n",
+  "ready": {
+    "pid": 24399,
+    "ppid": 24396,
+    "ready_ns": 10329858448333,
+    "columns": 100,
+    "rows": 30,
+    "term": "xterm-kitty",
+    "term_program": null
+  },
+  "startup_ms": 522.18575,
+  "processes": {
+    "kitty": 24396
+  }
+}

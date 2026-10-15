@@ -1,0 +1,27 @@
+{
+  "app": "loomtty",
+  "round": 0,
+  "phases": [],
+  "config": "[font]\nfamily = \"Menlo\"\nsize = 10.0\ndisable_ligatures = \"always\"\n[window]\nwidth = 600.0\nheight = 392.0\ntitle = \"loom benchmark\"\n[appearance]\npadding = 0.0\nborder_width = 0.0\ncolumn_gap = 0.0\n[statusbar]\npadding_ratio = 0.0\n[terminal]\nshell = \"/private/tmp/loom-bench-probe-20261001-calibrated/r0-loomtty/worker.sh\"\ndefault_cols = 100\ndefault_rows = 30\ncursor_blink = false\nscrollback_lines = 10000\n[render]\nbackend = \"blade\"\n",
+  "ready": {
+    "pid": 24375,
+    "ppid": 24373,
+    "ready_ns": 10316443941416,
+    "columns": 100,
+    "rows": 29,
+    "term": "xterm-256color",
+    "term_program": "loomtty"
+  },
+  "startup_ms": 429.046625,
+  "processes": {
+    "server": 24373,
+    "client": 24374
+  },
+  "error": "loomtty grid is 100x29; expected 100x30",
+  "traceback": "Traceback (most recent call last):\n  File \"/Users/linxy/.codex/worktrees/ac67/loomtty/bench/macos_bench.py\", line 340, in run_one\n    raise RuntimeError(f\"{app} grid is {ready['columns']}x{ready['rows']}; expected {args.columns}x{args.rows}\")\nRuntimeError: loomtty grid is 100x29; expected 100x30\n",
+  "display": {
+    "cell_width": 6.0,
+    "cell_height": 12.0,
+    "dpi_scale": 1.0
+  }
+}

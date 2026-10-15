@@ -31,7 +31,12 @@ specific builds. All other options are listed by `--help`. The output directory
 must be new/empty, so previous runs cannot accidentally be reused as new results.
 No Python packages or root permissions are required by the benchmark runner.
 
-Latest comparison: [four terminals, three valid launches each (中文)](results/macos-comparison-2026-09-30/summary.zh-CN.md),
+Latest rerun: [2026-10-01, four terminals, three valid launches each (中文)](results/macos-comparison-2026-10-01/summary.zh-CN.md),
+with [all metrics](results/macos-comparison-2026-10-01/report.md), raw data, logs,
+and script snapshots. Current native loomtty used `--loom-width 600 --loom-height 400`
+on the measured 1× display. Probe again before reusing older window calibrations.
+
+Previous comparison: [2026-09-30, four terminals (中文)](results/macos-comparison-2026-09-30/summary.zh-CN.md),
 with [all metrics](results/macos-comparison-2026-09-30/report.md), raw data and logs.
 This report preserves startup/build-interference failures and identifies the
 supplemental runs. Read the Kitty latency/visibility caveat before comparing CPU.

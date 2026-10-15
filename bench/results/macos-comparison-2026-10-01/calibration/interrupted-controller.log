@@ -1,0 +1,16 @@
+Round 1/3: kitty
+  kitty: idle 5.010s
+  kitty: warm_idle 5.010s
+  kitty: ascii 0.038s
+Traceback (most recent call last):
+  File "/Users/linxy/.codex/worktrees/ac67/loomtty/bench/macos_bench.py", line 545, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/Users/linxy/.codex/worktrees/ac67/loomtty/bench/macos_bench.py", line 528, in main
+    run = run_one(app, round_index, args.output / f"r{round_index}-{app}", args)
+  File "/Users/linxy/.codex/worktrees/ac67/loomtty/bench/macos_bench.py", line 355, in run_one
+    phase = measure_phase(directory, processes, sequence, command, args.timeout)
+  File "/Users/linxy/.codex/worktrees/ac67/loomtty/bench/macos_bench.py", line 264, in measure_phase
+    time.sleep(.02)
+    ~~~~~~~~~~^^^^^
+KeyboardInterrupt

@@ -1,0 +1,8 @@
+{
+  "git_head": "b3216b58f094cf75b32b312af85c7829525ae7f0",
+  "build_command": "cargo build --release -p loomtty -p loomtty-server --features loomtty/macos-app-intents",
+  "binaries": {
+    "loomtty": "26a47e68892414b2c4714ab0e1b4bfb19ea12b77266ecc24de5b3ed461048d66",
+    "loomtty-server": "5ed8af256617f9ddc789453a2444ca908efc71efea88f7b0c11a8e4d06b811df"
+  }
+}

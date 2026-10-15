@@ -1,0 +1,14 @@
+[general]
+live_config_reload = false
+[window]
+dimensions = { columns = 100, lines = 30 }
+padding = { x = 0, y = 0 }
+dynamic_padding = false
+opacity = 1.0
+[font]
+normal = { family = "Menlo", style = "Regular" }
+size = 10.0
+[scrolling]
+history = 10000
+[cursor]
+style = { shape = "Block", blinking = "Never" }

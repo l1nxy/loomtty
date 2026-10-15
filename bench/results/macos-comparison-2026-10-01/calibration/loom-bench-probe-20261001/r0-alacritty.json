@@ -1,0 +1,34 @@
+{
+  "app": "alacritty",
+  "round": 0,
+  "phases": [],
+  "config": "[general]\nlive_config_reload = false\n[window]\ndimensions = { columns = 100, lines = 30 }\npadding = { x = 0, y = 0 }\ndynamic_padding = false\nopacity = 1.0\n[font]\nnormal = { family = \"Menlo\", style = \"Regular\" }\nsize = 10.0\n[scrolling]\nhistory = 10000\n[cursor]\nstyle = { shape = \"Block\", blinking = \"Never\" }\n",
+  "ready": {
+    "pid": 24348,
+    "ppid": 24346,
+    "ready_ns": 10289362961333,
+    "columns": 100,
+    "rows": 30,
+    "term": "xterm-256color",
+    "term_program": null
+  },
+  "startup_ms": 495.515125,
+  "processes": {
+    "alacritty": 24346
+  },
+  "probe": {
+    "cpu_seconds": 0.1259305,
+    "rss_mib": 98.65625,
+    "footprint_mib": 41.532325744628906,
+    "wakeups": 27,
+    "components": {
+      "alacritty": {
+        "identity": 246932831518,
+        "cpu_seconds": 0.1259305,
+        "rss_mib": 98.65625,
+        "footprint_mib": 41.532325744628906,
+        "wakeups": 27
+      }
+    }
+  }
+}

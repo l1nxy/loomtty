@@ -837,10 +837,9 @@ pub enum NewPaneWidth {
     Full,
 }
 
-/// Resolved new-pane sizing policy. Distilled from [`LayoutConfig`] once
-/// (via [`LayoutConfig::column_sizing`]) so the server can carry a small
-/// `Copy` value and consult it at pane-creation time against the live
-/// viewport width, rather than holding the whole config.
+/// New-pane sizing policy distilled from [`LayoutConfig`]. GUI clients resolve
+/// this against their logical window width when requesting a new column. The
+/// server also keeps a default for requests without an explicit width.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ColumnSizing {
     /// Constant width — an explicit `default_column_width` override, or
@@ -851,8 +850,8 @@ pub enum ColumnSizing {
 }
 
 impl ColumnSizing {
-    /// Width a new pane should take given the current viewport pixel
-    /// width.
+    /// Width a new pane should take at the current window width. GUI clients
+    /// pass logical pixels so the threshold is independent of display scaling.
     pub fn width_at(self, viewport_w: f64) -> PresetWidth {
         match self {
             ColumnSizing::Fixed(w) => w,
@@ -883,7 +882,7 @@ pub struct LayoutConfig {
     pub new_pane_sizing: NewPaneSizing,
     /// In `Fixed` mode, whether a new pane is half- or full-width.
     pub new_pane_width: NewPaneWidth,
-    /// In `Dynamic` mode, the window pixel width below which a new pane
+    /// In `Dynamic` mode, the logical window width below which a new pane
     /// opens full-width (at or above it, half-width).
     pub dynamic_fullscreen_max_width: f64,
 }

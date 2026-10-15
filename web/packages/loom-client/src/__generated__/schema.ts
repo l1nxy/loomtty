@@ -110,13 +110,18 @@ export const REGISTRY: Record<string, ContainerSpec> = {
     { name: "CapturePane", ordinal: 44, shape: { kind: "struct", fields: [{ name: "session_name", jsName: "sessionName", type: { kind: "str" } }, { name: "pane_id", jsName: "paneId", type: { kind: "u64" } }, { name: "opts", jsName: "opts", type: { kind: "ref", name: "CapturePaneOpts" } }, ] } },
     { name: "ListPrompts", ordinal: 45, shape: { kind: "struct", fields: [{ name: "session_name", jsName: "sessionName", type: { kind: "str" } }, { name: "pane_id", jsName: "paneId", type: { kind: "u64" } }, ] } },
     { name: "JumpToPrompt", ordinal: 46, shape: { kind: "struct", fields: [{ name: "session_name", jsName: "sessionName", type: { kind: "str" } }, { name: "pane_id", jsName: "paneId", type: { kind: "u64" } }, { name: "from_offset", jsName: "fromOffset", type: { kind: "u32" } }, { name: "direction", jsName: "direction", type: { kind: "i8" } }, ] } },
-    { name: "CreatePaneAt", ordinal: 47, shape: { kind: "struct", fields: [{ name: "pane_id", jsName: "paneId", type: { kind: "u64" } }, { name: "below", jsName: "below", type: { kind: "bool" } }, { name: "request_id", jsName: "requestId", type: { kind: "u64" } }, ] } },
+    { name: "CreatePaneAt", ordinal: 47, shape: { kind: "struct", fields: [{ name: "pane_id", jsName: "paneId", type: { kind: "u64" } }, { name: "below", jsName: "below", type: { kind: "bool" } }, { name: "request_id", jsName: "requestId", type: { kind: "u64" } }, { name: "width", jsName: "width", type: { kind: "option", of: { kind: "ref", name: "ColumnWidthSpec" } } }, ] } },
+    { name: "CreatePaneWithWidth", ordinal: 48, shape: { kind: "struct", fields: [{ name: "width", jsName: "width", type: { kind: "ref", name: "ColumnWidthSpec" } }, ] } },
   ] },
   ColumnState: { kind: "struct", fields: [
     { name: "tiles", jsName: "tiles", type: { kind: "seq", of: { kind: "ref", name: "TileState" } } },
     { name: "active_tile_idx", jsName: "activeTileIdx", type: { kind: "u64" } },
     { name: "width_proportion", jsName: "widthProportion", type: { kind: "f64" } },
     { name: "width_fixed_px", jsName: "widthFixedPx", type: { kind: "option", of: { kind: "f64" } } },
+  ] },
+  ColumnWidthSpec: { kind: "struct", fields: [
+    { name: "proportion", jsName: "proportion", type: { kind: "f64" } },
+    { name: "fixed_px", jsName: "fixedPx", type: { kind: "option", of: { kind: "f64" } } },
   ] },
   ImageDisplayMode: { kind: "enum", variants: [
     { name: "Cells", ordinal: 0, shape: { kind: "unit-struct" } },

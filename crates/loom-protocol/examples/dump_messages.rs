@@ -430,8 +430,19 @@ fn client_fixtures() -> Vec<(&'static str, String, String)> {
                 pane_id: 42,
                 below: true,
                 request_id: 9001,
+                width: None,
             },
-            r#"{ tag: "CreatePaneAt", paneId: 42n, below: true, requestId: 9001n }"#,
+            r#"{ tag: "CreatePaneAt", paneId: 42n, below: true, requestId: 9001n, width: null }"#,
+        ),
+        (
+            "Full-width pane creation",
+            ClientMessage::CreatePaneWithWidth {
+                width: ColumnWidthSpec {
+                    proportion: 1.0,
+                    fixed_px: None,
+                },
+            },
+            r#"{ tag: "CreatePaneWithWidth", width: { proportion: 1, fixedPx: null } }"#,
         ),
         (
             "Input bytes",

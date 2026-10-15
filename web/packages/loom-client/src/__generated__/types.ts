@@ -69,13 +69,19 @@ export type ClientMessage =
   | { tag: "CapturePane"; sessionName: string; paneId: bigint; opts: CapturePaneOpts }
   | { tag: "ListPrompts"; sessionName: string; paneId: bigint }
   | { tag: "JumpToPrompt"; sessionName: string; paneId: bigint; fromOffset: number; direction: number }
-  | { tag: "CreatePaneAt"; paneId: bigint; below: boolean; requestId: bigint };
+  | { tag: "CreatePaneAt"; paneId: bigint; below: boolean; requestId: bigint; width: (ColumnWidthSpec | null) }
+  | { tag: "CreatePaneWithWidth"; width: ColumnWidthSpec };
 
 export interface ColumnState {
   tiles: (TileState)[];
   activeTileIdx: bigint;
   widthProportion: number;
   widthFixedPx: (number | null);
+}
+
+export interface ColumnWidthSpec {
+  proportion: number;
+  fixedPx: (number | null);
 }
 
 export type ImageDisplayMode =

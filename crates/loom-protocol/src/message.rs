@@ -324,6 +324,13 @@ const _: () = assert!(size_of::<FullPaneSyncHeader>() == 45);
 
 // ─── Wire messages ─���─────────────────────��──────────────────────────
 
+/// A column width resolved by the client from its current settings and window size.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ColumnWidthSpec {
+    pub proportion: f64,
+    pub fixed_px: Option<f64>,
+}
+
 /// Messages sent from client to server (msgpack encoded).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMessage {
@@ -542,6 +549,13 @@ pub enum ClientMessage {
         pane_id: u64,
         below: bool,
         request_id: u64,
+        #[serde(default)]
+        width: Option<ColumnWidthSpec>,
+    },
+    /// Create a column using the requesting client's current sizing policy.
+    /// Keep CreatePane for clients that use the server's configured default.
+    CreatePaneWithWidth {
+        width: ColumnWidthSpec,
     },
 }
 

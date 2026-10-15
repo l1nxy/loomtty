@@ -306,6 +306,7 @@ impl MacApplication {
                         pane_id,
                         below: request.direction == "down",
                         request_id: token,
+                        width: Some(app.new_column_width()),
                     },
                 )?;
                 if source == Source::AppIntents {

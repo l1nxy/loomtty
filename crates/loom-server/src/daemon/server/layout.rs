@@ -3,6 +3,19 @@ use loom_protocol::message::*;
 
 use super::{Server, ServerResponse};
 
+fn requested_column_width(width: ColumnWidthSpec) -> Option<ColumnWidth> {
+    match width.fixed_px {
+        Some(px) if px.is_finite() && px > 0.0 && px <= 16384.0 => Some(ColumnWidth::Fixed(px)),
+        None if width.proportion.is_finite()
+            && width.proportion > 0.0
+            && width.proportion <= 1.0 =>
+        {
+            Some(ColumnWidth::Proportion(width.proportion))
+        }
+        _ => None,
+    }
+}
+
 impl Server {
     pub(super) fn handle_layout(
         &mut self,
@@ -16,6 +29,7 @@ impl Server {
                 pane_id,
                 below,
                 request_id,
+                width,
             } => {
                 let result = if let Some(mut session) = self.sessions.remove(session_name) {
                     let result = if !session.focus_pane(pane_id) {
@@ -27,7 +41,13 @@ impl Server {
                                 &mut self.clients,
                             )
                         } else {
-                            session.create_pane(&mut self.next_pane_id, &mut self.clients)
+                            session.create_pane_with_opts(
+                                &mut self.next_pane_id,
+                                &mut self.clients,
+                                None,
+                                None,
+                                width.and_then(requested_column_width),
+                            )
                         };
                         result
                             .inspect(|&id| {
@@ -70,9 +90,19 @@ impl Server {
                     },
                 ));
             }
-            ClientMessage::CreatePane => {
+            ClientMessage::CreatePane | ClientMessage::CreatePaneWithWidth { .. } => {
+                let width = match msg {
+                    ClientMessage::CreatePaneWithWidth { width } => requested_column_width(width),
+                    _ => None,
+                };
                 if let Some(mut session) = self.sessions.remove(session_name) {
-                    match session.create_pane(&mut self.next_pane_id, &mut self.clients) {
+                    match session.create_pane_with_opts(
+                        &mut self.next_pane_id,
+                        &mut self.clients,
+                        None,
+                        None,
+                        width,
+                    ) {
                         Ok(id) => Self::create_pane_and_sync_layout(
                             &mut session,
                             &mut self.clients,

@@ -1802,6 +1802,7 @@ fn targeted_split_ignores_current_focus_and_returns_only_to_requester(
             pane_id: target,
             below: true,
             request_id: 812,
+            width: None,
         },
         1,
     );
@@ -1849,6 +1850,7 @@ fn targeted_split_rejects_missing_pane_without_creating_another(
             pane_id: u64::MAX,
             below: false,
             request_id: 813,
+            width: None,
         },
         1,
     );
@@ -1864,4 +1866,97 @@ fn targeted_split_rejects_missing_pane_without_creating_another(
             }
         )
     )));
+}
+
+#[rstest]
+fn requested_pane_width_overrides_stale_server_config(mut server_with_session: (Server, String)) {
+    use loom_layout::column::ColumnWidth;
+    let (ref mut server, ref name) = server_with_session;
+    // A 2x screen: the physical viewport exceeds the threshold, but the
+    // client's logical window is small and it requests a full-width pane.
+    server.handle_message(
+        ClientMessage::Resize {
+            cols: 0,
+            rows: 0,
+            width: 1600,
+            height: 1200,
+            cell_width: 16.0,
+            cell_height: 32.0,
+        },
+        1,
+    );
+    server.handle_message(
+        ClientMessage::CreatePaneWithWidth {
+            width: ColumnWidthSpec {
+                proportion: 1.0,
+                fixed_px: None,
+            },
+        },
+        1,
+    );
+    let session = &server.sessions[name];
+    let workspace = session.workspaces.active();
+    assert_eq!(workspace.columns.len(), 2);
+    for column in &workspace.columns {
+        assert_eq!(column.width, ColumnWidth::Proportion(1.0));
+        let expected = session.pane_grid_size_with_cells(
+            workspace.inner_viewport_width(),
+            workspace.inner_height(),
+            16.0,
+            32.0,
+        );
+        assert_eq!(session.pane_grid_dims(column.active_pane_id()), expected);
+    }
+
+    // Another client's default must not inherit this request's sizing choice.
+    server.clients.insert(2, test_client(2, name));
+    server.handle_message(ClientMessage::CreatePane, 2);
+    assert_eq!(
+        server.sessions[name].workspaces.active().columns[2].width,
+        ColumnWidth::Proportion(0.5)
+    );
+
+    let target = server.sessions[name].workspaces.active().columns[0].active_pane_id();
+    server.handle_message(
+        ClientMessage::CreatePaneAt {
+            pane_id: target,
+            below: false,
+            request_id: 814,
+            width: Some(ColumnWidthSpec {
+                proportion: 0.0,
+                fixed_px: Some(640.0),
+            }),
+        },
+        1,
+    );
+    assert_eq!(
+        server.sessions[name].workspaces.active().columns[1].width,
+        ColumnWidth::Fixed(640.0)
+    );
+}
+
+#[rstest]
+#[case(f64::NAN, None)]
+#[case(-1.0, None)]
+#[case(1.0, Some(f64::INFINITY))]
+#[case(1.0, Some(-1.0))]
+fn invalid_requested_pane_width_uses_server_default(
+    mut server_with_session: (Server, String),
+    #[case] proportion: f64,
+    #[case] fixed_px: Option<f64>,
+) {
+    let (ref mut server, ref name) = server_with_session;
+    server.handle_message(
+        ClientMessage::CreatePaneWithWidth {
+            width: ColumnWidthSpec {
+                proportion,
+                fixed_px,
+            },
+        },
+        1,
+    );
+    assert_eq!(
+        server.sessions[name].workspaces.active().columns[1].width,
+        loom_layout::column::ColumnWidth::Proportion(0.5)
+    );
 }

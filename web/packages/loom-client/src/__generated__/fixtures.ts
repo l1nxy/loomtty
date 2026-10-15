@@ -16,7 +16,7 @@ export interface Fixture<T> { name: string; hex: string; value: T; }
 export const WIRE_PROTOCOL_VERSION = 1;
 export const SERVER_HELLO_LEN = 8;
 /** Packed semver (major<<24 | minor<<16 | patch) of loom-protocol at codegen time. */
-export const LOOM_PKG_VERSION = 0x00010000;
+export const LOOM_PKG_VERSION = 0x00020001;
 
 export interface HelloFixture {
   name: string;
@@ -31,13 +31,14 @@ export interface HelloFixture {
 }
 
 export const HELLO_FIXTURES: HelloFixture[] = [
-  { name: "main", hex: "4c4f4f4d000001000104006d61696e00050000d00200000000184100009041", hello: { sessionName: "main", width: 1280, height: 720, cellWidth: 9.5, cellHeight: 18.0 } },
-  { name: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", hex: "4c4f4f4d00000100014000616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612003000058020000000020410000a041", hello: { sessionName: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", width: 800, height: 600, cellWidth: 10.0, cellHeight: 20.0 } },
-  { name: "fresh-fox-12", hex: "4c4f4f4d00000100010c0066726573682d666f782d313280070000380400000000004100008041", hello: { sessionName: "fresh-fox-12", width: 1920, height: 1080, cellWidth: 8.0, cellHeight: 16.0 } },
+  { name: "main", hex: "4c4f4f4d010002000104006d61696e00050000d00200000000184100009041", hello: { sessionName: "main", width: 1280, height: 720, cellWidth: 9.5, cellHeight: 18.0 } },
+  { name: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", hex: "4c4f4f4d01000200014000616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612003000058020000000020410000a041", hello: { sessionName: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", width: 800, height: 600, cellWidth: 10.0, cellHeight: 20.0 } },
+  { name: "fresh-fox-12", hex: "4c4f4f4d01000200010c0066726573682d666f782d313280070000380400000000004100008041", hello: { sessionName: "fresh-fox-12", width: 1920, height: 1080, cellWidth: 8.0, cellHeight: 16.0 } },
 ];
 
 export const CLIENT_FIXTURES: Fixture<ClientMessage>[] = [
-  { name: "Targeted pane creation", hex: "81ac43726561746550616e654174932ac3cd2329", value: { tag: "CreatePaneAt", paneId: 42n, below: true, requestId: 9001n } },
+  { name: "Targeted pane creation", hex: "81ac43726561746550616e654174942ac3cd2329c0", value: { tag: "CreatePaneAt", paneId: 42n, below: true, requestId: 9001n, width: null } },
+  { name: "Full-width pane creation", hex: "81b343726561746550616e655769746857696474689192cb3ff0000000000000c0", value: { tag: "CreatePaneWithWidth", width: { proportion: 1, fixedPx: null } } },
   { name: "Input bytes", hex: "81a5496e707574932a9361626307", value: { tag: "Input", paneId: 42n, data: new Uint8Array([0x61, 0x62, 0x63]), inputSeq: 7n } },
   { name: "Ack u64", hex: "81a341636b91cd3039", value: { tag: "Ack", generation: 12345n } },
   { name: "Attach (unit)", hex: "a6417474616368", value: { tag: "Attach" } },

@@ -1166,8 +1166,58 @@ impl App {
         self.core.preset_widths()
     }
 
-    /// Delegate: Send a message to the server.
+    /// Resolve sizing at creation time so settings edits and DPI/window changes
+    /// apply even when the daemon was started with an older configuration.
+    pub(crate) fn new_column_width(&self) -> loom_protocol::message::ColumnWidthSpec {
+        use loom_config::config::PresetWidth;
+        use loom_protocol::message::ColumnWidthSpec;
+
+        let logical_width = if let Some(window) = &self.window {
+            window
+                .inner_size()
+                .to_logical::<f64>(window.scale_factor())
+                .width
+        } else {
+            let window_width = self.core.workspaces.view_size.width + self.total_chrome_width();
+            window_width as f64 / self.dpi_scale
+        };
+        match self
+            .core
+            .config
+            .layout
+            .column_sizing()
+            .width_at(logical_width)
+        {
+            PresetWidth::Proportion { proportion } => ColumnWidthSpec {
+                proportion,
+                fixed_px: None,
+            },
+            PresetWidth::Fixed { fixed } => ColumnWidthSpec {
+                proportion: 0.0,
+                fixed_px: Some(fixed),
+            },
+        }
+    }
+
+    /// Send a message, attaching the live sizing choice to column creation.
     pub fn send(&self, msg: ClientMessage) {
+        let msg = match msg {
+            ClientMessage::CreatePane => ClientMessage::CreatePaneWithWidth {
+                width: self.new_column_width(),
+            },
+            ClientMessage::CreatePaneAt {
+                pane_id,
+                below,
+                request_id,
+                width,
+            } => ClientMessage::CreatePaneAt {
+                pane_id,
+                below,
+                request_id,
+                width: width.or_else(|| Some(self.new_column_width())),
+            },
+            msg => msg,
+        };
         self.core.send(msg);
     }
 

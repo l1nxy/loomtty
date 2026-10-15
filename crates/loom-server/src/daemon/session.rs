@@ -129,7 +129,7 @@ impl Session {
         next_pane_id: &mut u64,
         clients: &mut HashMap<u64, ClientState>,
     ) -> Result<u64> {
-        self.create_pane_with_opts(next_pane_id, clients, None, None)
+        self.create_pane_with_opts(next_pane_id, clients, None, None, None)
     }
 
     /// Initial column width for a newly opened pane, applying the
@@ -145,20 +145,22 @@ impl Session {
         }
     }
 
-    /// Create a new pane with an optional command and/or working directory.
+    /// Create a pane with optional command, working directory, and client width.
+    /// An explicit width applies only to this creation, not the session default.
     pub(crate) fn create_pane_with_opts(
         &mut self,
         next_pane_id: &mut u64,
         clients: &mut HashMap<u64, ClientState>,
         command: Option<&str>,
         cwd: Option<&std::path::Path>,
+        column_width: Option<ColumnWidth>,
     ) -> Result<u64> {
         let id = *next_pane_id;
         *next_pane_id += 1;
         // Compute initial size from the column's actual width (not full viewport)
         let vw = self.workspaces.view_size.width;
         let vh = self.workspaces.view_size.height;
-        let col_width = self.resolved_column_width();
+        let col_width = column_width.unwrap_or_else(|| self.resolved_column_width());
         let col_px = match col_width {
             ColumnWidth::Proportion(p) => (vw as f64 * p) as f32,
             ColumnWidth::Fixed(px) => px as f32,
@@ -195,8 +197,7 @@ impl Session {
         pane.init_colors(&self.terminal_colors);
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
-        let col_w = self.resolved_column_width();
-        self.workspaces.active_mut().add_column_right(id, col_w);
+        self.workspaces.active_mut().add_column_right(id, col_width);
         Self::mark_full_damage(clients, &self.session_name, id);
         Ok(id)
     }

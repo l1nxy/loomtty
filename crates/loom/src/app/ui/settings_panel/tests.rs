@@ -142,6 +142,127 @@ fn settings_control_set_enum_changes_in_memory() {
 }
 
 #[test]
+fn dynamic_pane_sizing_uses_live_settings_and_logical_window_width() {
+    use loom_input::action::Action;
+    use loom_protocol::message::{ClientMessage, ColumnWidthSpec};
+    use winit::dpi::PhysicalSize;
+
+    let mut app = make_app();
+    let (tx, rx) = crossbeam_channel::unbounded();
+    app.core.server_tx = Some(tx);
+    app.apply_settings_control(SettingsControl::SetEnum {
+        field: SettingsField::LayoutNewPaneSizing,
+        value: "dynamic".into(),
+    });
+
+    // Both screens show an 800px logical window. Retina must not turn it
+    // into a large-window half-width layout just because it has more pixels.
+    for (scale, width, expected) in [
+        (1.0, 800, 1.0),
+        (2.0, 1600, 1.0),
+        (2.0, 1998, 1.0),
+        (2.0, 2000, 0.5),
+        (2.0, 2400, 0.5),
+        (1.0, 800, 1.0),
+    ] {
+        app.dpi_scale = scale;
+        app.preview_resize(PhysicalSize::new(width, 700));
+        app.handle_action(Action::NewColumnRight);
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            ClientMessage::CreatePaneWithWidth {
+                width: ColumnWidthSpec { proportion, fixed_px: None }
+            } if proportion == expected
+        ));
+    }
+
+    // Updating the threshold in the panel must affect the very next pane.
+    app.preview_resize(PhysicalSize::new(950, 700));
+    app.apply_settings_control(SettingsControl::Nudge {
+        field: SettingsField::LayoutDynamicFullscreenWidth,
+        delta_sign: -1,
+    });
+    app.handle_action(Action::NewColumnRight);
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        ClientMessage::CreatePaneWithWidth {
+            width: ColumnWidthSpec {
+                proportion: 0.5,
+                fixed_px: None
+            }
+        }
+    ));
+    app.apply_settings_control(SettingsControl::Nudge {
+        field: SettingsField::LayoutDynamicFullscreenWidth,
+        delta_sign: 1,
+    });
+    // Native context-menu creation follows the same policy.
+    app.send(ClientMessage::CreatePaneAt {
+        pane_id: 42,
+        below: false,
+        request_id: 7,
+        width: None,
+    });
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        ClientMessage::CreatePaneAt {
+            pane_id: 42,
+            request_id: 7,
+            width: Some(ColumnWidthSpec {
+                proportion: 1.0,
+                fixed_px: None
+            }),
+            ..
+        }
+    ));
+
+    app.apply_settings_control(SettingsControl::SetEnum {
+        field: SettingsField::LayoutNewPaneSizing,
+        value: "fixed".into(),
+    });
+    app.handle_action(Action::NewColumnRight);
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        ClientMessage::CreatePaneWithWidth {
+            width: ColumnWidthSpec {
+                proportion: 0.5,
+                fixed_px: None
+            }
+        }
+    ));
+    app.apply_settings_control(SettingsControl::SetEnum {
+        field: SettingsField::LayoutNewPaneWidth,
+        value: "full".into(),
+    });
+    app.handle_action(Action::NewColumnRight);
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        ClientMessage::CreatePaneWithWidth {
+            width: ColumnWidthSpec {
+                proportion: 1.0,
+                fixed_px: None
+            }
+        }
+    ));
+}
+
+#[test]
+fn new_pane_sizing_preserves_explicit_width_and_counts_side_chrome() {
+    use loom_config::config::{NewPaneSizing, PresetWidth, TabBarPosition};
+    use winit::dpi::PhysicalSize;
+
+    let mut app = make_app();
+    app.dpi_scale = 2.0;
+    app.core.config.layout.new_pane_sizing = NewPaneSizing::Dynamic;
+    app.core.config.tabbar.position = TabBarPosition::Left;
+    app.core.config.tabbar.width = 200.0;
+    app.preview_resize(PhysicalSize::new(2100, 1400));
+    assert_eq!(app.new_column_width().proportion, 0.5);
+    app.core.config.layout.default_column_width = Some(PresetWidth::Fixed { fixed: 640.0 });
+    assert_eq!(app.new_column_width().fixed_px, Some(640.0));
+}
+
+#[test]
 fn capture_returns_none_when_panel_hidden() {
     let app = make_app();
     let cx = app.ui_context();

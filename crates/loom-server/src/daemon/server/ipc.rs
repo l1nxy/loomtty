@@ -197,6 +197,7 @@ impl Server {
                         &mut self.clients,
                         Some(&command),
                         cwd_path,
+                        None,
                     ) {
                         Ok(id) => {
                             // `--wait`: remember who to notify when this pane's

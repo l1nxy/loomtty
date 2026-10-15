@@ -263,6 +263,7 @@ impl super::MacApplication {
                     pane_id: request.target.pane,
                     below: matches!(request.item.action, ContextMenuAction::SplitDown),
                     request_id: 0,
+                    width: None,
                 });
             }
             _ => app.execute_context_menu_item(Some(request.target.pane), request.item),

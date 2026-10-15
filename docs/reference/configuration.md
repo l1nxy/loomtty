@@ -186,13 +186,17 @@ macOS.
 | --- | ---- | ------- | ----------- |
 | `new_pane_sizing` | enum | `fixed` | `fixed` (constant width) / `dynamic` (full below a width threshold, else half). |
 | `new_pane_width` | enum | `half` | In `fixed` mode: `half` or `full` viewport width. |
-| `dynamic_fullscreen_max_width` | float | `1000.0` | In `dynamic` mode: window width (px) below which new panes open full-width. |
+| `dynamic_fullscreen_max_width` | float | `1000.0` | In `dynamic` mode: logical window width (independent of display scaling) below which new panes open full-width. At or above this width, new panes open half-width. |
 | `default_column_width` | preset³ | _none_ | Power-user override: force every new column to a fixed width. Wins over the `new_pane_*` policy. |
 | `preset_widths` | preset³[] | ⅓, ½, ⅔, full | Widths cycled by `cycle_preset_width` in resize mode. |
 | `center_focused_column` | enum | `never` | `never` (minimal scroll) / `on-overflow` (PaperWM-style) / `always`. |
 
 ³ A **preset width** is `{ proportion = 0.5 }` (fraction of the viewport) or
 `{ fixed = 600.0 }` (pixels).
+
+New-pane sizing uses the current client settings at creation time, including
+changes made in the settings panel. For example, with a threshold of `1000.0`,
+an 800-pixel logical window opens full-width panes on both 1× and 2× displays.
 
 ```toml
 [layout]

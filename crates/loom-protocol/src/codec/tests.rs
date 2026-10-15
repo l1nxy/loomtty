@@ -5,6 +5,34 @@ use super::*;
 use crate::message::*;
 use std::io;
 
+#[test]
+fn legacy_targeted_pane_creation_defaults_to_server_width() {
+    #[derive(serde::Serialize)]
+    enum LegacyMessage {
+        CreatePaneAt {
+            pane_id: u64,
+            below: bool,
+            request_id: u64,
+        },
+    }
+    let bytes = rmp_serde::to_vec(&LegacyMessage::CreatePaneAt {
+        pane_id: 42,
+        below: false,
+        request_id: 7,
+    })
+    .unwrap();
+    let decoded: ClientMessage = rmp_serde::from_slice(&bytes).unwrap();
+    assert!(matches!(
+        decoded,
+        ClientMessage::CreatePaneAt {
+            pane_id: 42,
+            below: false,
+            request_id: 7,
+            width: None,
+        }
+    ));
+}
+
 // ─── SM encoder/decoder roundtrip tests ─────────────────────────
 
 #[test]

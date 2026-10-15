@@ -571,7 +571,7 @@ pub static FIELDS: &[FieldMeta] = &[
         field: SettingsField::LayoutDynamicFullscreenWidth,
         category: SettingsCategory::Layout,
         label: "Dynamic Fullscreen Below",
-        description: "In Dynamic mode, open new panes full-width when the window is narrower than this (px).",
+        description: "In Dynamic mode, open new panes full-width below this window width (logical px, independent of display scaling).",
         kind: FieldKind::Int {
             min: 200,
             max: 4000,
